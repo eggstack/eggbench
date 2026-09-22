@@ -129,10 +129,10 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 |---|---|---|---|---|
 | M001 | closed | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | plans/closure/local-runner-lifecycle/001-status.md | none |
 | M002 | closed historical predecessor | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | plans/closure/local-runner-lifecycle/002-status.md; post-closure evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md | none |
-| M003 | ready for planning | not yet written | none | none — plan authoring only |
+| M003 | ready | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | none | M002 corrective C001 closed and hosted qualification green |
 
 
-## 12. Active post-closure corrective
+## 12. Post-closure corrective
 
 A post-closure audit of M002 found two untested correctness defects:
 
@@ -158,6 +158,4 @@ once and the serialized `runner-phases.json` equals the in-memory
 `RunOutcome.phases`. Historical M002 closure remains preserved; the
 corrective closure record explains the missed verification classes.
 
-M003 and Measurement/Comparison implementation are now ready for plan
-authoring. Neither may re-open the M002 evidence contract or design a new
-workflow engine.
+M003 and Measurement/Comparison implementation plans are now authored and ready for handoff. Neither may re-open the M002 evidence contract or design a new workflow engine.
