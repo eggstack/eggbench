@@ -48,7 +48,7 @@ Canonical direction remains in:
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff note |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M002 Driver capability and resolved-plan contract | ready | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | M001 closed; implement fake driver resolution only. |
+| Foundation experiment/evidence | M002 Driver capability and resolved-plan contract | active | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | M001 closed; fake driver resolution only. |
 
 ## Prewritten blocked implementation plans
 
@@ -141,7 +141,7 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The next implementation plan currently ready is:
+The active implementation plan is:
 
 plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md
 

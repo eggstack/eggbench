@@ -110,7 +110,7 @@ pub enum ServiceKind {
     },
 }
 /// Managed/external lifecycle intent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Lifecycle {
     /// Runner starts and stops this service.
@@ -195,7 +195,7 @@ pub enum Workload {
     },
 }
 /// Explicit load model discriminator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoadMode {
     /// Fixed concurrency.

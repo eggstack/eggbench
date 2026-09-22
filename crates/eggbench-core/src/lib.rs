@@ -2,9 +2,11 @@
 #![forbid(unsafe_code)]
 
 mod plan;
+mod resolved;
 mod types;
 
 pub use plan::*;
+pub use resolved::*;
 pub use types::*;
 
 /// Namespace and version for normalized core schemas.

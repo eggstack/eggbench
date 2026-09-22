@@ -1,0 +1,32 @@
+[
+  {
+    "name": "fake-service",
+    "adapter_version": "0.1.0",
+    "upstream_name": "fake-service-api",
+    "upstream_version": "test-revision-1",
+    "category": "service",
+    "capabilities": [],
+    "supported_platforms": ["linux-x86_64"],
+    "machine_output_schema": null,
+    "external_process": false,
+    "default": true,
+    "compatible_service_types": []
+  },
+  {
+    "name": "fake-load",
+    "adapter_version": "0.1.0",
+    "upstream_name": "fake-load-api",
+    "upstream_version": "test-revision-2",
+    "category": "workload",
+    "capabilities": [
+      {"kind": "load_mode", "mode": "closed_loop"},
+      {"kind": "http_version", "version": "http2"},
+      {"kind": "corrected_latency"}
+    ],
+    "supported_platforms": [],
+    "machine_output_schema": 1,
+    "external_process": false,
+    "default": true,
+    "compatible_service_types": ["http"]
+  }
+]

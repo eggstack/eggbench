@@ -4,5 +4,4 @@
 
 The experiment-plan v1 decoder rejects unknown fields (`deny_unknown_fields`). Schema changes therefore require an explicit version update and compatibility decision. Ordered maps keep snapshots deterministic. Plan inputs carry references to secrets, never credential values.
 
-The boundary is: human-authored plan → validated plan → (future driver resolution) → (future runner) → immutable evidence. Timing, driver selection, and evidence persistence are outside M001.
-
+The boundary is: human-authored plan → validated plan → resolved plan → (future runner) → immutable evidence. Driver descriptors and resolution are typed, serializable contracts; actual driver implementations and side effects remain outside core.

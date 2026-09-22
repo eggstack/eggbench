@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "source_plan_schema_version": 1,
+  "experiment": "smoke",
+  "subject": {"kind": "external", "target": "api", "revision": null, "digest": null},
+  "drivers": {
+    "workload": {
+      "descriptor": {
+        "name": "fake-load",
+        "adapter_version": "0.1.0",
+        "upstream_name": "fake-load-api",
+        "upstream_version": "test-revision-2",
+        "category": "workload",
+        "capabilities": [
+          {"kind": "http_version", "version": "http2"},
+          {"kind": "load_mode", "mode": "closed_loop"},
+          {"kind": "corrected_latency"}
+        ],
+        "supported_platforms": [],
+        "machine_output_schema": 1,
+        "external_process": false,
+        "default": true,
+        "compatible_service_types": ["http"]
+      },
+      "executable_path": null
+    }
+  },
+  "topology": [],
+  "workload": {"kind": "finite_count", "target": "api", "requests": 100, "concurrency": 5},
+  "trials": {"measured": 3, "warmup": 1, "cooldown_ms": 1000, "reset": {"kind": "none"}, "timeouts": {}},
+  "telemetry": [],
+  "defaults": {"platform": "linux-x86_64", "warmup_trials": 1, "measured_trials": 3},
+  "environment_policy": {"kind": "strict_same_testbed"},
+  "metrics": [{"name": "latency_p99", "unit": "ms", "direction": {"kind": "lower_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 500.0}}],
+  "artifact_bounds": {"artifact_count": 256, "artifact_bytes": 16777216, "total_bytes": 268435456},
+  "seed": 42,
+  "warnings": []
+}
