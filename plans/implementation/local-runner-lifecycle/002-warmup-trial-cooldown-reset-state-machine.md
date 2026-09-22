@@ -1,6 +1,6 @@
 # Local Runner M002 — Warmup, Measured Trial, Cooldown, and Reset Orchestration
 
-Status: ready for handoff
+Status: closing
 
 Repository baseline: `67d3522c8a36d8d5e1ac1e826e7c02aefad0c894`
 

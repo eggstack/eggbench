@@ -10,3 +10,10 @@ ResolvedPlan schema v1 freezes the source-plan version, resolved schema version,
 
 Future Eggstack integrations should first use stable sibling-owned crates or process/protocol seams, as ADR-0004 directs. Independent external measurement tools remain separate workload adapters where they provide an independent oracle.
 
+For local orchestration, runtime adapter instances remain in
+`eggbench-runner`, not in `eggbench-core`. The mutable `WorkloadExecutor`
+contract accepts one warmup or measured invocation and exposes a separate
+bounded drain step. Reset behavior uses an explicit runner `ResetRegistry`;
+the core's `ResetPolicy::Service` value does not imply process supervision or
+restart semantics. See [runner ownership](runner.md) and
+[trial orchestration](../docs/trial-orchestration.md).

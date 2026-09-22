@@ -281,6 +281,50 @@ pub struct TrialDescriptor {
     pub artifacts: Vec<ArtifactPath>,
 }
 
+/// Versioned execution facts for one measured trial; contains no metric interpretation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrialExecutionResult {
+    /// Trial execution schema version.
+    pub schema_version: SchemaVersion,
+    /// Stable measured-trial identity.
+    pub trial_id: TrialId,
+    /// Start offset from the run monotonic origin, in nanoseconds.
+    pub measurement_start_offset_ns: u64,
+    /// Measured workload invocation duration, in nanoseconds.
+    pub measurement_elapsed_ns: u64,
+    /// Terminal execution state for this invocation.
+    pub terminal_status: TrialExecutionStatus,
+    /// Redaction-safe failure classification, when the invocation did not complete.
+    pub failure_category: Option<TrialExecutionFailure>,
+}
+
+/// Terminal execution state for a measured trial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrialExecutionStatus {
+    /// Workload invocation completed successfully.
+    Completed,
+    /// Workload invocation failed.
+    Failed,
+    /// Workload invocation exceeded its safety timeout.
+    TimedOut,
+    /// Workload invocation was cancelled.
+    Cancelled,
+}
+
+/// Redaction-safe failure category for one measured workload invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrialExecutionFailure {
+    /// The workload adapter returned an operational error.
+    WorkloadFailed,
+    /// The runner safety timeout expired.
+    TimedOut,
+    /// The invocation was cancelled.
+    Cancelled,
+}
+
 /// Authoritative immutable manifest for a completed bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleManifest {
@@ -811,6 +855,18 @@ impl BundleWriter {
     #[must_use]
     pub fn staging_path(&self) -> &Path {
         &self.staging_path
+    }
+
+    /// Run identity for adapters creating run-scoped execution records.
+    #[must_use]
+    pub const fn run_id(&self) -> RunId {
+        self.run_id
+    }
+
+    /// Intended finalized bundle path.
+    #[must_use]
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
     }
 
     /// Stream an artifact into staging and register its size and SHA-256 digest.

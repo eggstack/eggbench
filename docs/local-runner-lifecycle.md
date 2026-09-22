@@ -1,4 +1,4 @@
-# Local runner lifecycle (M001)
+# Local runner lifecycle (M001–M002)
 
 `eggbench-runner` owns managed local processes behind the runtime-free
 `eggbench-core` contracts. It spawns argv vectors directly (never a shell),
@@ -10,8 +10,9 @@ and tears down the owned process tree in reverse dependency order.
 
 `LocalSession::prepare` revalidates the resolved-plan boundary and builds
 ordered specs without starting anything. `startup` spawns and readies,
-`shutdown` stops everything in reverse order, and `run` performs one
-start-readiness-stop pass for the phase orchestrator planned in M002.
+`shutdown` stops everything in reverse order, and `run` remains a standalone
+start-readiness-stop convenience pass. [`execute_run`](trial-orchestration.md)
+adds warmups and trial orchestration above the same process-owning session.
 
 Every failure or cancellation after the first successful spawn tears down
 already-started processes. The initiating failure is preserved; teardown
@@ -93,7 +94,7 @@ logs are byte-for-byte.
 
 ## Evidence
 
-Lifecycle logs and metadata stage through the M003 `BundleWriter` with
+Lifecycle logs and metadata stage through the `BundleWriter` with
 `Stdout`/`Stderr` roles and a `lifecycle`-labeled metadata artifact. No
 second evidence format exists. A lifecycle-only run records execution as
 `completed`, has no comparison verdict, and may have zero trials. Execution
@@ -101,8 +102,8 @@ completion does not imply a performance pass. Manifest v1 bundles retain
 their original status as explicitly ambiguous legacy evidence; new writes use
 manifest v2's separate execution and comparison fields.
 
-## Non-goals (deferred to later milestones)
+## Remaining non-goals
 
-No workload drivers, trial scheduler, measurement clock, comparison engine,
-CLI, remote execution, database, or security semantics. The session stays
-usable as the M002 phase orchestrator's process owner.
+No production workload driver, metric normalization, comparison engine, CLI,
+remote execution, database, or security semantics. The session stays usable
+independently as the phase orchestrator's process owner.

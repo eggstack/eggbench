@@ -4,8 +4,8 @@
 //! startup and reverse teardown, readiness success and named-probe failure,
 //! spawn failure and readiness timeout, cancellation, graceful then forced
 //! cleanup, descendant cleanup, cleanup-failure preservation, bounded pipe
-//! draining, external-service observation, secret handling, and
-//! inconclusive zero-trial evidence.
+//! draining, external-service observation, secret handling, and completed
+//! lifecycle-only evidence with no comparison verdict.
 
 #![cfg(unix)]
 
@@ -988,8 +988,10 @@ async fn subject_managed_command_spawns_first() {
 fn supported_platform_matrix_is_truthful() {
     assert_eq!(
         UnixPlatform.support(),
-        if cfg!(unix) {
+        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
             PlatformSupport::Supported
+        } else if cfg!(unix) {
+            PlatformSupport::Unqualified
         } else {
             PlatformSupport::Unsupported
         }

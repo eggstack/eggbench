@@ -38,7 +38,7 @@ Canonical direction remains in:
 |---|---|---|---|---|
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 ready; M003 blocked | M002 implementation plan is ready for handoff; M003 waits for M002 closure |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 closing; M003 blocked | Local verification passes; hosted qualification and closure evidence remain |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | corrected foundation status/verdict contract + local trial evidence |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
@@ -60,7 +60,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Local runner/lifecycle | M002 Warmup, measured trial, cooldown, and reset orchestration | ready | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | Both post-closure correctives are closed; this is the next runner handoff |
+| Local runner/lifecycle | M002 Warmup, measured trial, cooldown, and reset orchestration | closing | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | Hosted qualification and closure evidence remain |
 
 ## Prewritten blocked implementation plans
 

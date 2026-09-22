@@ -11,9 +11,10 @@
 //! qualified macOS via process groups). Other Unix targets remain unqualified;
 //! Windows managed execution reports an unsupported-capability error.
 //!
-//! This milestone performs no load generation, trial scheduling,
-//! measurement, or comparison. A lifecycle-only run records no trials and a
-//! finalized zero-trial bundle records completed execution and no comparison.
+//! Local orchestration schedules warmups and measured invocations through an
+//! injected workload adapter. It does not provide a production load
+//! generator, normalize metrics, or calculate comparisons. Lifecycle-only
+//! sessions remain available and record no trials.
 //!
 //! [`eggbench_core`]: ../../eggbench-core/index.html
 
@@ -21,6 +22,7 @@
 
 mod bundle;
 mod error;
+pub(crate) mod orchestration;
 mod platform;
 mod probe;
 mod secret;
@@ -29,6 +31,11 @@ mod spec;
 
 pub use bundle::{stage_lifecycle_logs, stage_lifecycle_metadata};
 pub use error::{CleanupFailure, RunnerError};
+pub use orchestration::{
+    DrainContext, FailureCategory, InvocationContext, InvocationKind, OrchestrationError,
+    PhaseEvent, PhaseKind, PhaseOutcome, ResetContext, ResetHook, ResetRegistry, RunOutcome,
+    WorkloadArtifact, WorkloadExecutor, WorkloadOutput, execute_run,
+};
 pub use platform::{
     PlatformAdapter, PlatformSupport, UnixPlatform, UnsupportedPlatform, is_process_alive,
 };
@@ -38,6 +45,12 @@ pub use probe::{
     ReadinessProbe,
 };
 pub use secret::{MapSecretProvider, SecretProvider};
+
+/// Deterministic adapters for runner integration tests and qualification.
+pub mod test_support {
+    /// Fake workload with configurable delay, failure, timeout, and drain behavior.
+    pub use crate::orchestration::FakeWorkload;
+}
 pub use session::{
     BoundedOutput, LifecycleEvent, LifecycleEventKind, LifecycleOutcome, LocalSession,
     RunnerOptions, ServiceLogs, ShutdownReport, StartupReport,
