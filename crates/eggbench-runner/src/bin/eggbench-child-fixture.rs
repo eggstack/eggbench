@@ -1,7 +1,7 @@
 //! Deterministic child-process fixture for lifecycle tests.
 //!
 //! Invoked through `CARGO_BIN_EXE_eggbench-child-fixture` with one mode:
-//! `exit`, `sleep`, `exit-after`, `emit-stdout`, `emit-stderr`, `emit-both`,
+//! `exit`, `sleep`, `exit-after`, `has-env`, `emit-stdout`, `emit-stderr`, `emit-both`,
 //! `term-exit`, `term-ignore`, or `descendant`. All modes are deterministic
 //! and argv-driven; the fixture never reads secret values.
 
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: eggbench-child-fixture <exit|sleep|exit-after|emit-stdout|emit-stderr|emit-both|emit-sleep|term-exit|term-ignore|descendant> [args]"
+        "usage: eggbench-child-fixture <exit|sleep|exit-after|has-env|emit-stdout|emit-stderr|emit-both|emit-sleep|term-exit|term-ignore|descendant> [args]"
     );
     std::process::exit(2);
 }
@@ -48,6 +48,11 @@ fn emit(stream: &str, total: u64) {
         }
         remaining -= take as u64;
     }
+    if stream == "stderr" {
+        stderr.lock().flush().unwrap_or_else(|_| usage());
+    } else {
+        stdout.lock().flush().unwrap_or_else(|_| usage());
+    }
 }
 
 #[tokio::main]
@@ -65,6 +70,18 @@ async fn main() {
             let code = parse_i32(arg(&args, 3));
             tokio::time::sleep(Duration::from_millis(delay)).await;
             std::process::exit(code);
+        }
+        "has-env" => {
+            let name = arg(&args, 2);
+            if std::env::var_os(name).is_some() {
+                println!("present");
+            } else {
+                println!("absent");
+            }
+            std::io::stdout().flush().unwrap_or_else(|_| usage());
+            if let Some(delay) = args.get(3) {
+                tokio::time::sleep(Duration::from_millis(parse_u64(delay))).await;
+            }
         }
         "emit-stdout" => {
             emit("stdout", parse_u64(arg(&args, 2)));

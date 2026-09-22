@@ -86,6 +86,14 @@ pub enum RunnerError {
         /// Policy detail.
         detail: String,
     },
+    /// A command program is missing or depends on implicit PATH lookup.
+    #[error("invalid executable path for {service}: {detail}")]
+    InvalidExecutablePath {
+        /// Service identity.
+        service: String,
+        /// Redaction-safe resolution policy detail.
+        detail: String,
+    },
     /// A managed command has no program to spawn.
     #[error("empty argv for {service}")]
     EmptyArgv {
@@ -159,6 +167,7 @@ impl RunnerError {
             | Self::UnsupportedPlatform { .. }
             | Self::MissingSecret { .. }
             | Self::InvalidWorkingDirectory { .. }
+            | Self::InvalidExecutablePath { .. }
             | Self::EmptyArgv { .. }
             | Self::CancelledBeforeSpawn => &[],
         }

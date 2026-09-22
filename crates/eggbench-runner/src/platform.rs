@@ -13,6 +13,8 @@ use std::fmt;
 pub enum PlatformSupport {
     /// Descendant cleanup is tested on this platform.
     Supported,
+    /// Managed spawn remains disabled until platform-specific qualification passes.
+    Unqualified,
     /// Managed spawn must fail with a structured capability error.
     Unsupported,
 }
@@ -47,18 +49,22 @@ pub struct UnixPlatform;
 
 impl PlatformAdapter for UnixPlatform {
     fn support(&self) -> PlatformSupport {
-        if cfg!(unix) {
+        if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
             PlatformSupport::Supported
+        } else if cfg!(unix) {
+            PlatformSupport::Unqualified
         } else {
             PlatformSupport::Unsupported
         }
     }
 
     fn label(&self) -> &'static str {
-        if cfg!(target_os = "macos") {
+        if cfg!(target_os = "linux") {
+            "linux"
+        } else if cfg!(target_os = "macos") {
             "macos"
         } else {
-            "unix"
+            "other"
         }
     }
 
@@ -148,9 +154,4 @@ fn signal_process_group(pid: u32, signal: nix::sys::signal::Signal) -> Result<()
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
         Err(error) => Err(format!("signal {} failed: {error}", signal.as_str())),
     }
-}
-
-#[cfg(not(unix))]
-fn signal_process_group(_pid: u32, _signal: ()) -> Result<(), String> {
-    Err("managed descendant cleanup is unsupported on this platform".to_owned())
 }

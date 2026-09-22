@@ -7,13 +7,13 @@
 //! process-tree cleanup, and reverse-order teardown that preserves the
 //! initiating failure.
 //!
-//! Supported platforms advertise tested descendant cleanup (Linux and macOS
-//! via process groups). Windows managed execution reports a structured
-//! unsupported-capability error until Job Object semantics are qualified.
+//! Supported platforms advertise tested descendant cleanup (Linux and
+//! qualified macOS via process groups). Other Unix targets remain unqualified;
+//! Windows managed execution reports an unsupported-capability error.
 //!
 //! This milestone performs no load generation, trial scheduling,
 //! measurement, or comparison. A lifecycle-only run records no trials and a
-//! finalized zero-trial bundle is inconclusive, never a performance pass.
+//! finalized zero-trial bundle records completed execution and no comparison.
 //!
 //! [`eggbench_core`]: ../../eggbench-core/index.html
 

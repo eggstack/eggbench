@@ -12,7 +12,8 @@ use crate::secret::SecretProvider;
 use eggbench_core::{Lifecycle, Readiness, ResolvedPlan, ServiceKind, Shutdown, Subject};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Default retained log bytes for the subject, which carries no core log bound.
@@ -126,11 +127,7 @@ pub fn prepare(
             detail: format!("unsupported resolved schema {}", resolved.schema_version.0),
         });
     }
-    if options.platform.support() == PlatformSupport::Unsupported && needs_managed_spawn(resolved) {
-        return Err(RunnerError::UnsupportedPlatform {
-            detail: "managed descendant cleanup is unsupported on this platform".to_owned(),
-        });
-    }
+    ensure_platform(resolved, options.platform.as_ref())?;
     let workspace_root = normalize_workspace_root(&options.workspace_root)?;
     let mut specs = Vec::new();
     if let Subject::ManagedCommand {
@@ -142,6 +139,7 @@ pub fn prepare(
                 service: SUBJECT_IDENTITY.to_owned(),
             });
         }
+        let argv = resolve_executable(SUBJECT_IDENTITY, argv, &workspace_root)?;
         let mut env = BTreeMap::new();
         let mut references = Vec::new();
         for (key, secret_ref) in environment {
@@ -158,7 +156,7 @@ pub fn prepare(
         references.sort();
         specs.push(ProcessSpec {
             identity: SUBJECT_IDENTITY.to_owned(),
-            argv: argv.clone(),
+            argv,
             cwd: workspace_root.clone(),
             env,
             secret_references: references,
@@ -173,7 +171,7 @@ pub fn prepare(
         if service.lifecycle != Lifecycle::Managed {
             continue;
         }
-        let argv = match &service.kind {
+        let mut argv = match &service.kind {
             ServiceKind::Command { argv } => argv.clone(),
             ServiceKind::Named { service_type } => {
                 return Err(RunnerError::UnsupportedService {
@@ -195,6 +193,7 @@ pub fn prepare(
             service.working_directory.as_deref(),
             &workspace_root,
         )?;
+        argv = resolve_executable(service.name.as_str(), &argv, &cwd)?;
         specs.push(ProcessSpec {
             identity: service.name.as_str().to_owned(),
             argv,
@@ -208,6 +207,28 @@ pub fn prepare(
         });
     }
     Ok(SpawnPlan { specs })
+}
+
+fn ensure_platform(
+    resolved: &ResolvedPlan,
+    platform: &dyn PlatformAdapter,
+) -> Result<(), RunnerError> {
+    if needs_managed_spawn(resolved) {
+        match platform.support() {
+            PlatformSupport::Supported => {}
+            PlatformSupport::Unqualified => {
+                return Err(RunnerError::UnsupportedPlatform {
+                    detail: format!("managed execution is unqualified on {}", platform.label()),
+                });
+            }
+            PlatformSupport::Unsupported => {
+                return Err(RunnerError::UnsupportedPlatform {
+                    detail: format!("managed execution is unsupported on {}", platform.label()),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn needs_managed_spawn(resolved: &ResolvedPlan) -> bool {
@@ -225,24 +246,17 @@ fn normalize_workspace_root(root: &Path) -> Result<PathBuf, RunnerError> {
             detail: "workspace root must be absolute".to_owned(),
         });
     }
-    let mut normalized = PathBuf::new();
-    for component in root.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(Component::RootDir),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    return Err(RunnerError::InvalidWorkingDirectory {
-                        service: "<workspace>".to_owned(),
-                        detail: "workspace root escapes the filesystem root".to_owned(),
-                    });
-                }
-            }
-            Component::Normal(segment) => normalized.push(segment),
-        }
+    let canonical = fs::canonicalize(root).map_err(|_| RunnerError::InvalidWorkingDirectory {
+        service: "<workspace>".to_owned(),
+        detail: "workspace root must exist and be a directory".to_owned(),
+    })?;
+    if !canonical.is_dir() {
+        return Err(RunnerError::InvalidWorkingDirectory {
+            service: "<workspace>".to_owned(),
+            detail: "workspace root must exist and be a directory".to_owned(),
+        });
     }
-    Ok(normalized)
+    Ok(canonical)
 }
 
 fn resolve_working_directory(
@@ -260,34 +274,63 @@ fn resolve_working_directory(
             detail: "absolute working directories are rejected".to_owned(),
         });
     }
-    let mut resolved = root.to_path_buf();
-    for component in requested_path.components() {
-        match component {
-            Component::Normal(segment) => resolved.push(segment),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !resolved.pop() || !resolved.starts_with(root) {
-                    return Err(RunnerError::InvalidWorkingDirectory {
-                        service: service.to_owned(),
-                        detail: "working directory escapes the workspace root".to_owned(),
-                    });
-                }
-            }
-            Component::Prefix(_) | Component::RootDir => {
-                return Err(RunnerError::InvalidWorkingDirectory {
-                    service: service.to_owned(),
-                    detail: "unsupported working directory component".to_owned(),
-                });
-            }
-        }
+    let requested_path = root.join(requested_path);
+    let resolved =
+        fs::canonicalize(&requested_path).map_err(|_| RunnerError::InvalidWorkingDirectory {
+            service: service.to_owned(),
+            detail: "working directory must exist and resolve inside the workspace root".to_owned(),
+        })?;
+    if !resolved.is_dir() {
+        return Err(RunnerError::InvalidWorkingDirectory {
+            service: service.to_owned(),
+            detail: "working directory must be a directory".to_owned(),
+        });
     }
     if !resolved.starts_with(root) {
         return Err(RunnerError::InvalidWorkingDirectory {
             service: service.to_owned(),
-            detail: "working directory escapes the workspace root".to_owned(),
+            detail: "working directory resolves outside the workspace root".to_owned(),
         });
     }
     Ok(resolved)
+}
+
+fn resolve_executable(
+    service: &str,
+    argv: &[String],
+    cwd: &Path,
+) -> Result<Vec<String>, RunnerError> {
+    let program = argv.first().ok_or_else(|| RunnerError::EmptyArgv {
+        service: service.to_owned(),
+    })?;
+    let requested = Path::new(program);
+    let has_path_separator = program.contains('/') || program.contains(std::path::MAIN_SEPARATOR);
+    if !requested.is_absolute() && !has_path_separator {
+        return Err(RunnerError::InvalidExecutablePath {
+            service: service.to_owned(),
+            detail: "program must be an absolute path or a relative path containing a separator"
+                .to_owned(),
+        });
+    }
+    let candidate = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        cwd.join(requested)
+    };
+    let resolved =
+        fs::canonicalize(&candidate).map_err(|_| RunnerError::InvalidExecutablePath {
+            service: service.to_owned(),
+            detail: "program path must resolve to an existing file".to_owned(),
+        })?;
+    if !resolved.is_file() {
+        return Err(RunnerError::InvalidExecutablePath {
+            service: service.to_owned(),
+            detail: "program path must resolve to a file".to_owned(),
+        });
+    }
+    let mut resolved_argv = argv.to_vec();
+    resolved_argv[0] = resolved.to_string_lossy().into_owned();
+    Ok(resolved_argv)
 }
 
 fn topological_order(

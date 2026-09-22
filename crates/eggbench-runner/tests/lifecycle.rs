@@ -7,6 +7,8 @@
 //! draining, external-service observation, secret handling, and
 //! inconclusive zero-trial evidence.
 
+#![cfg(unix)]
+
 use eggbench_core::{
     ArtifactBounds, ArtifactRole, BundleWriter, ComparisonVerdict, DurationMs, ExecutionStatus,
     Lifecycle, Name, PositiveCount, Readiness, ResolvedPlan, RunId, Service, ServiceKind, Shutdown,
@@ -17,6 +19,7 @@ use eggbench_runner::{
     ProbeRegistry, RunnerError, RunnerOptions, UnixPlatform, UnsupportedPlatform, is_process_alive,
 };
 use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -98,6 +101,14 @@ fn options(root: &std::path::Path) -> RunnerOptions {
         workspace_root: root.to_path_buf(),
         secrets: Arc::new(MapSecretProvider::empty()),
         probes: ProbeRegistry::with_builtins(),
+        platform: Arc::new(UnixPlatform),
+    }
+}
+
+fn prepare_options(root: &std::path::Path) -> eggbench_runner::PrepareOptions {
+    eggbench_runner::PrepareOptions {
+        workspace_root: root.to_path_buf(),
+        secrets: Arc::new(MapSecretProvider::empty()),
         platform: Arc::new(UnixPlatform),
     }
 }
@@ -185,10 +196,13 @@ async fn unknown_probe_fails_before_spawn() {
 async fn spawn_failure_before_readiness() {
     let root = temp_root();
     let mut resolved = base_resolved();
+    let non_executable = root.path().join("non-executable");
+    std::fs::write(&non_executable, b"not executable").unwrap();
+    std::fs::set_permissions(&non_executable, std::fs::Permissions::from_mode(0o600)).unwrap();
     resolved.topology = vec![Service {
         name: name("broken"),
         kind: ServiceKind::Command {
-            argv: vec!["/nonexistent/eggbench-fixture-program".to_owned()],
+            argv: vec![non_executable.to_string_lossy().into_owned()],
         },
         lifecycle: Lifecycle::Managed,
         depends_on: Vec::new(),
@@ -514,7 +528,7 @@ async fn missing_secret_fails_before_spawn_and_values_stay_redacted() {
     let secret_value = "super-secret-xyz-12345";
     let mut resolved = base_resolved();
     resolved.subject = Subject::ManagedCommand {
-        argv: argv(&["exit", "0"]),
+        argv: argv(&["sleep", "30000"]),
         environment: BTreeMap::from([(
             "HARNESS_TOKEN".to_owned(),
             eggbench_core::SecretRef {
@@ -558,6 +572,123 @@ async fn missing_secret_fails_before_spawn_and_values_stay_redacted() {
             assert!(!stdout.contains(secret_value));
             assert!(!stderr.contains(secret_value));
         }
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Exercises the environment boundary through finalized evidence.
+async fn managed_environment_is_hermetic_and_explicit_secrets_stay_redacted() {
+    const PARENT_SENTINEL: &str = "EGGBENCH_PARENT_SENTINEL_26CE";
+    assert!(
+        std::env::var_os(PARENT_SENTINEL).is_some(),
+        "CI/test command must set the parent sentinel"
+    );
+
+    let root = temp_root();
+    let secret_value = "secret-environment-probe-value-73b4";
+    let mut resolved = base_resolved();
+    resolved.subject = Subject::ManagedCommand {
+        argv: argv(&["has-env", "EGGBENCH_SUBJECT_TOKEN", "30000"]),
+        environment: BTreeMap::from([(
+            "EGGBENCH_SUBJECT_TOKEN".to_owned(),
+            eggbench_core::SecretRef {
+                reference: name("TOKEN"),
+            },
+        )]),
+        revision: None,
+        digest: None,
+    };
+    let mut app = managed("app", &["has-env", PARENT_SENTINEL, "30000"], &[], 4096);
+    app.readiness = Some(Readiness::Delay {
+        after_ms: delay_ms(100),
+    });
+    let mut configured = managed(
+        "config-check",
+        &["has-env", "EGGBENCH_CONFIG_SENTINEL", "30000"],
+        &[],
+        4096,
+    );
+    configured.config.insert(
+        "EGGBENCH_CONFIG_SENTINEL".to_owned(),
+        "from-config".to_owned(),
+    );
+    configured.readiness = Some(Readiness::Delay {
+        after_ms: delay_ms(100),
+    });
+    resolved.topology = vec![app, configured];
+    let provider = MapSecretProvider::with(&name("TOKEN"), secret_value);
+    let mut session = LocalSession::prepare(
+        &resolved,
+        RunnerOptions {
+            workspace_root: root.path().to_path_buf(),
+            secrets: Arc::new(provider),
+            probes: ProbeRegistry::with_builtins(),
+            platform: Arc::new(UnixPlatform),
+        },
+    )
+    .unwrap();
+    let debug = format!("{session:?}");
+    assert!(!debug.contains(secret_value));
+    assert!(debug.contains("[REDACTED]"));
+    let outcome = session.run(&CancellationToken::new()).await.unwrap();
+    assert_eq!(outcome.started, vec!["subject", "app", "config-check"]);
+    assert_eq!(
+        session.logs("subject").await.unwrap().stdout.data,
+        b"present\n"
+    );
+    assert_eq!(session.logs("app").await.unwrap().stdout.data, b"absent\n");
+    assert_eq!(
+        session.logs("config-check").await.unwrap().stdout.data,
+        b"absent\n",
+        "opaque service config is not copied into the child environment"
+    );
+
+    let destination = root.path().join("secret-lifecycle.eggb");
+    let mut writer = BundleWriter::create(
+        &destination,
+        RunId::new(),
+        ArtifactBounds {
+            artifact_count: PositiveCount::new(256).unwrap(),
+            artifact_bytes: 16 * 1024 * 1024,
+            total_bytes: 64 * 1024 * 1024,
+        },
+    )
+    .unwrap();
+    add_required_artifacts(&mut writer);
+    eggbench_runner::stage_lifecycle_logs(&session, &mut writer)
+        .await
+        .unwrap();
+    eggbench_runner::stage_lifecycle_metadata(&session, &outcome, &mut writer).unwrap();
+    let bundle = writer
+        .finalize(
+            ExecutionStatus::Completed,
+            None,
+            Subject::Label {
+                label: name("bench"),
+            },
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+        )
+        .unwrap();
+    let manifest = serde_json::to_string(bundle.manifest()).unwrap();
+    assert!(!manifest.contains(secret_value));
+    assert!(
+        !format!(
+            "{:?}",
+            RunnerError::MissingSecret {
+                service: "subject".to_owned(),
+                reference: "TOKEN".to_owned()
+            }
+        )
+        .contains(secret_value)
+    );
+    for record in &bundle.manifest().artifacts {
+        let bytes = std::io::Read::bytes(bundle.open_artifact(&record.path).unwrap())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains(secret_value));
     }
 }
 
@@ -653,6 +784,149 @@ async fn working_directory_escapes_are_rejected() {
         assert!(
             matches!(error, RunnerError::InvalidWorkingDirectory { .. }),
             "got {error:?} for {requested}"
+        );
+    }
+}
+
+#[test]
+fn workspace_and_cwd_are_resolved_through_the_filesystem() {
+    let root = temp_root();
+    std::fs::create_dir(root.path().join("real")).unwrap();
+    std::fs::create_dir(root.path().join("nested")).unwrap();
+    #[cfg(unix)]
+    {
+        let mut direct_resolved = base_resolved();
+        let mut direct_service = managed("direct", &["sleep", "30000"], &[], 4096);
+        direct_service.working_directory = Some("real".to_owned());
+        direct_resolved.topology = vec![direct_service];
+        let direct_plan =
+            eggbench_runner::prepare(&direct_resolved, &prepare_options(root.path())).unwrap();
+        assert_eq!(
+            direct_plan.specs[0].cwd,
+            root.path().join("real").canonicalize().unwrap()
+        );
+
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("inside-link"))
+            .unwrap();
+        let outside = temp_root();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("outside-link")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("nested/outside-link"))
+            .unwrap();
+
+        let mut resolved = base_resolved();
+        let mut service = managed("app", &["sleep", "30000"], &[], 4096);
+        service.working_directory = Some("inside-link".to_owned());
+        resolved.topology = vec![service];
+        let plan = eggbench_runner::prepare(&resolved, &prepare_options(root.path())).unwrap();
+        assert_eq!(
+            plan.specs[0].cwd,
+            root.path().join("real").canonicalize().unwrap()
+        );
+
+        for requested in ["outside-link", "nested/outside-link"] {
+            let mut resolved = base_resolved();
+            let mut service = managed("app", &["sleep", "30000"], &[], 4096);
+            service.working_directory = Some(requested.to_owned());
+            resolved.topology = vec![service];
+            assert!(matches!(
+                eggbench_runner::prepare(&resolved, &prepare_options(root.path())),
+                Err(RunnerError::InvalidWorkingDirectory { .. })
+            ));
+        }
+    }
+
+    let file = root.path().join("not-a-directory");
+    std::fs::write(&file, b"file").unwrap();
+    for requested in ["missing", "not-a-directory"] {
+        let mut resolved = base_resolved();
+        let mut service = managed("app", &["sleep", "30000"], &[], 4096);
+        service.working_directory = Some(requested.to_owned());
+        resolved.topology = vec![service];
+        assert!(matches!(
+            eggbench_runner::prepare(&resolved, &prepare_options(root.path())),
+            Err(RunnerError::InvalidWorkingDirectory { .. })
+        ));
+    }
+}
+
+#[test]
+fn workspace_root_must_exist_and_be_a_directory() {
+    let root = temp_root();
+    let missing = root.path().join("missing-root");
+    assert!(matches!(
+        eggbench_runner::prepare(&base_resolved(), &prepare_options(&missing)),
+        Err(RunnerError::InvalidWorkingDirectory { .. })
+    ));
+    let file = root.path().join("root-file");
+    std::fs::write(&file, b"file").unwrap();
+    assert!(matches!(
+        eggbench_runner::prepare(&base_resolved(), &prepare_options(&file)),
+        Err(RunnerError::InvalidWorkingDirectory { .. })
+    ));
+}
+
+#[tokio::test]
+async fn explicit_executable_paths_are_resolved_and_bare_names_rejected() {
+    let root = temp_root();
+    let fixture_path = std::path::PathBuf::from(fixture());
+    let bin = root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let relative_fixture = bin.join("fixture");
+    std::fs::copy(&fixture_path, &relative_fixture).unwrap();
+
+    let mut resolved = base_resolved();
+    let mut relative = Service {
+        name: name("relative"),
+        kind: ServiceKind::Command {
+            argv: vec![
+                "bin/fixture".to_owned(),
+                "emit-sleep".to_owned(),
+                "1".to_owned(),
+                "30000".to_owned(),
+            ],
+        },
+        lifecycle: Lifecycle::Managed,
+        depends_on: Vec::new(),
+        config: BTreeMap::new(),
+        readiness: None,
+        shutdown: None,
+        working_directory: None,
+        log_limit_bytes: 4096,
+    };
+    relative.readiness = Some(Readiness::Delay {
+        after_ms: delay_ms(100),
+    });
+    resolved.topology = vec![relative];
+    let plan = eggbench_runner::prepare(&resolved, &prepare_options(root.path())).unwrap();
+    assert_eq!(
+        plan.specs[0].argv[0],
+        relative_fixture.canonicalize().unwrap().to_string_lossy()
+    );
+    let mut session = LocalSession::prepare(&resolved, options(root.path())).unwrap();
+    session.run(&CancellationToken::new()).await.unwrap();
+    assert_eq!(session.logs("relative").await.unwrap().stdout.data, b"o");
+
+    for program in ["eggbench-child-fixture", "missing/program", "bin/."] {
+        let mut resolved = base_resolved();
+        resolved.topology = vec![Service {
+            name: name("invalid-program"),
+            kind: ServiceKind::Command {
+                argv: vec![program.to_owned()],
+            },
+            lifecycle: Lifecycle::Managed,
+            depends_on: Vec::new(),
+            config: BTreeMap::new(),
+            readiness: None,
+            shutdown: None,
+            working_directory: None,
+            log_limit_bytes: 4096,
+        }];
+        assert!(
+            matches!(
+                eggbench_runner::prepare(&resolved, &prepare_options(root.path())),
+                Err(RunnerError::InvalidExecutablePath { .. })
+            ),
+            "program {program} should be rejected during preflight"
         );
     }
 }

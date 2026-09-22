@@ -1422,6 +1422,7 @@ fn sync_directory(path: &Path) -> Result<(), BundleError> {
 }
 
 #[cfg(windows)]
+#[allow(clippy::unnecessary_wraps)] // Keep the platform helper's fallible call contract uniform.
 fn sync_directory(_path: &Path) -> Result<(), BundleError> {
     // Windows does not expose portable directory fsync through std; artifact and manifest files
     // are still flushed individually before the same-volume rename.
