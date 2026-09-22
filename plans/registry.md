@@ -36,7 +36,7 @@ Canonical direction remains in:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 ready; M002-M003 blocked | Foundation M001-M003 closed; later milestones depend on predecessor closure. |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 awaiting plan, M003 blocked | Runner M001 closed; M002 needs its implementation plan written. |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Foundation schemas + local trial evidence. |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts. |
 | External measurement oracles | proposed | plans/subsystems/external-oracles-roadmap.md | M001 blocked | Driver contracts + local runner. |
@@ -51,15 +51,13 @@ Canonical direction remains in:
 
 ## Dependency-ready implementation plans
 
-| Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff note |
-|---|---|---|---|---|
-| Local runner/lifecycle | M001 Managed process and readiness lifecycle | ready | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | Foundation M001-M003 closed; resolved/evidence contracts are available. |
+No implementation plan is currently dependency-ready. Local Runner M002 needs its implementation plan written before handoff.
 
 ## Prewritten implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Local runner/lifecycle | M001 Managed process and readiness lifecycle | ready | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | None; predecessors closed. |
+| Local runner/lifecycle | M002 Trial phase orchestration + fake workload | blocked | not yet written | Implementation plan not yet written; M001 hard dependency closed. |
 
 ## Current execution order and dependency gates
 
@@ -85,9 +83,7 @@ Foundation M003 closure supplied evidence staging/finalization. Local Runner M00
 
 ### Gate D — Local execution
 
-After Foundation M003 closed, Local Runner M001 was planned against the resulting repository baseline and is ready.
-
-The runner work must prove startup/readiness/cancellation/teardown and descendant cleanup before real load generators are integrated.
+Local Runner M001 is closed: managed startup, readiness, bounded logs, cancellation, teardown, and descendant cleanup are proven. M002 needs its implementation plan written before trial phase orchestration begins.
 
 ### Gate E — Comparison
 
@@ -146,8 +142,6 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The next implementation plan currently ready is:
+No implementation plan is currently ready for handoff. The next work is writing the Local Runner M002 implementation plan (warmup, trial, cooldown, and reset state machine) against the closed M001 session.
 
-plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md
-
-Foundation M001-M003 closure evidence is recorded under plans/closure/foundation-experiment-evidence/. Foundation M003 closed and unblocked Local Runner M001 planning; implementation remains outside the current handoff sequence.
+Local Runner M001 closure evidence is recorded at plans/closure/local-runner-lifecycle/001-status.md.

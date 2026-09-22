@@ -1,6 +1,6 @@
 # Local Runner M001 — Managed Process and Readiness Lifecycle
 
-Status: ready
+Status: closed
 
 Repository baseline: `6a803128f1e715b26e7408d3295e6cc4a09d9839`
 

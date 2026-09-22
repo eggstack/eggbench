@@ -127,6 +127,6 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| M001 | ready | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | none | Foundation M001-M003 closed |
-| M002 | blocked | not yet written | none | M001 |
+| M001 | closed | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | plans/closure/local-runner-lifecycle/001-status.md | none |
+| M002 | blocked | not yet written | none | M001 closed; implementation plan not yet written |
 | M003 | blocked | not yet written | none | M002 |
