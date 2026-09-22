@@ -1,6 +1,6 @@
 # Foundation Experiment and Evidence M002 — Driver Capability and Resolved-Plan Contract
 
-Status: active
+Status: closed
 
 Repository planning baseline: 032eb324d299f865c989b59226e70eff28d77d09
 

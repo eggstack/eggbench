@@ -36,7 +36,7 @@ Canonical direction remains in:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001 closed; M002 ready; M003 blocked | M003 awaits M002 interface stability. |
+| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001-M002 closed; M003 ready | Bundle can consume versioned plan and resolved-plan contracts. |
 | Local runner/lifecycle | proposed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 blocked | Foundation M003. |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Foundation schemas + local trial evidence. |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts. |
@@ -48,13 +48,13 @@ Canonical direction remains in:
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff note |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M002 Driver capability and resolved-plan contract | active | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | M001 closed; fake driver resolution only. |
+| Foundation experiment/evidence | M003 Immutable evidence bundle | ready | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | M001 and M002 closed; bundle consumes versioned ResolvedPlan v1. |
 
-## Prewritten blocked implementation plans
+## Prewritten implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M003 Immutable evidence bundle | blocked | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | M001 closure + M002 interface stability |
+| Foundation experiment/evidence | M003 Immutable evidence bundle | ready | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | None; predecessors closed. |
 
 ## Current execution order and dependency gates
 
@@ -68,13 +68,13 @@ Do not begin process execution, statistics, Eggstack integration, or external dr
 
 ### Gate B — Driver resolution
 
-After M001 closure, M002 becomes ready.
+After M001 closure, M002 became ready and is now closed.
 
 M002 freezes driver identity/capability and ResolvedPlan semantics using fake drivers only. Unsupported behavior must fail before I/O.
 
 ### Gate C — Evidence
 
-After M001 and the M002 interface are stable, M003 implements immutable evidence bundles and inspection.
+With M001 and M002 closed, M003 is ready to implement immutable evidence bundles and inspection.
 
 Local Runner M001 remains blocked until evidence staging/finalization is usable. This is intentional: the runner must write into a defined evidence model rather than inventing ad hoc logs first.
 
@@ -141,8 +141,8 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The active implementation plan is:
+The next implementation plan currently ready is:
 
-plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md
+plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md
 
-M001 closure evidence is recorded in plans/closure/foundation-experiment-evidence/001-status.md. M002 closure should make M003 ready once its resolved-plan interface is stable.
+M001 and M002 closure evidence is recorded under plans/closure/foundation-experiment-evidence/. M003 closure should unblock Local Runner M001 planning.
