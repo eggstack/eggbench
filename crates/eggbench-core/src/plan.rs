@@ -38,7 +38,7 @@ pub struct ExperimentPlan {
 }
 
 /// Subject declaration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Subject {
     /// Process managed by a future runner.

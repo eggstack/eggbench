@@ -1,6 +1,6 @@
 # Foundation Experiment and Evidence M003 — Immutable Evidence Bundle
 
-Status: ready
+Status: active
 
 Repository planning baseline: 032eb324d299f865c989b59226e70eff28d77d09
 

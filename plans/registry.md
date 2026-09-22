@@ -36,7 +36,7 @@ Canonical direction remains in:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001-M002 closed; M003 ready | Bundle can consume versioned plan and resolved-plan contracts. |
+| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001-M002 closed; M003 active | Implementing bundle on versioned plan and resolved-plan contracts. |
 | Local runner/lifecycle | proposed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 blocked | Foundation M003. |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Foundation schemas + local trial evidence. |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts. |
@@ -48,13 +48,13 @@ Canonical direction remains in:
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff note |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M003 Immutable evidence bundle | ready | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | M001 and M002 closed; bundle consumes versioned ResolvedPlan v1. |
+| Foundation experiment/evidence | M003 Immutable evidence bundle | active | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | M001 and M002 closed; bundle consumes versioned ResolvedPlan v1. |
 
 ## Prewritten implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M003 Immutable evidence bundle | ready | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | None; predecessors closed. |
+| Foundation experiment/evidence | M003 Immutable evidence bundle | active | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | Active; predecessors closed. |
 
 ## Current execution order and dependency gates
 
