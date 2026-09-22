@@ -1,5 +1,6 @@
 //! Local run phase orchestration above the process-owning [`LocalSession`].
 
+use crate::DEFAULT_SUBJECT_LOG_LIMIT_BYTES;
 use crate::{
     CleanupFailure, LifecycleOutcome, LocalSession, stage_lifecycle_logs, stage_lifecycle_metadata,
 };
@@ -292,6 +293,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
             "phase event bound exceeds runner limit",
         ));
     }
+    preflight_evidence_capacity(&writer, session, resolved, phase_bound)?;
     let run_id = writer.run_id();
     let origin = Instant::now();
     let mut phases = Vec::with_capacity(phase_bound);
@@ -750,6 +752,102 @@ fn preflight(
         drain_timeout: drain,
         reset,
     })
+}
+
+fn preflight_evidence_capacity(
+    writer: &BundleWriter,
+    session: &LocalSession,
+    resolved: &eggbench_core::ResolvedPlan,
+    phase_bound: usize,
+) -> Result<(), OrchestrationError> {
+    let identities = session.spawn_order();
+    let warmups = usize::try_from(resolved.trials.warmup)
+        .map_err(|_| OrchestrationError::Preflight("warmup count overflow"))?;
+    let measured = usize::try_from(resolved.trials.measured.get())
+        .map_err(|_| OrchestrationError::Preflight("trial count overflow"))?;
+    let log_artifact_count = identities
+        .len()
+        .checked_mul(2)
+        .ok_or(OrchestrationError::Preflight("log artifact count overflow"))?;
+    let required_count = warmups
+        .checked_add(measured)
+        .and_then(|count| count.checked_add(2)) // phase timeline and lifecycle metadata
+        .and_then(|count| count.checked_add(log_artifact_count))
+        .ok_or(OrchestrationError::Preflight(
+            "evidence artifact count overflow",
+        ))?;
+    if writer.remaining_artifact_count() < required_count {
+        return Err(OrchestrationError::Preflight(
+            "bundle artifact-count bound cannot hold mandatory runner evidence",
+        ));
+    }
+
+    let phase_bytes = u64::try_from(phase_bound)
+        .ok()
+        .and_then(|count| count.checked_mul(256))
+        .and_then(|bytes| bytes.checked_add(2_048))
+        .ok_or(OrchestrationError::Preflight(
+            "phase artifact bound overflow",
+        ))?;
+    let lifecycle_bytes = u64::try_from(identities.len())
+        .ok()
+        .and_then(|count| count.checked_mul(512))
+        .and_then(|bytes| {
+            u64::try_from(identities.iter().map(String::len).sum::<usize>())
+                .ok()
+                .and_then(|identity_bytes| identity_bytes.checked_mul(8))
+                .and_then(|identity_bytes| bytes.checked_add(identity_bytes))
+        })
+        .and_then(|bytes| bytes.checked_add(2_048))
+        .ok_or(OrchestrationError::Preflight(
+            "lifecycle artifact bound overflow",
+        ))?;
+    if writer.max_artifact_bytes() < phase_bytes.max(lifecycle_bytes).max(512) {
+        return Err(OrchestrationError::Preflight(
+            "per-artifact bound cannot hold mandatory runner metadata",
+        ));
+    }
+
+    let mut required_bytes = phase_bytes
+        .checked_add(lifecycle_bytes)
+        .and_then(|bytes| bytes.checked_add(u64::try_from(warmups).ok()?.checked_mul(512)?))
+        .and_then(|bytes| bytes.checked_add(u64::try_from(measured).ok()?.checked_mul(512)?))
+        .ok_or(OrchestrationError::Preflight(
+            "runner artifact byte bound overflow",
+        ))?;
+    for identity in identities {
+        let log_limit = if identity == "subject" {
+            DEFAULT_SUBJECT_LOG_LIMIT_BYTES
+        } else {
+            resolved
+                .topology
+                .iter()
+                .find(|service| service.name.as_str() == identity)
+                .map_or(0, |service| service.log_limit_bytes)
+        };
+        if log_limit > writer.max_artifact_bytes() {
+            return Err(OrchestrationError::Preflight(
+                "per-artifact bound is smaller than a declared service log cap",
+            ));
+        }
+        required_bytes = required_bytes
+            .checked_add(
+                log_limit
+                    .checked_mul(2)
+                    .ok_or(OrchestrationError::Preflight(
+                        "service log byte bound overflow",
+                    ))?,
+            )
+            .ok_or(OrchestrationError::Preflight(
+                "runner artifact byte bound overflow",
+            ))?;
+    }
+    if writer.remaining_total_bytes() < required_bytes {
+        return Err(OrchestrationError::Preflight(
+            "bundle byte bound cannot hold mandatory runner evidence",
+        ));
+    }
+    Ok(())
 }
 
 fn begin_phase(

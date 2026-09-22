@@ -38,8 +38,8 @@ Canonical direction remains in:
 |---|---|---|---|---|
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 closing; M003 blocked | Local verification passes; hosted qualification and closure evidence remain |
-| Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | corrected foundation status/verdict contract + local trial evidence |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 closing; M003 blocked | Final capacity-preflight qualification and closure evidence remain |
+| Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Final Local Runner M002 closure |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -56,18 +56,12 @@ Canonical direction remains in:
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
-## Dependency-ready implementation plans
+## Ready for implementation-plan authoring
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Local runner/lifecycle | M002 Warmup, measured trial, cooldown, and reset orchestration | closing | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | Hosted qualification and closure evidence remain |
-
-## Prewritten blocked implementation plans
-
-| Subsystem | Milestone | Status | Implementation plan | Blocker |
-|---|---|---|---|---|
-| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | blocked | not yet written | M002 closure |
-| Measurement/comparison | M001 Metric normalization and trial evidence | blocked | not yet written | M002 local trial evidence |
+| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | blocked | not yet written | M002 final closure |
+| Measurement/comparison | M001 Metric normalization and trial evidence | blocked | not yet written | M002 final closure |
 
 ## Current execution order and dependency gates
 
@@ -100,13 +94,15 @@ The predecessor closure incorrectly lists `9387a45e1bbf9c1f9a55fb8ad875b07f6f880
 
 ### Gate D — Local Runner M002
 
-Both corrective C001 milestones are closed and the reviewed M002 implementation plan is now registered at `plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md`.
-
-M002 is dependency-ready for implementation. It owns warmup -> measured trial -> reset/cooldown -> drain -> teardown orchestration behind a fake workload/reset seam, with explicit monotonic measurement windows, per-trial evidence, and cancellation/failure handling. It must not add real network/load-generator or comparison behavior.
+Local Runner M002 implementation and local verification are complete. Its
+closure is pending hosted qualification of the final mandatory-evidence
+capacity preflight.
 
 ### Gate E — Comparison
 
-Metric normalization and comparison follow actual trial evidence.
+Measurement/Comparison M001 can become ready for implementation-plan
+authoring after final Local Runner M002 closure against its actual trial
+evidence and execution contract.
 
 ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 
@@ -156,16 +152,13 @@ Before marking a plan ready, verify:
 10. machine-readable schema/version effects are explicit;
 11. closure evidence is sufficient to prove more than compilation.
 
-## Next handoff
+## Next handoffs
 
-The next dependency-ready implementation plan is:
+Two milestone plans can now be authored independently:
 
-`plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md`
+- Local Runner M003: environment fingerprint and CLI lifecycle.
+- Measurement/Comparison M001: metric vocabulary and trial normalization.
 
-Implement M002 against the corrected runner/evidence boundary at or after baseline `67d3522c8a36d8d5e1ac1e826e7c02aefad0c894`.
-
-After M002 closes:
-
-- Local Runner M003 becomes ready for planning;
-- Measurement/Comparison M001 becomes ready for planning against real local trial evidence;
-- External Oracles M001 remains independently ready for planning, but real performance qualification should still wait for the measurement contract.
+External Oracles M001 remains independently ready for planning. Actual
+performance qualification and Eggstack integration work should still wait
+for the measurement contract to stabilize.

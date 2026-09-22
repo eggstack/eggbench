@@ -869,6 +869,24 @@ impl BundleWriter {
         &self.final_path
     }
 
+    /// Number of additional artifacts that can be registered before the count bound is reached.
+    #[must_use]
+    pub fn remaining_artifact_count(&self) -> usize {
+        (self.bounds.artifact_count.get() as usize).saturating_sub(self.artifacts.len())
+    }
+
+    /// Remaining total bytes available for artifact contents.
+    #[must_use]
+    pub const fn remaining_total_bytes(&self) -> u64 {
+        self.bounds.total_bytes - self.total_bytes
+    }
+
+    /// Maximum byte size permitted for one artifact.
+    #[must_use]
+    pub const fn max_artifact_bytes(&self) -> u64 {
+        self.bounds.artifact_bytes
+    }
+
     /// Stream an artifact into staging and register its size and SHA-256 digest.
     ///
     /// The file is copied in fixed 64 KiB chunks and is never buffered in full.

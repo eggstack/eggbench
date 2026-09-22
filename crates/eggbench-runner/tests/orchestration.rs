@@ -100,14 +100,23 @@ impl PlatformAdapter for CancelOnTerminate {
 }
 
 fn writer(root: &Path) -> BundleWriter {
+    writer_with_bounds(root, 64, 1024 * 1024, 4 * 1024 * 1024)
+}
+
+fn writer_with_bounds(
+    root: &Path,
+    artifact_count: u32,
+    artifact_bytes: u64,
+    total_bytes: u64,
+) -> BundleWriter {
     let path = root.join("out.eggb");
     let mut writer = BundleWriter::create(
         &path,
         RunId::new(),
         ArtifactBounds {
-            artifact_count: PositiveCount::new(64).unwrap(),
-            artifact_bytes: 1024 * 1024,
-            total_bytes: 4 * 1024 * 1024,
+            artifact_count: PositiveCount::new(artifact_count).unwrap(),
+            artifact_bytes,
+            total_bytes,
         },
     )
     .unwrap();
@@ -683,6 +692,30 @@ async fn unknown_timeout_key_is_rejected_before_startup() {
         result,
         Err(eggbench_runner::OrchestrationError::Preflight(_))
     ));
+    assert!(workload.invocations.is_empty());
+    assert!(!workload.drained);
+}
+
+#[tokio::test]
+async fn insufficient_evidence_bounds_fail_preflight_before_startup() {
+    let temp = tempfile::tempdir().unwrap();
+    let resolved = plan();
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let result = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer_with_bounds(temp.path(), 8, 512, 4 * 1024),
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(eggbench_runner::OrchestrationError::Preflight(_))
+    ));
+    assert!(session.events().is_empty());
     assert!(workload.invocations.is_empty());
     assert!(!workload.drained);
 }

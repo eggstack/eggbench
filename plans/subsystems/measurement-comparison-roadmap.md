@@ -105,4 +105,16 @@ The roadmap closes when Eggbench can compare two immutable evidence bundles unde
 
 ## 10. Milestone status
 
-All milestones are blocked on foundation and local-runner trial evidence contracts.
+### M001 — Metric vocabulary and trial normalization
+
+Status: blocked until final Local Runner M002 closure. The corrected
+foundation status/verdict contract is closed.
+
+### M002 — Baselines, comparability, and statistical gates
+
+Status: blocked on M001 metric vocabulary and normalized trial summaries.
+
+### M003 — Paired/interleaved experiment qualification
+
+Status: blocked on M002 comparison policy and the required runner scheduling
+contract.
