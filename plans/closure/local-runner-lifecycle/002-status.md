@@ -1,7 +1,9 @@
 # Local Runner M002 Closure — Warmup, Trials, Cooldown, Reset
 
-Disposition: **closing; timeout regression qualification pending**
-Implemented through commit `87e89691568d7fb0b018667d8174bb1dfe9e6f0c`, hosted and qualified by [CI run 35789353964](https://github.com/eggstack/eggbench/actions/runs/35789353964). Three timeout regression tests are being added and require a final hosted run.
+Disposition: **closed**
+Closed: 2026-09-22
+Implementation commits: [`e5c82d0692711e562459ccd7270b7be874e0ceb1`](https://github.com/eggstack/eggbench/commit/e5c82d0692711e562459ccd7270b7be874e0ceb1), [`87e89691568d7fb0b018667d8174bb1dfe9e6f0c`](https://github.com/eggstack/eggbench/commit/87e89691568d7fb0b018667d8174bb1dfe9e6f0c), [`24d068dac953e01f7aed30f8dacc3d42aa17eccc`](https://github.com/eggstack/eggbench/commit/24d068dac953e01f7aed30f8dacc3d42aa17eccc)
+Hosted qualification: [CI run 35789767807](https://github.com/eggstack/eggbench/actions/runs/35789767807) — all jobs passed.
 
 ## Requirement-to-evidence matrix
 
@@ -76,7 +78,7 @@ trials/002/result.json
 - `cargo +1.89.0 check --workspace --all-targets --locked` — passed.
 - `cargo tree --locked` and focused core source/dependency inspection — passed; runtime/process ownership remains in runner and no concrete transport or benchmark dependency was added.
 - `git diff --check` — passed.
-- Hosted CI run `35789353964` — passed: Linux stable, Linux 1.89 MSRV, macOS stable including process-group and filesystem-confinement qualification, and Windows supported subset.
+- Hosted CI run `35789767807` — passed: Linux stable, Linux 1.89 MSRV, macOS stable including process-group and filesystem-confinement qualification, and Windows supported subset.
 
 ## Documentation and known limits
 
@@ -90,6 +92,12 @@ resolved plan, and environment evidence. Production workload protocols,
 environment fingerprinting, CLI behavior, metric normalization, and
 comparison remain later work. No unresolved correctness, security, lifecycle,
 or portability finding remains within M002 scope.
+
+## Unresolved findings
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| None | No unresolved M002 correctness, security, lifecycle, or portability finding | No corrective work required |
 
 ## Dependency disposition
 

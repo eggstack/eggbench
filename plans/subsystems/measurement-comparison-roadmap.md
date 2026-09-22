@@ -1,6 +1,6 @@
 # Measurement and Comparison Roadmap
 
-Status: proposed
+Status: ready
 
 Long-term references:
 
@@ -107,8 +107,8 @@ The roadmap closes when Eggbench can compare two immutable evidence bundles unde
 
 ### M001 — Metric vocabulary and trial normalization
 
-Status: blocked until final Local Runner M002 closure. The corrected
-foundation status/verdict contract is closed.
+Status: ready for implementation-plan authoring. The corrected foundation
+status/verdict contract and Local Runner M002 trial evidence are closed.
 
 ### M002 — Baselines, comparability, and statistical gates
 

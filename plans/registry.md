@@ -38,8 +38,8 @@ Canonical direction remains in:
 |---|---|---|---|---|
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 closing; M003 blocked | Final timeout regression qualification and closure evidence remain |
-| Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Final Local Runner M002 closure |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 and M002 closed; M003 ready for planning | No current blocker; M002 closure is recorded |
+| Measurement/comparison | ready | plans/subsystems/measurement-comparison-roadmap.md | M001 ready for planning | Corrected foundation and local trial evidence contracts are closed |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -52,6 +52,7 @@ Canonical direction remains in:
 | Foundation experiment/evidence | closed | plans/subsystems/foundation-experiment-evidence-roadmap.md | plans/closure/foundation-experiment-evidence/001-status.md; 002-status.md; 003-status.md |
 | Foundation status/verdict corrective C001 | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
+| Local runner/lifecycle M002 | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/002-status.md |
 | Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
@@ -60,8 +61,8 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | blocked | not yet written | M002 final closure |
-| Measurement/comparison | M001 Metric normalization and trial evidence | blocked | not yet written | M002 final closure |
+| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | ready for planning | not yet written | M002 closed; author the next local runner handoff |
+| Measurement/comparison | M001 Metric normalization and trial evidence | ready for planning | not yet written | M002 local trial evidence and corrected foundation contract are available |
 
 ## Current execution order and dependency gates
 
@@ -75,7 +76,7 @@ A post-closure audit found one schema-semantic issue: manifest v1 overloads exec
 
 Foundation post-closure corrective C001 is closed as recorded at `plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md`. It separates execution status from comparison verdict, emits manifest v2 for new writes, retains an explicit manifest-v1 reader, and records Local Runner M001 lifecycle-only evidence as “execution completed, comparison not performed.”
 
-Do not begin Local Runner M002 or Measurement/Comparison implementation until this closes.
+This gate closed before Local Runner M002 began; the corrected status/verdict contract remains controlling for subsequent work.
 
 ### Gate C — Local Runner M001 corrective
 
@@ -94,15 +95,17 @@ The predecessor closure incorrectly lists `9387a45e1bbf9c1f9a55fb8ad875b07f6f880
 
 ### Gate D — Local Runner M002
 
-Local Runner M002 implementation and verification are complete. Final
-qualification is pending three timeout regression cases for warmup, reset,
-and drain.
+Local Runner M002 is closed at
+`plans/closure/local-runner-lifecycle/002-status.md`. It supplies warmup ->
+measured trial -> reset/cooldown -> drain -> teardown orchestration behind
+fake workload/reset seams, with monotonic measurement windows, per-trial
+evidence, evidence-capacity preflight, and cancellation/failure handling. It
+adds no real network/load-generator or comparison behavior.
 
 ### Gate E — Comparison
 
-Measurement/Comparison M001 will be ready for implementation-plan authoring
-after final Local Runner M002 closure against its actual trial evidence and
-execution contract.
+Measurement/Comparison M001 is now ready for implementation-plan authoring
+against the actual trial evidence and execution contract from M002.
 
 ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 
