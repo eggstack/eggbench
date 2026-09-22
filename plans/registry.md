@@ -38,8 +38,9 @@ Canonical direction remains in:
 |---|---|---|---|---|
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 and M002 closed; M003 ready for planning | No current blocker; M002 closure is recorded |
-| Measurement/comparison | ready | plans/subsystems/measurement-comparison-roadmap.md | M001 ready for planning | Corrected foundation and local trial evidence contracts are closed |
+| Local runner M002 post-closure corrective | active | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 ready | none |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 historical closure + C001 corrective ready; M003 blocked | M002 evidence-safety corrective C001 must close before M003 |
+| Measurement/comparison | blocked | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Local Runner M002 evidence-safety corrective C001 must close before consuming trial orchestration |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -57,12 +58,18 @@ Canonical direction remains in:
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
-## Ready for implementation-plan authoring
+## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | ready for planning | not yet written | M002 closed; author the next local runner handoff |
-| Measurement/comparison | M001 Metric normalization and trial evidence | ready for planning | not yet written | M002 local trial evidence and corrected foundation contract are available |
+| Local runner M002 post-closure corrective | C001 Evidence-error cleanup and finalization timeline | ready | plans/implementation/local-runner-m002-post-closure-corrective/001-evidence-error-cleanup-and-finalization-timeline.md | Must close before M003 or Measurement/Comparison implementation |
+
+## Blocked next milestones
+
+| Subsystem | Milestone | Status | Implementation plan | Blocker |
+|---|---|---|---|---|
+| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | blocked | not yet written | M002 corrective C001 |
+| Measurement/comparison | M001 Metric normalization and trial evidence | blocked | not yet written | M002 corrective C001 |
 
 ## Current execution order and dependency gates
 
@@ -93,19 +100,25 @@ It must:
 
 The predecessor closure incorrectly lists `9387a45e1bbf9c1f9a55fb8ad875b07f6f880d21`. The actual M001 implementation commit is `9387a459103078c1ccdbca7d4db41ae0f6cefc11`. The corrective must preserve the old record and add explicit errata.
 
-### Gate D — Local Runner M002
+### Gate D — Local Runner M002 and post-closure evidence-safety corrective
 
-Local Runner M002 is closed at
-`plans/closure/local-runner-lifecycle/002-status.md`. It supplies warmup ->
-measured trial -> reset/cooldown -> drain -> teardown orchestration behind
-fake workload/reset seams, with monotonic measurement windows, per-trial
-evidence, evidence-capacity preflight, and cancellation/failure handling. It
-adds no real network/load-generator or comparison behavior.
+Local Runner M002 has a historical closure at
+`plans/closure/local-runner-lifecycle/002-status.md`.
+
+A post-closure audit found two untested correctness defects in the orchestration/evidence boundary:
+
+- dynamic workload-artifact staging errors can occur after managed startup and return before workload drain/service teardown;
+- the persisted finalization phase can differ from the returned `RunOutcome.phases` because the phase is serialized before bundle publication and then mutated again in memory.
+
+Corrective C001 is registered at:
+
+`plans/implementation/local-runner-m002-post-closure-corrective/001-evidence-error-cleanup-and-finalization-timeline.md`
+
+It is the only dependency-ready runner handoff. Historical M002 closure remains preserved.
 
 ### Gate E — Comparison
 
-Measurement/Comparison M001 is now ready for implementation-plan authoring
-against the actual trial evidence and execution contract from M002.
+Measurement/Comparison M001 remains blocked until M002 corrective C001 closes.
 
 ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 
@@ -155,13 +168,15 @@ Before marking a plan ready, verify:
 10. machine-readable schema/version effects are explicit;
 11. closure evidence is sufficient to prove more than compilation.
 
-## Next handoffs
+## Next handoff
 
-Two milestone plans can now be authored independently:
+The next dependency-ready implementation plan is:
 
-- Local Runner M003: environment fingerprint and CLI lifecycle.
-- Measurement/Comparison M001: metric vocabulary and trial normalization.
+`plans/implementation/local-runner-m002-post-closure-corrective/001-evidence-error-cleanup-and-finalization-timeline.md`
 
-External Oracles M001 remains independently ready for planning. Actual
-performance qualification and Eggstack integration work should still wait
-for the measurement contract to stabilize.
+After corrective C001 closes:
+
+- Local Runner M003 becomes ready for plan authoring/implementation;
+- Measurement/Comparison M001 becomes ready for plan authoring/implementation against lifecycle-safe trial evidence.
+
+External Oracles M001 remains independently plan-authorable, but implementation that consumes the M002 orchestration path should wait for this corrective to close.
