@@ -36,8 +36,8 @@ Canonical direction remains in:
 
 | Subsystem | Status | Roadmap / corrective | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| Foundation experiment/evidence post-closure corrective | active | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 ready | none |
-| Local runner/lifecycle post-closure corrective | active | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 blocked | Foundation corrective C001 |
+| Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
+| Local runner/lifecycle post-closure corrective | active | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 ready | none |
 | Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 blocked; M003 blocked | M002 waits for both post-closure correctives and then needs a fresh implementation plan |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | corrected foundation status/verdict contract + local trial evidence |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
@@ -50,6 +50,7 @@ Canonical direction remains in:
 | Subsystem | Status | Roadmap | Closure evidence |
 |---|---|---|---|
 | Foundation experiment/evidence | closed | plans/subsystems/foundation-experiment-evidence-roadmap.md | plans/closure/foundation-experiment-evidence/001-status.md; 002-status.md; 003-status.md |
+| Foundation status/verdict corrective C001 | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; post-closure corrective records the SHA erratum and additional findings |
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
@@ -58,14 +59,13 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Foundation experiment/evidence post-closure corrective | C001 Execution status and comparison verdict separation | ready | plans/implementation/foundation-experiment-evidence-post-closure-corrective/001-execution-status-and-comparison-verdict-separation.md | Must land before further runner trial evidence or comparison work |
+| Local runner/lifecycle post-closure corrective | C001 Filesystem/environment/platform qualification | ready | plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md | Foundation C001 is closed; this plan is the next gate |
 
 ## Prewritten blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Local runner/lifecycle post-closure corrective | C001 Filesystem/environment/platform qualification | blocked | plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md | Foundation corrective C001 |
-| Local runner/lifecycle | M002 Trial phase orchestration + fake workload | blocked | not yet written | Foundation corrective C001 + Local Runner corrective C001; then write a fresh plan against corrected repository |
+| Local runner/lifecycle | M002 Trial phase orchestration + fake workload | blocked | not yet written | Local Runner corrective C001; then write a fresh plan against the corrected repository |
 
 ## Current execution order and dependency gates
 
@@ -77,15 +77,13 @@ A post-closure audit found one schema-semantic issue: manifest v1 overloads exec
 
 ### Gate B — Foundation status/verdict corrective
 
-Run Foundation post-closure corrective C001 first.
-
-It must separate execution status from comparison verdict, emit a corrected manifest schema for new writes, retain explicit manifest-v1 read compatibility, and migrate Local Runner M001's zero-trial evidence from fabricated `inconclusive` to “execution completed, comparison not performed.”
+Foundation post-closure corrective C001 is closed as recorded at `plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md`. It separates execution status from comparison verdict, emits manifest v2 for new writes, retains an explicit manifest-v1 reader, and records Local Runner M001 lifecycle-only evidence as “execution completed, comparison not performed.”
 
 Do not begin Local Runner M002 or Measurement/Comparison implementation until this closes.
 
 ### Gate C — Local Runner M001 corrective
 
-After Foundation C001 closes, run Local Runner post-closure corrective C001.
+Run Local Runner post-closure corrective C001, now dependency-ready after Foundation C001.
 
 It must:
 
@@ -158,12 +156,8 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The only dependency-ready implementation plan is:
-
-`plans/implementation/foundation-experiment-evidence-post-closure-corrective/001-execution-status-and-comparison-verdict-separation.md`
-
-After it closes, the next handoff is:
+The current dependency-ready implementation plan is:
 
 `plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md`
 
-Do not write or execute Local Runner M002 until both correctives close.
+After Local Runner corrective C001 closes, write a fresh Local Runner M002 plan against the corrected repository. Do not write or execute Local Runner M002 before then.

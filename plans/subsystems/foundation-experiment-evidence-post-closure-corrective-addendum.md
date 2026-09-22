@@ -1,6 +1,6 @@
 # Foundation Experiment and Evidence — Post-Closure Status Semantics Corrective Addendum
 
-Status: active
+Status: closed
 
 Repository audit baseline: `319b5816604e39578af4e20f5880945123b042e1`
 
@@ -254,7 +254,7 @@ Implementation plan:
 
 - `plans/implementation/foundation-experiment-evidence-post-closure-corrective/001-execution-status-and-comparison-verdict-separation.md`
 
-Status: ready.
+Status: closed.
 
 Exit conditions:
 
@@ -291,4 +291,4 @@ This corrective closes when Eggbench evidence can answer “did execution comple
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| C001 | ready | `plans/implementation/foundation-experiment-evidence-post-closure-corrective/001-execution-status-and-comparison-verdict-separation.md` | none | none |
+| C001 | closed | `plans/implementation/foundation-experiment-evidence-post-closure-corrective/001-execution-status-and-comparison-verdict-separation.md` | `plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md` | none |

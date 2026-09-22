@@ -113,7 +113,7 @@ Local Runner corrective C001
 Local Runner M002 planning/implementation
 ~~~
 
-This corrective is hard-blocked until the foundation status/verdict C001 closes because both workstreams touch lifecycle evidence tests and bundle finalization call sites.
+This corrective was hard-blocked until the foundation status/verdict C001 closed because both workstreams touch lifecycle evidence tests and bundle finalization call sites. That dependency is now satisfied.
 
 ## 6. Correct filesystem-confinement contract
 
@@ -222,7 +222,7 @@ Implementation plan:
 
 - `plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md`
 
-Status: blocked on Foundation post-closure corrective C001.
+Status: ready; Foundation post-closure corrective C001 is closed.
 
 Exit conditions:
 
@@ -268,4 +268,4 @@ The corrective closes when managed local execution has a truthful filesystem, en
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| C001 | blocked | `plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md` | none | Foundation post-closure corrective C001 |
+| C001 | ready | `plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md` | none | none |

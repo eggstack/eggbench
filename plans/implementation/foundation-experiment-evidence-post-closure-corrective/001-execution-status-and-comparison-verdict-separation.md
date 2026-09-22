@@ -1,6 +1,8 @@
 # Foundation Post-Closure Corrective C001 — Execution Status and Comparison Verdict Separation
 
-Status: ready for handoff
+Status: closed
+
+Closure record: `plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md`
 
 Repository baseline: `319b5816604e39578af4e20f5880945123b042e1`
 

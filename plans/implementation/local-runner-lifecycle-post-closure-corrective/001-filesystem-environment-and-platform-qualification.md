@@ -1,8 +1,8 @@
 # Local Runner Post-Closure Corrective C001 — Filesystem, Environment, and Platform Qualification
 
-Status: blocked
+Status: ready for handoff
 
-Repository planning baseline: `319b5816604e39578af4e20f5880945123b042e1`
+Repository planning baseline: `f10e03d224a3ca62cec04cd124154ace7685398f` (Foundation corrective C001 implementation).
 
 Source corrective:
 
@@ -10,7 +10,7 @@ Source corrective:
 
 Hard dependency:
 
-- Foundation post-closure corrective C001 must be closed first.
+- Foundation post-closure corrective C001 is closed in `plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md`.
 
 Predecessor evidence:
 
@@ -242,11 +242,11 @@ Update:
 
 ## 10. Interaction with the foundation status corrective
 
-This plan must be rebased/reviewed after Foundation corrective C001 closes.
+This plan was reviewed after Foundation corrective C001 closed. `BundleWriter::finalize` now takes `ExecutionStatus` and an optional `ComparisonVerdict`; the lifecycle-only call site has already migrated and records completed/no-comparison. No additional comparison concept belongs in this corrective.
 
 The runner's lifecycle-only bundle test must use the new separated execution-status/comparison-verdict API.
 
-Do not reintroduce `RunStatus::Inconclusive` or an equivalent overloaded local enum.
+Do not reintroduce a mixed execution/comparison status type. `LegacyRunStatus` is read-only manifest-v1 provenance and must not be used for new writes.
 
 If the foundation corrective materially changes bundle writer arguments, update this plan's code touch points while preserving all lifecycle invariants.
 
