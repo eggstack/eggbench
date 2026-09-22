@@ -59,5 +59,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test -p eggbench-core --all-features --locked
+      - name: Test core contracts and publish failing assertion names
+        shell: bash
+        run: |
+          set +e
+          cargo test -p eggbench-core --all-features --locked > core-tests.log 2>&1
+          result=$?
+          if [ "$result" -ne 0 ]; then
+            grep -E 'test .* \.\.\. FAILED|panicked at|error:|failures:' core-tests.log | while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              echo "::error title=Windows core test failure::$line"
+            done
+          fi
+          exit "$result"
       - run: cargo test -p eggbench-runner --test platform --locked
