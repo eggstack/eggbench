@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "experiment": "multi-service",
+  "subject": { "kind": "external", "target": "frontend", "revision": "abc123", "digest": null },
+  "services": [
+    { "name": "database", "kind": { "kind": "named", "service_type": "postgres" }, "lifecycle": "external", "depends_on": [], "config": {}, "readiness": null, "shutdown": null, "working_directory": null, "log_limit_bytes": 1048576 },
+    { "name": "frontend", "kind": { "kind": "command", "argv": ["./server"] }, "lifecycle": "managed", "depends_on": ["database"], "config": {}, "readiness": { "kind": "delay", "after_ms": 100 }, "shutdown": { "grace_ms": 5000, "method": null }, "working_directory": ".", "log_limit_bytes": 1048576 }
+  ],
+  "workload": { "kind": "open_loop", "target": "frontend", "rate_milli_rps": 25000, "requests": null, "duration_ms": 60000 },
+  "trials": { "measured": 5, "warmup": 2, "cooldown_ms": 1000, "reset": { "kind": "service", "service": "database" }, "timeouts": {} },
+  "telemetry": [{ "source": "host", "fields": ["cpu", "memory"], "required": false }],
+  "metrics": [{ "name": "throughput", "unit": "rps", "direction": { "kind": "higher_is_better" }, "intent": "primary", "gate": { "kind": "relative_regression", "allowance": 500 } }],
+  "environment_policy": { "kind": "warn_on_mismatch" },
+  "seed": null,
+  "bounds": { "artifact_count": 512, "artifact_bytes": 16777216, "total_bytes": 536870912 }
+}
