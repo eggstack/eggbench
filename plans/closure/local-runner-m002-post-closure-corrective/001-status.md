@@ -2,10 +2,8 @@
 
 Disposition: **closed**
 Closed: 2026-09-22
-Implementation commit: implementation lands in this repository working tree as a single corrective
-change against audit baseline `02212d5d9f78816eec5ef1b89d45e99c0dbe02d5`.
-Hosted qualification: pending; the change is structured for the existing
-Linux stable / Linux MSRV / macOS stable / Windows stable CI workflows.
+Implementation commit: `6900212a5997b3d776e824b115d8ad35d36cd431` against audit baseline `02212d5d9f78816eec5ef1b89d45e99c0dbe02d5`.
+Hosted qualification: CI run `35797812233` — completed successfully on Linux stable, Linux Rust 1.89 MSRV, macOS stable, and Windows stable supported-subset jobs.
 
 ## 1. Why a corrective closure rather than a new M002 amendment
 
@@ -95,10 +93,7 @@ The internal `RunState` struct is not part of the public API.
 - `cargo +1.89.0 test -p eggbench-core --all-features --locked` — pass (29 core tests)
 - `cargo tree --locked` — pass; no new runtime or process dependency
 - `git diff --check` — pass
-- Hosted CI workflow runs: pending. The change is structured for the existing
-  Linux stable, Linux MSRV, macOS stable, and Windows stable jobs; the
-  closure record will be amended with the run IDs once a hosted green run
-  lands.
+- Hosted CI run `35797812233` — pass: Linux stable, Linux Rust 1.89 MSRV, macOS stable, and Windows stable supported subset all completed successfully.
 
 ## 6. Compatibility, security, and limitations
 
@@ -142,7 +137,7 @@ execution remains deferred.
 | Severity | Finding | Disposition |
 |---|---|---|
 | None | No unresolved M002 evidence-safety correctness, security, lifecycle, or portability finding | No further corrective work required |
-| Low | Hosted CI run ID will be appended once a green hosted run lands | Pending hosted qualification |
+| None | Hosted CI qualification is complete | CI run `35797812233` passed all required jobs |
 
 ## 10. Disposition
 
