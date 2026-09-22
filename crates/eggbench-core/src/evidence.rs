@@ -980,6 +980,9 @@ impl BundleWriter {
             .map_err(|error| io_error(&manifest_path, error))?;
         file.sync_all()
             .map_err(|error| io_error(&manifest_path, error))?;
+        // Windows cannot rename the staging directory while a manifest handle is open without
+        // delete-sharing. Close it before syncing/publishing the directory.
+        drop(file);
         sync_directory(&self.staging_path)?;
 
         publish_staging(&self.staging_path, &self.final_path)?;
