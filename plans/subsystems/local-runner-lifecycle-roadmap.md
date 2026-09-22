@@ -128,5 +128,19 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
 | M001 | closed | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | plans/closure/local-runner-lifecycle/001-status.md | none |
-| M002 | closed | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | plans/closure/local-runner-lifecycle/002-status.md | none |
-| M003 | ready for planning | not yet written | none | none; M002 supplies orchestration and trial evidence |
+| M002 | closed historical predecessor | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | plans/closure/local-runner-lifecycle/002-status.md | Post-closure evidence-safety corrective C001 is active |
+| M003 | blocked | not yet written | none | Local Runner M002 post-closure corrective C001 |
+
+
+## 12. Active post-closure corrective
+
+A post-closure audit of M002 found that dynamic workload-artifact staging errors can return from `execute_run()` after managed startup but before the common workload-drain/service-teardown tail. It also found that the persisted finalization phase can differ from the returned in-memory phase state.
+
+The corrective is:
+
+- `plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md`
+- `plans/implementation/local-runner-m002-post-closure-corrective/001-evidence-error-cleanup-and-finalization-timeline.md`
+
+Status: **C001 ready for handoff**.
+
+M003 and Measurement/Comparison implementation must wait for this corrective to close. Historical M002 closure remains preserved.
