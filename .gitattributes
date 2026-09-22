@@ -1,3 +1,3 @@
 # Evidence bundles are immutable byte artifacts; line-ending conversion
 # would invalidate their recorded sizes and digests on Windows checkouts.
-*.eggb/** -text
+**/*.eggb/** -text
