@@ -8,9 +8,9 @@
 //! inconclusive zero-trial evidence.
 
 use eggbench_core::{
-    ArtifactBounds, ArtifactRole, BundleWriter, DurationMs, Lifecycle, Name, PositiveCount,
-    Readiness, ResolvedPlan, RunId, RunStatus, Service, ServiceKind, Shutdown, Subject,
-    TrialPolicy,
+    ArtifactBounds, ArtifactRole, BundleWriter, ComparisonVerdict, DurationMs, ExecutionStatus,
+    Lifecycle, Name, PositiveCount, Readiness, ResolvedPlan, RunId, Service, ServiceKind, Shutdown,
+    Subject, TrialPolicy,
 };
 use eggbench_runner::{
     LifecycleEventKind, LocalSession, MapSecretProvider, PlatformAdapter, PlatformSupport,
@@ -581,7 +581,7 @@ fn add_required_artifacts(writer: &mut BundleWriter) {
 }
 
 #[tokio::test]
-async fn zero_trial_lifecycle_evidence_is_inconclusive() {
+async fn zero_trial_lifecycle_evidence_has_no_comparison_verdict() {
     let root = temp_root();
     let mut resolved = base_resolved();
     resolved.topology = vec![managed("app", &["emit-stdout", "64"], &[], 4096)];
@@ -609,7 +609,8 @@ async fn zero_trial_lifecycle_evidence_is_inconclusive() {
     let _ = metadata;
     let bundle = writer
         .finalize(
-            RunStatus::Inconclusive,
+            ExecutionStatus::Completed,
+            None,
             Subject::Label {
                 label: name("bench"),
             },
@@ -621,9 +622,14 @@ async fn zero_trial_lifecycle_evidence_is_inconclusive() {
         .unwrap();
     bundle.verify().unwrap();
     assert_eq!(
-        bundle.manifest().status,
-        RunStatus::Inconclusive,
-        "a lifecycle-only run records no trials and is inconclusive, never a pass"
+        bundle.manifest().execution_status,
+        Some(ExecutionStatus::Completed),
+        "lifecycle completion is independent from comparison"
+    );
+    assert_eq!(bundle.manifest().comparison_verdict, None);
+    assert_ne!(
+        bundle.manifest().comparison_verdict,
+        Some(ComparisonVerdict::Pass)
     );
     assert!(bundle.manifest().trials.is_empty());
     let stdout_role = bundle

@@ -15,7 +15,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 /// Current evidence manifest schema version.
-pub const EVIDENCE_MANIFEST_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+pub const EVIDENCE_MANIFEST_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
 /// Current placeholder schema version for testbed metadata.
 pub const ENVIRONMENT_FINGERPRINT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 /// Maximum encoded manifest size.
@@ -159,20 +159,48 @@ impl fmt::Display for ArtifactPath {
     }
 }
 
-/// Terminal state recorded for a run.
+/// Legacy terminal state used by manifest v1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    /// Run completed successfully.
+pub enum LegacyRunStatus {
+    /// Legacy status: execution completed.
     Succeeded,
-    /// Run completed with a measured failure.
+    /// Legacy status: run failed.
     Failed,
-    /// Run was cancelled.
+    /// Legacy status: run was cancelled.
     Cancelled,
-    /// Run is invalid and cannot support a result.
+    /// Legacy status: run was invalid.
     Invalid,
-    /// Run completed but evidence is insufficient for a verdict.
+    /// Legacy status: ambiguous between no comparison and an inconclusive comparison.
     Inconclusive,
+}
+
+/// Lifecycle outcome of executing a run. It carries no comparison meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionStatus {
+    /// The requested lifecycle completed and evidence was finalized.
+    Completed,
+    /// An operational/runtime phase failed.
+    Failed,
+    /// Execution was cancelled.
+    Cancelled,
+    /// Execution evidence violates a required validity contract.
+    Invalid,
+}
+
+/// Verdict produced by a comparison policy, independent of run execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonVerdict {
+    /// Candidate satisfies the comparison policy.
+    Pass,
+    /// Candidate fails the comparison policy.
+    Fail,
+    /// Evidence does not support a pass or fail conclusion.
+    Inconclusive,
+    /// Evidence or comparison inputs are invalid.
+    Invalid,
 }
 
 /// Logical artifact role recorded in the manifest.
@@ -260,8 +288,10 @@ pub struct BundleManifest {
     pub schema_version: SchemaVersion,
     /// Unique run identity.
     pub run_id: RunId,
-    /// Terminal run state.
-    pub status: RunStatus,
+    /// Lifecycle outcome. Missing only in the normalized view of ambiguous v1 evidence.
+    pub execution_status: Option<ExecutionStatus>,
+    /// Comparison outcome; absent when comparison was not performed.
+    pub comparison_verdict: Option<ComparisonVerdict>,
     /// Subject identity snapshot; environment secrets remain references in this type.
     pub subject: Subject,
     /// Creation time as Unix milliseconds; optional for imported synthetic evidence.
@@ -292,6 +322,80 @@ pub struct BundleManifest {
     pub finalized: bool,
 }
 
+/// Explicit manifest-v1 representation. Its `inconclusive` state is inherently ambiguous.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LegacyManifestV1 {
+    /// Original schema version (always 1).
+    pub schema_version: SchemaVersion,
+    /// Unique run identity.
+    pub run_id: RunId,
+    /// Original overloaded terminal status.
+    pub status: LegacyRunStatus,
+    /// Subject identity snapshot.
+    pub subject: Subject,
+    /// Creation timestamp.
+    pub created_unix_ms: Option<u64>,
+    /// Finalization timestamp.
+    pub finalized_unix_ms: Option<u64>,
+    /// Source plan artifact.
+    pub plan: ArtifactPath,
+    /// Resolved plan artifact.
+    pub resolved_plan: ArtifactPath,
+    /// Environment artifact.
+    pub environment: ArtifactPath,
+    /// Trial descriptors.
+    #[serde(default)]
+    pub trials: Vec<TrialDescriptor>,
+    /// Optional comparison artifact.
+    pub comparison: Option<ArtifactPath>,
+    /// Optional report artifact.
+    pub report: Option<ArtifactPath>,
+    /// Driver inventory.
+    #[serde(default)]
+    pub drivers: Vec<DriverDescriptor>,
+    /// Artifact bounds.
+    pub limits: ArtifactBounds,
+    /// Retained artifact metadata.
+    pub artifacts: Vec<ArtifactRecord>,
+    /// Finalization marker.
+    pub finalized: bool,
+}
+
+impl LegacyManifestV1 {
+    fn into_current_view(self) -> BundleManifest {
+        let execution_status = match self.status {
+            LegacyRunStatus::Succeeded | LegacyRunStatus::Inconclusive => {
+                // The reader exposes the exact legacy value separately. For `Inconclusive`,
+                // this normalized display value must not be interpreted without checking
+                // `BundleReader::legacy_status`.
+                Some(ExecutionStatus::Completed)
+            }
+            LegacyRunStatus::Failed => Some(ExecutionStatus::Failed),
+            LegacyRunStatus::Cancelled => Some(ExecutionStatus::Cancelled),
+            LegacyRunStatus::Invalid => Some(ExecutionStatus::Invalid),
+        };
+        BundleManifest {
+            schema_version: EVIDENCE_MANIFEST_SCHEMA_VERSION,
+            run_id: self.run_id,
+            execution_status,
+            comparison_verdict: None,
+            subject: self.subject,
+            created_unix_ms: self.created_unix_ms,
+            finalized_unix_ms: self.finalized_unix_ms,
+            plan: self.plan,
+            resolved_plan: self.resolved_plan,
+            environment: self.environment,
+            trials: self.trials,
+            comparison: self.comparison,
+            report: self.report,
+            drivers: self.drivers,
+            limits: self.limits,
+            artifacts: self.artifacts,
+            finalized: self.finalized,
+        }
+    }
+}
+
 impl BundleManifest {
     /// Validate schema, authoritative references, unique IDs/paths, and finalization state.
     ///
@@ -299,9 +403,42 @@ impl BundleManifest {
     /// Returns a categorized [`BundleError`] if the manifest is not a complete finalized contract.
     #[allow(clippy::too_many_lines)] // The authoritative manifest invariants are reviewed together.
     pub fn validate(&self) -> Result<(), BundleError> {
+        self.validate_inner(false)
+    }
+
+    fn validate_legacy_view(&self) -> Result<(), BundleError> {
+        self.validate_inner(true)
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep current and bounded legacy invariants together.
+    fn validate_inner(&self, legacy: bool) -> Result<(), BundleError> {
         if self.schema_version != EVIDENCE_MANIFEST_SCHEMA_VERSION {
             return Err(BundleError::UnsupportedManifestVersion(
                 self.schema_version.0,
+            ));
+        }
+        if self.execution_status.is_none() {
+            return Err(BundleError::InvalidManifest("execution status is required"));
+        }
+        if !legacy && self.comparison.is_none() && self.comparison_verdict.is_some() {
+            return Err(BundleError::InvalidManifest(
+                "comparison verdict requires comparison artifact",
+            ));
+        }
+        if !legacy && self.comparison.is_some() && self.comparison_verdict.is_none() {
+            return Err(BundleError::InvalidManifest(
+                "comparison artifact requires comparison verdict",
+            ));
+        }
+        if !legacy
+            && matches!(
+                self.execution_status,
+                Some(ExecutionStatus::Failed | ExecutionStatus::Cancelled)
+            )
+            && self.comparison_verdict.is_some()
+        {
+            return Err(BundleError::InvalidManifest(
+                "failed or cancelled execution cannot have a comparison verdict",
             ));
         }
         if !self.finalized {
@@ -775,9 +912,11 @@ impl BundleWriter {
     ///
     /// # Errors
     /// Returns an error for missing required artifacts, invalid references, bounds, or failed atomic publication.
+    #[allow(clippy::too_many_arguments)] // Keep finalization's independent evidence fields explicit.
     pub fn finalize(
         self,
-        status: RunStatus,
+        execution_status: ExecutionStatus,
+        comparison_verdict: Option<ComparisonVerdict>,
         subject: Subject,
         drivers: Vec<DriverDescriptor>,
         mut trials: Vec<TrialDescriptor>,
@@ -808,7 +947,8 @@ impl BundleWriter {
         let manifest = BundleManifest {
             schema_version: EVIDENCE_MANIFEST_SCHEMA_VERSION,
             run_id: self.run_id,
-            status,
+            execution_status: Some(execution_status),
+            comparison_verdict,
             subject,
             created_unix_ms: Some(self.created_unix_ms),
             finalized_unix_ms: Some(unix_time_ms()?),
@@ -855,6 +995,7 @@ impl BundleWriter {
 pub struct BundleReader {
     root: PathBuf,
     manifest: BundleManifest,
+    legacy_status: Option<LegacyRunStatus>,
 }
 
 impl BundleReader {
@@ -900,10 +1041,44 @@ impl BundleReader {
         if bytes.len() as u64 > MAX_MANIFEST_BYTES {
             return Err(BundleError::BoundExceeded("manifest bytes"));
         }
-        let manifest: BundleManifest = serde_json::from_slice(&bytes)
-            .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
-        manifest.validate()?;
-        let reader = Self { root, manifest };
+        let manifest_version = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map_err(|error| BundleError::ManifestParse(error.to_string()))?
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| BundleError::ManifestParse("missing schema_version".to_owned()))?;
+        let (manifest, legacy_status) = match manifest_version {
+            1 => {
+                let legacy: LegacyManifestV1 = serde_json::from_slice(&bytes)
+                    .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+                if legacy.schema_version != SchemaVersion(1) {
+                    return Err(BundleError::UnsupportedManifestVersion(
+                        legacy.schema_version.0,
+                    ));
+                }
+                let status = legacy.status;
+                (legacy.into_current_view(), Some(status))
+            }
+            2 => (
+                serde_json::from_slice::<BundleManifest>(&bytes)
+                    .map_err(|error| BundleError::ManifestParse(error.to_string()))?,
+                None,
+            ),
+            _ => {
+                return Err(BundleError::UnsupportedManifestVersion(
+                    u32::try_from(manifest_version).unwrap_or(u32::MAX),
+                ));
+            }
+        };
+        if legacy_status.is_some() {
+            manifest.validate_legacy_view()?;
+        } else {
+            manifest.validate()?;
+        }
+        let reader = Self {
+            root,
+            manifest,
+            legacy_status,
+        };
         reader.validate_paths()?;
         Ok(reader)
     }
@@ -912,6 +1087,15 @@ impl BundleReader {
     #[must_use]
     pub const fn manifest(&self) -> &BundleManifest {
         &self.manifest
+    }
+
+    /// Original overloaded v1 status, if this reader opened legacy evidence.
+    ///
+    /// `Inconclusive` cannot be resolved as either “no comparison” or an inconclusive
+    /// comparison and must be treated as explicitly ambiguous.
+    #[must_use]
+    pub const fn legacy_status(&self) -> Option<LegacyRunStatus> {
+        self.legacy_status
     }
 
     /// Bundle directory root.
@@ -1334,7 +1518,8 @@ mod tests {
         };
         writer
             .finalize(
-                RunStatus::Succeeded,
+                ExecutionStatus::Completed,
+                None,
                 Subject::External {
                     target: Name::new("api").unwrap(),
                     revision: None,
@@ -1342,6 +1527,27 @@ mod tests {
                 },
                 Vec::new(),
                 trials,
+                None,
+                None,
+            )
+            .unwrap()
+    }
+
+    fn finalized_with_status(root: &TempDir, name: &str, status: ExecutionStatus) -> BundleReader {
+        let destination = root.path().join(format!("{name}.eggb"));
+        let mut writer = BundleWriter::create(&destination, RunId::new(), bounds()).unwrap();
+        add_required(&mut writer);
+        writer
+            .finalize(
+                status,
+                None,
+                Subject::External {
+                    target: Name::new("api").unwrap(),
+                    revision: None,
+                    digest: None,
+                },
+                Vec::new(),
+                Vec::new(),
                 None,
                 None,
             )
@@ -1367,7 +1573,8 @@ mod tests {
         assert!(!stage.join("manifest.json").exists());
         let bundle = writer
             .finalize(
-                RunStatus::Succeeded,
+                ExecutionStatus::Completed,
+                None,
                 Subject::External {
                     target: Name::new("api").unwrap(),
                     revision: None,
@@ -1396,7 +1603,99 @@ mod tests {
         let bundle = BundleReader::open(fixture).unwrap();
         bundle.verify().unwrap();
         assert_eq!(bundle.manifest().trials.len(), 1);
-        assert_eq!(bundle.manifest().status, RunStatus::Inconclusive);
+        assert_eq!(
+            bundle.manifest().execution_status,
+            Some(ExecutionStatus::Completed)
+        );
+        assert_eq!(bundle.manifest().comparison_verdict, None);
+        assert_eq!(bundle.legacy_status(), Some(LegacyRunStatus::Inconclusive));
+    }
+
+    #[test]
+    fn current_v2_fixture_opens_and_records_execution_without_comparison() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/current-v2.eggb");
+        let bundle = BundleReader::open(fixture).unwrap();
+        bundle.verify().unwrap();
+        assert_eq!(bundle.manifest().schema_version, SchemaVersion(2));
+        assert_eq!(
+            bundle.manifest().execution_status,
+            Some(ExecutionStatus::Completed)
+        );
+        assert_eq!(bundle.manifest().comparison_verdict, None);
+        assert_eq!(bundle.legacy_status(), None);
+    }
+
+    #[test]
+    fn execution_outcomes_and_comparison_verdicts_are_independent_and_coherent() {
+        let temp = tempfile::tempdir().unwrap();
+        for (name, status) in [
+            ("failed", ExecutionStatus::Failed),
+            ("cancelled", ExecutionStatus::Cancelled),
+            ("invalid", ExecutionStatus::Invalid),
+        ] {
+            let bundle = finalized_with_status(&temp, name, status);
+            assert_eq!(bundle.manifest().execution_status, Some(status));
+            assert_eq!(bundle.manifest().comparison_verdict, None);
+        }
+
+        let mut compared = None;
+        for (name, verdict) in [
+            ("pass", ComparisonVerdict::Pass),
+            ("fail", ComparisonVerdict::Fail),
+            ("inconclusive", ComparisonVerdict::Inconclusive),
+            ("invalid", ComparisonVerdict::Invalid),
+        ] {
+            let mut writer = BundleWriter::create(
+                temp.path().join(format!("compared-{name}.eggb")),
+                RunId::new(),
+                bounds(),
+            )
+            .unwrap();
+            add_required(&mut writer);
+            let comparison_path = path("comparison.json");
+            writer
+                .add_artifact(
+                    comparison_path.clone(),
+                    ArtifactRole::Comparison,
+                    "application/json",
+                    Sensitivity::Public,
+                    &b"{}"[..],
+                )
+                .unwrap();
+            let bundle = writer
+                .finalize(
+                    ExecutionStatus::Completed,
+                    Some(verdict),
+                    Subject::External {
+                        target: Name::new("api").unwrap(),
+                        revision: None,
+                        digest: None,
+                    },
+                    Vec::new(),
+                    Vec::new(),
+                    Some(comparison_path),
+                    None,
+                )
+                .unwrap();
+            assert_eq!(bundle.manifest().comparison_verdict, Some(verdict));
+            if verdict == ComparisonVerdict::Pass {
+                compared = Some(bundle);
+            }
+        }
+        let compared = compared.unwrap();
+
+        let mut contradictory = compared.manifest().clone();
+        contradictory.execution_status = Some(ExecutionStatus::Failed);
+        assert!(matches!(
+            contradictory.validate(),
+            Err(BundleError::InvalidManifest(_))
+        ));
+        contradictory.execution_status = Some(ExecutionStatus::Completed);
+        contradictory.comparison_verdict = None;
+        assert!(matches!(
+            contradictory.validate(),
+            Err(BundleError::InvalidManifest(_))
+        ));
     }
 
     #[test]
@@ -1461,7 +1760,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             writer.finalize(
-                RunStatus::Succeeded,
+                ExecutionStatus::Completed,
+                None,
                 Subject::External {
                     target: Name::new("api").unwrap(),
                     revision: None,
@@ -1750,7 +2050,8 @@ mod tests {
             .unwrap();
         let bundle = writer
             .finalize(
-                RunStatus::Inconclusive,
+                ExecutionStatus::Completed,
+                None,
                 plan.subject.clone(),
                 Vec::new(),
                 Vec::new(),
@@ -1803,7 +2104,8 @@ mod tests {
         assert_eq!(max_request.get(), HASH_BUFFER_BYTES);
         writer
             .finalize(
-                RunStatus::Failed,
+                ExecutionStatus::Failed,
+                None,
                 Subject::External {
                     target: Name::new("api").unwrap(),
                     revision: None,

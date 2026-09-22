@@ -1,6 +1,13 @@
 # Evidence bundles
 
-An `.eggb` bundle is a self-contained directory with one authoritative `manifest.json` and the files named by that manifest. The manifest is written after all other artifacts. Its schema version, run ID, terminal status, subject identity, timestamps (Unix milliseconds), plan/resolved-plan/environment references, trial identities, driver inventory, artifact roles/media types/sensitivity labels, sizes, digests, and persisted bounds make the evidence inspectable without a database.
+An `.eggb` bundle is a self-contained directory with one authoritative `manifest.json` and the files named by that manifest. The manifest is written after all other artifacts. Its schema version, run ID, execution status, optional comparison verdict, subject identity, timestamps (Unix milliseconds), plan/resolved-plan/environment references, trial identities, driver inventory, artifact roles/media types/sensitivity labels, sizes, digests, and persisted bounds make the evidence inspectable without a database.
+
+| Manifest | Read/write behavior | Status semantics |
+|---|---|---|
+| v1 | Read and fully verify; never rewritten | Legacy `RunStatus` retained explicitly. `inconclusive` is ambiguous and is not converted into a comparison verdict. |
+| v2 | Current read and write format | `execution_status` is required. `comparison_verdict` is absent when comparison was not performed and requires a comparison artifact when present. |
+
+For example, lifecycle completion without measurement is `execution_status: completed`, no comparison verdict, and zero trials. It does not report a performance pass or an invented inconclusive verdict.
 
 ## Example tree
 

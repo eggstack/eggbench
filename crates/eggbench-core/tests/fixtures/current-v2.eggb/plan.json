@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment": "smoke",
+  "subject": { "kind": "external", "target": "api", "revision": null, "digest": null },
+  "services": [],
+  "workload": { "kind": "finite_count", "target": "api", "requests": 100, "concurrency": 5 },
+  "trials": { "measured": 3, "warmup": 1, "cooldown_ms": 1000, "reset": { "kind": "none" }, "timeouts": {} },
+  "telemetry": [],
+  "metrics": [{ "name": "latency_p99", "unit": "ms", "direction": { "kind": "lower_is_better" }, "intent": "primary", "gate": { "kind": "absolute", "value": 500.0 } }],
+  "environment_policy": { "kind": "strict_same_testbed" },
+  "seed": 42,
+  "bounds": { "artifact_count": 256, "artifact_bytes": 16777216, "total_bytes": 268435456 }
+}

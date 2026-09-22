@@ -1,0 +1,75 @@
+{
+  "schema_version": 2,
+  "run_id": "8cb4253e-e5f6-4b1e-8c55-e673d973d73a",
+  "subject": {
+    "kind": "external",
+    "target": "api",
+    "revision": null,
+    "digest": null
+  },
+  "created_unix_ms": 1780000000000,
+  "finalized_unix_ms": 1780000060000,
+  "plan": "plan.json",
+  "resolved_plan": "resolved-plan.json",
+  "environment": "environment.json",
+  "trials": [
+    {
+      "id": 1,
+      "result": "trials/001/result.json",
+      "artifacts": []
+    }
+  ],
+  "comparison": null,
+  "report": null,
+  "drivers": [],
+  "limits": {
+    "artifact_count": 10,
+    "artifact_bytes": 4096,
+    "total_bytes": 10000
+  },
+  "artifacts": [
+    {
+      "path": "environment.json",
+      "role": {
+        "kind": "environment_fingerprint"
+      },
+      "media_type": "application/json",
+      "sensitivity": "redacted",
+      "byte_size": 156,
+      "sha256": "74c227f5672b577fb0775531314c183aaaa0985533a05e204caa6fa3ea875fdf"
+    },
+    {
+      "path": "plan.json",
+      "role": {
+        "kind": "experiment_plan"
+      },
+      "media_type": "application/json",
+      "sensitivity": "redacted",
+      "byte_size": 715,
+      "sha256": "5e3f42e054f2cc5afb0e07ab591afc72e0da8a686fba0dc1ccd44d5d7a4ab9fa"
+    },
+    {
+      "path": "resolved-plan.json",
+      "role": {
+        "kind": "resolved_plan"
+      },
+      "media_type": "application/json",
+      "sensitivity": "redacted",
+      "byte_size": 1501,
+      "sha256": "a4f646f31cd2a831e2d0be1e8cc205ba9a26d47125943db72d0907b96285510a"
+    },
+    {
+      "path": "trials/001/result.json",
+      "role": {
+        "kind": "trial_result"
+      },
+      "media_type": "application/json",
+      "sensitivity": "public",
+      "byte_size": 48,
+      "sha256": "92f592ab28f48d948d1e84966a1129ae2865dd39000d08dca5fc222880ca5deb"
+    }
+  ],
+  "finalized": true,
+  "execution_status": "completed",
+  "comparison_verdict": null
+}

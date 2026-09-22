@@ -67,8 +67,11 @@ logs are byte-for-byte.
 
 Lifecycle logs and metadata stage through the M003 `BundleWriter` with
 `Stdout`/`Stderr` roles and a `lifecycle`-labeled metadata artifact. No
-second evidence format exists. A lifecycle-only run records no trials, so a
-finalized zero-trial bundle is `inconclusive`, never a performance pass.
+second evidence format exists. A lifecycle-only run records execution as
+`completed`, has no comparison verdict, and may have zero trials. Execution
+completion does not imply a performance pass. Manifest v1 bundles retain
+their original status as explicitly ambiguous legacy evidence; new writes use
+manifest v2's separate execution and comparison fields.
 
 ## Non-goals (deferred to later milestones)
 
