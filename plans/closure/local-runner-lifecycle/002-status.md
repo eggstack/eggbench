@@ -1,8 +1,7 @@
 # Local Runner M002 Closure — Warmup, Trials, Cooldown, Reset
 
-Disposition: **closing; final capacity-preflight qualification pending**  
-Initial implementation commit: `e5c82d0692711e562459ccd7270b7be874e0ceb1`  
-Hosted qualification of that implementation: [CI run 35788560752](https://github.com/eggstack/eggbench/actions/runs/35788560752) — all jobs passed. A mandatory-evidence capacity-preflight follow-up is now being qualified.
+Disposition: **closing; timeout regression qualification pending**
+Implemented through commit `87e89691568d7fb0b018667d8174bb1dfe9e6f0c`, hosted and qualified by [CI run 35789353964](https://github.com/eggstack/eggbench/actions/runs/35789353964). Three timeout regression tests are being added and require a final hosted run.
 
 ## Requirement-to-evidence matrix
 
@@ -17,6 +16,7 @@ Hosted qualification of that implementation: [CI run 35788560752](https://github
 | Explicit reset capability and preflight | `missing_reset_hook_fails_preflight_before_start_or_drain`; `ResetRegistry` maps service/reference names to object-safe async `ResetHook`s. |
 | Bounded workload/reset/drain and known timeout namespace | `preflight` requires `measurement` and `drain`, supports `warmup` fallback, requires `reset` when configured, rejects unknown and zero-valued timeout keys; invocation, reset, and drain calls use Tokio bounds. |
 | Reject insufficient mandatory evidence bounds before startup | `insufficient_evidence_bounds_fail_preflight_before_startup`; `preflight_evidence_capacity` checks mandatory artifact count, phase/lifecycle metadata size, declared service log caps, and total bytes. |
+| Bound warmup, reset, and drain timeouts | New regression cases verify each timeout preserves truthful status/evidence and continues mandatory cleanup. |
 | No concrete transport, load generator, shell, or comparison semantics | `cargo tree --locked` and source/dependency inspection: `eggbench-core` has no Tokio/process/network dependency; `eggbench-runner` adds no concrete network/load-generator dependency. M002 always finalizes with `comparison_verdict: None`. |
 | Truthful immutable evidence | End-to-end test opens and verifies the finalized `.eggb`, checks trial order, result artifacts, warmup role/path, phase timeline, and no comparison verdict. Lifecycle logs/metadata and resolved driver inventory are staged before publication. |
 | Correct the two predecessor bookkeeping items | `tests/lifecycle.rs` now says completed lifecycle evidence has no comparison verdict and asserts Linux/macOS supported, other Unix unqualified, non-Unix unsupported. |
@@ -72,11 +72,11 @@ trials/002/result.json
 - `cargo fmt --all -- --check` — passed.
 - `cargo check --workspace --all-targets --locked` — passed.
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` — passed.
-- `EGGBENCH_PARENT_SENTINEL_26CE=set-in-parent-process cargo test --workspace --all-features --locked` — passed: 29 core tests, 24 lifecycle tests, 15 orchestration tests, and 2 platform tests. The sentinel is required by an existing hermetic-environment assertion and is set by CI.
+- `EGGBENCH_PARENT_SENTINEL_26CE=set-in-parent-process cargo test --workspace --all-features --locked` — passed: 29 core tests, 24 lifecycle tests, 19 orchestration tests, and 2 platform tests. The sentinel is required by an existing hermetic-environment assertion and is set by CI.
 - `cargo +1.89.0 check --workspace --all-targets --locked` — passed.
 - `cargo tree --locked` and focused core source/dependency inspection — passed; runtime/process ownership remains in runner and no concrete transport or benchmark dependency was added.
 - `git diff --check` — passed.
-- Hosted CI run `35788560752` — passed: Linux stable, Linux 1.89 MSRV, macOS stable including process-group and filesystem-confinement qualification, and Windows supported subset.
+- Hosted CI run `35789353964` — passed: Linux stable, Linux 1.89 MSRV, macOS stable including process-group and filesystem-confinement qualification, and Windows supported subset.
 
 ## Documentation and known limits
 

@@ -38,7 +38,7 @@ Canonical direction remains in:
 |---|---|---|---|---|
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 closing; M003 blocked | Final capacity-preflight qualification and closure evidence remain |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 closing; M003 blocked | Final timeout regression qualification and closure evidence remain |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Final Local Runner M002 closure |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
@@ -94,15 +94,15 @@ The predecessor closure incorrectly lists `9387a45e1bbf9c1f9a55fb8ad875b07f6f880
 
 ### Gate D — Local Runner M002
 
-Local Runner M002 implementation and local verification are complete. Its
-closure is pending hosted qualification of the final mandatory-evidence
-capacity preflight.
+Local Runner M002 implementation and verification are complete. Final
+qualification is pending three timeout regression cases for warmup, reset,
+and drain.
 
 ### Gate E — Comparison
 
-Measurement/Comparison M001 can become ready for implementation-plan
-authoring after final Local Runner M002 closure against its actual trial
-evidence and execution contract.
+Measurement/Comparison M001 will be ready for implementation-plan authoring
+after final Local Runner M002 closure against its actual trial evidence and
+execution contract.
 
 ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 

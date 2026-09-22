@@ -761,6 +761,68 @@ async fn measured_timeout_records_timed_out_trial_and_drains() {
 }
 
 #[tokio::test]
+async fn warmup_timeout_stops_before_any_measured_trial() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved
+        .trials
+        .timeouts
+        .insert(name("warmup"), DurationMs::new(20).unwrap());
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.pending_on = Some(1);
+    let result = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.execution_status, ExecutionStatus::Failed);
+    assert!(result.manifest.trials.is_empty());
+    assert_eq!(
+        workload.invocations,
+        vec![InvocationKind::Warmup { ordinal: 1 }]
+    );
+    assert!(workload.drained);
+}
+
+#[tokio::test]
+async fn reset_timeout_retains_completed_trial_and_stops_next_trial() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.reset = ResetPolicy::Reference {
+        reference: name("reset-app"),
+    };
+    resolved
+        .trials
+        .timeouts
+        .insert(name("reset"), DurationMs::new(20).unwrap());
+    let mut resets = ResetRegistry::default();
+    resets.register(name("reset-app"), Arc::new(PendingReset));
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let result = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &resets,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.execution_status, ExecutionStatus::Failed);
+    assert_eq!(result.primary_failure, Some(FailureCategory::TimedOut));
+    assert_eq!(result.manifest.trials.len(), 1);
+    assert!(workload.drained);
+}
+
+#[tokio::test]
 async fn drain_failure_changes_only_otherwise_completed_run_to_failed() {
     let temp = tempfile::tempdir().unwrap();
     let mut resolved = plan();
@@ -769,6 +831,40 @@ async fn drain_failure_changes_only_otherwise_completed_run_to_failed() {
     let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
     let mut workload = FakeWorkload::default();
     workload.drain_fails = true;
+    let result = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.execution_status, ExecutionStatus::Failed);
+    assert_eq!(result.primary_failure, Some(FailureCategory::DrainFailed));
+    assert_eq!(result.manifest.trials.len(), 2);
+    assert!(
+        result
+            .phases
+            .iter()
+            .any(|event| event.phase == PhaseKind::Teardown && event.outcome.is_some())
+    );
+}
+
+#[tokio::test]
+async fn drain_timeout_still_tears_down_and_preserves_trial_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    resolved
+        .trials
+        .timeouts
+        .insert(name("drain"), DurationMs::new(20).unwrap());
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.drain_delay = Duration::from_millis(50);
     let result = execute_run(
         &mut session,
         &resolved,

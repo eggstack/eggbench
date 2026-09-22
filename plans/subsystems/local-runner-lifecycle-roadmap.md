@@ -128,5 +128,5 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
 | M001 | closed | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | plans/closure/local-runner-lifecycle/001-status.md | none |
-| M002 | closing | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | pending final hosted qualification | Capacity-preflight follow-up is being qualified |
+| M002 | closing | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | pending final test qualification | Timeout regression coverage being added |
 | M003 | blocked | not yet written | none | M002 final closure |
