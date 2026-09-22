@@ -66,7 +66,7 @@ jobs:
           cargo test -p eggbench-core --all-features --locked > core-tests.log 2>&1
           result=$?
           if [ "$result" -ne 0 ]; then
-            grep -E 'test .* \.\.\. FAILED|panicked at|error:|failures:' core-tests.log | while IFS= read -r line; do
+            grep -E 'test .* \.\.\. FAILED|panicked at|called .*Err|error:|failures:' core-tests.log | while IFS= read -r line; do
               line=${line//'%'/'%25'}
               echo "::error title=Windows core test failure::$line"
             done
