@@ -1,0 +1,122 @@
+# Eggstack Integration Roadmap
+
+Status: proposed
+
+Long-term references:
+
+- plans/000-long-term-specification.md — Eggstack ownership and reuse
+- plans/002-long-term-roadmap.md — Phase 5
+
+Related ADRs:
+
+- plans/adrs/ADR-0001-typed-core-and-driver-boundaries.md
+- plans/adrs/ADR-0004-eggstack-composition-and-independent-oracles.md
+
+## 1. Purpose and ownership boundary
+
+This subsystem integrates Eggbench with existing Eggstack capabilities while preserving sibling ownership.
+
+Eggbench owns adapter configuration, lifecycle participation, normalization, and provenance only.
+
+## 2. Planning-time sibling state — 2026-09-22
+
+- Eggfetch exposes published eggfetch-core 0.2.0, HTTP/1.1 and HTTP/2, experimental HTTP/3, streaming, TLS, pooling, metrics, and a dedicated benchmark crate.
+- Eggress 1.0.8 contains narrow relay, outbound, metrics, protocol, and testkit crates.
+- EggServe exposes published 0.2-series Rust serving crates and controlled server/runtime behavior; H2/H3 remain opt-in or experimental.
+- Eggchaos 0.1.0 is pre-release and owns deterministic bounded user-space byte-stream faults plus an Eggfetch adapter.
+- EggReplay 0.1.0 is pre-release and owns semantic HTTP fixture/replay behavior; current v0.1 transport is intentionally H1-focused.
+- Eggprobe 0.1.0 is pre-release, JSON-first, with direct DNS/TCP/TLS probes, Eggfetch HTTP, and Eggress routing.
+- Gregg exposes a versioned HTTP status API including CPU, memory, disk I/O, network, and optional frequency telemetry.
+- Eggsec owns scope-enforced security and load-testing semantics and structured results; its production load-test route uses Eggfetch.
+
+Versions are planning evidence, not eternal pins. Every implementation plan must re-audit the sibling public surface before adoption.
+
+## 3. Invariants
+
+- No copied sibling protocol implementation.
+- Integration seam, version, and capability set are recorded.
+- Process/JSON adapter is preferred over depending on an unsupported sibling-internal crate.
+- Requested routed behavior never silently falls back to direct.
+- Credentials are redacted.
+- Eggchaos stream faults are never relabeled packet faults.
+- Sibling-specific failures retain enough source provenance to diagnose.
+
+## 4. Integration policy
+
+Preference order:
+
+1. published narrow Rust crate with a documented reusable boundary;
+2. stable local HTTP/control API with machine-readable schema;
+3. stable CLI with machine-readable output;
+4. exact git revision only when a pre-release capability has no stable seam and the plan includes an explicit removal gate.
+
+The adapter should not force the full sibling application's dependency closure into a minimal Eggbench build when a process boundary is sufficient.
+
+## 5. Dependency graph
+
+~~~text
+Runner + evidence + measurement contracts
+       |
+       +--> M001 EggServe + Eggfetch + Gregg
+       |
+       +--> M002 Eggress + Eggchaos
+       |
+       +--> M003 EggReplay + Eggprobe
+       |
+       --> M004 Eggsec security adapter
+~~~
+
+## 6. Milestones
+
+### M001 — Controlled origin, native HTTP workload, host telemetry
+
+Integrate EggServe, Eggfetch, and Gregg.
+
+Prove one loopback experiment with a controlled origin, native HTTP workload, host telemetry, raw/normalized artifacts, and no duplicate HTTP implementation.
+
+Gregg remains optional; lack of Gregg must not prevent a smaller local environment fingerprint.
+
+### M002 — Route and stream-fault topology
+
+Integrate listener-free Eggress seams where publicly available and Eggchaos fault orchestration. Record route/fault provenance and deterministic seeds.
+
+No loopback proxy should be introduced solely to bridge two embeddable libraries when a stable in-process seam exists.
+
+### M003 — Replay and diagnostics
+
+Integrate EggReplay fixtures/workloads and Eggprobe preflight/postflight diagnostics through stable machine interfaces.
+
+Probe latency is diagnostic unless an experiment explicitly declares it as a workload metric.
+
+### M004 — Eggsec workload/correctness adapter
+
+Consume explicit Eggsec profiles/results without importing scanner semantics into Eggbench core. Security correctness becomes a separate gate source.
+
+## 7. Verification strategy
+
+Every adapter needs:
+
+- exact version/revision capture;
+- capability detection;
+- unsupported-option negative tests;
+- local deterministic fixtures;
+- raw evidence retention;
+- normalized metric fixtures;
+- credential redaction where relevant;
+- cancellation/cleanup tests;
+- dependency graph audit for feature isolation.
+
+## 8. Risks and decision points
+
+- Pre-release Eggchaos/EggReplay/Eggprobe APIs may move; process adapters reduce coupling.
+- Eggsec is broad; importing it as a library may be unjustifiably heavy.
+- Eggress exposes many crates; only the smallest necessary seam should be used.
+- Eggfetch native workloads are not independent oracles when Eggfetch itself is the subject.
+
+## 9. Completion definition
+
+The roadmap closes when Eggbench can construct useful network/security experiments mostly from Eggstack components while retaining the option to use independent external drivers.
+
+## 10. Milestone status
+
+All milestones are blocked on foundation, local-runner, and measurement contracts.
