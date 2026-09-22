@@ -107,8 +107,7 @@ The roadmap closes when Eggbench can compare two immutable evidence bundles unde
 
 ### M001 — Metric vocabulary and trial normalization
 
-Status: ready for implementation-plan authoring. The corrected foundation
-status/verdict contract and Local Runner M002 trial evidence are closed.
+Status: ready. Implementation plan: `plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md`. The corrected foundation status/verdict contract and lifecycle-safe Local Runner M002 trial evidence are closed.
 
 ### M002 — Baselines, comparability, and statistical gates
 
