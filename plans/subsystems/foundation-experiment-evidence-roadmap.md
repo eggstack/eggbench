@@ -1,6 +1,6 @@
 # Foundation Experiment and Evidence Roadmap
 
-Status: active
+Status: closed
 
 Repository audit baseline: planning-only repository after canonical documents and ADRs.
 
@@ -205,4 +205,4 @@ This roadmap closes when the repository has a stable typed experiment contract, 
 |---|---|---|---|---|
 | M001 | closed | plans/implementation/foundation-experiment-evidence/001-workspace-and-experiment-schema.md | plans/closure/foundation-experiment-evidence/001-status.md | none |
 | M002 | closed | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | plans/closure/foundation-experiment-evidence/002-status.md | none |
-| M003 | ready | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | none | none |
+| M003 | closed | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | plans/closure/foundation-experiment-evidence/003-status.md | none |

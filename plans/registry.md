@@ -36,31 +36,36 @@ Canonical direction remains in:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001-M002 closed; M003 active | Implementing bundle on versioned plan and resolved-plan contracts. |
-| Local runner/lifecycle | proposed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 blocked | Foundation M003. |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 ready; M002-M003 blocked | Foundation M001-M003 closed; later milestones depend on predecessor closure. |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Foundation schemas + local trial evidence. |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts. |
 | External measurement oracles | proposed | plans/subsystems/external-oracles-roadmap.md | M001 blocked | Driver contracts + local runner. |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers. |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first. |
 
+## Latest subsystem closure
+
+| Subsystem | Status | Roadmap | Closure evidence |
+|---|---|---|---|
+| Foundation experiment/evidence | closed | plans/subsystems/foundation-experiment-evidence-roadmap.md | plans/closure/foundation-experiment-evidence/001-status.md; 002-status.md; 003-status.md |
+
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff note |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M003 Immutable evidence bundle | active | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | M001 and M002 closed; bundle consumes versioned ResolvedPlan v1. |
+| Local runner/lifecycle | M001 Managed process and readiness lifecycle | ready | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | Foundation M001-M003 closed; resolved/evidence contracts are available. |
 
 ## Prewritten implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M003 Immutable evidence bundle | active | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | Active; predecessors closed. |
+| Local runner/lifecycle | M001 Managed process and readiness lifecycle | ready | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | None; predecessors closed. |
 
 ## Current execution order and dependency gates
 
 ### Gate A — Foundation schema
 
-Run M001 first.
+Foundation M001 is closed.
 
 M001 must create a Rust 1.89+ workspace and runtime-free eggbench-core with versioned ExperimentPlan semantics, validation, topology/load/gate/environment models, fixtures, and documented dependency boundaries.
 
@@ -74,13 +79,13 @@ M002 freezes driver identity/capability and ResolvedPlan semantics using fake dr
 
 ### Gate C — Evidence
 
-With M001 and M002 closed, M003 is ready to implement immutable evidence bundles and inspection.
+With M001 and M002 closed, M003 implemented immutable evidence bundles and inspection; the evidence interface is closed.
 
-Local Runner M001 remains blocked until evidence staging/finalization is usable. This is intentional: the runner must write into a defined evidence model rather than inventing ad hoc logs first.
+Foundation M003 closure supplied evidence staging/finalization. Local Runner M001's dependency is satisfied.
 
 ### Gate D — Local execution
 
-After Foundation M003, write or activate Local Runner M001 implementation planning against the then-current repository.
+After Foundation M003 closed, Local Runner M001 was planned against the resulting repository baseline and is ready.
 
 The runner work must prove startup/readiness/cancellation/teardown and descendant cleanup before real load generators are integrated.
 
@@ -143,6 +148,6 @@ Before marking a plan ready, verify:
 
 The next implementation plan currently ready is:
 
-plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md
+plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md
 
-M001 and M002 closure evidence is recorded under plans/closure/foundation-experiment-evidence/. M003 closure should unblock Local Runner M001 planning.
+Foundation M001-M003 closure evidence is recorded under plans/closure/foundation-experiment-evidence/. Foundation M003 closed and unblocked Local Runner M001 planning; implementation remains outside the current handoff sequence.

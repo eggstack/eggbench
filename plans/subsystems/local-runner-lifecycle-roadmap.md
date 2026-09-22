@@ -1,6 +1,6 @@
 # Local Runner and Lifecycle Roadmap
 
-Status: proposed
+Status: active
 
 Long-term references:
 
@@ -127,6 +127,6 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| M001 | blocked | not yet written | none | Foundation M003 |
+| M001 | ready | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | none | Foundation M001-M003 closed |
 | M002 | blocked | not yet written | none | M001 |
 | M003 | blocked | not yet written | none | M002 |
