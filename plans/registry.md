@@ -36,7 +36,7 @@ Canonical direction remains in:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001 ready; M002-M003 blocked | M001 has no blocker. |
+| Foundation experiment/evidence | active | plans/subsystems/foundation-experiment-evidence-roadmap.md | M001 closed; M002 ready; M003 blocked | M003 awaits M002 interface stability. |
 | Local runner/lifecycle | proposed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 blocked | Foundation M003. |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | Foundation schemas + local trial evidence. |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts. |
@@ -48,13 +48,12 @@ Canonical direction remains in:
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies / handoff note |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M001 Workspace and typed experiment schema | ready | plans/implementation/foundation-experiment-evidence/001-workspace-and-experiment-schema.md | Greenfield. Implement only typed schema/validation/workspace; no I/O. |
+| Foundation experiment/evidence | M002 Driver capability and resolved-plan contract | ready | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | M001 closed; implement fake driver resolution only. |
 
 ## Prewritten blocked implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Foundation experiment/evidence | M002 Driver capability and resolved-plan contract | blocked | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | M001 closure |
 | Foundation experiment/evidence | M003 Immutable evidence bundle | blocked | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | M001 closure + M002 interface stability |
 
 ## Current execution order and dependency gates
@@ -142,8 +141,8 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The only implementation plan currently ready is:
+The next implementation plan currently ready is:
 
-plans/implementation/foundation-experiment-evidence/001-workspace-and-experiment-schema.md
+plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md
 
-Its closure should update this registry, mark Foundation M001 closed, make M002 ready, and add the M001 closure record under plans/closure/foundation-experiment-evidence/001-status.md.
+M001 closure evidence is recorded in plans/closure/foundation-experiment-evidence/001-status.md. M002 closure should make M003 ready once its resolved-plan interface is stable.

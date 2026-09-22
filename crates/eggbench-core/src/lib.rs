@@ -8,6 +8,6 @@ pub use plan::*;
 pub use types::*;
 
 /// Namespace and version for normalized core schemas.
-pub const CORE_SCHEMA_NAMESPACE: &str = "org.eggstack.eggb.ench.core";
+pub const CORE_SCHEMA_NAMESPACE: &str = "org.eggstack.eggbench.core";
 /// Current experiment-plan schema version.
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);

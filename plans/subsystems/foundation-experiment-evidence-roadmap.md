@@ -203,6 +203,6 @@ This roadmap closes when the repository has a stable typed experiment contract, 
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| M001 | ready | plans/implementation/foundation-experiment-evidence/001-workspace-and-experiment-schema.md | none | none |
-| M002 | blocked | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | none | M001 |
+| M001 | closed | plans/implementation/foundation-experiment-evidence/001-workspace-and-experiment-schema.md | plans/closure/foundation-experiment-evidence/001-status.md | none |
+| M002 | ready | plans/implementation/foundation-experiment-evidence/002-driver-capability-and-resolved-plan-contract.md | none | none |
 | M003 | blocked | plans/implementation/foundation-experiment-evidence/003-immutable-evidence-bundle.md | none | M001 + M002 interface |

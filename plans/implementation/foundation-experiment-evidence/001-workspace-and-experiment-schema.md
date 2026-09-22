@@ -1,6 +1,6 @@
 # Foundation Experiment and Evidence M001 — Workspace and Typed Experiment Schema
 
-Status: ready for handoff
+Status: closed
 
 Repository baseline: 032eb324d299f865c989b59226e70eff28d77d09
 
