@@ -16,6 +16,14 @@
 //! generator, normalize metrics, or calculate comparisons. Lifecycle-only
 //! sessions remain available and record no trials.
 //!
+//! Every terminal exit from `execute_run` that follows successful managed
+//! startup routes through one cleanup boundary: workload drain is attempted
+//! if the executor was reached, and `LocalSession::shutdown` is attempted
+//! whenever managed startup created owned processes. Evidence-staging errors
+//! are reported as `OrchestrationError::Evidence { source, cleanup }` with
+//! the primary cause preserved and any cleanup failure attached as secondary
+//! diagnostics. Failed evidence publication never produces a finalized bundle.
+//!
 //! [`eggbench_core`]: ../../eggbench-core/index.html
 
 #![forbid(unsafe_code)]

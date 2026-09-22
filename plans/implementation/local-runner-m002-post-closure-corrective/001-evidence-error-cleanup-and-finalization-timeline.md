@@ -1,6 +1,8 @@
 # Local Runner M002 Post-Closure Corrective C001 — Evidence-Error Cleanup and Finalization Timeline
 
-Status: ready for handoff
+Status: closed
+
+Closure record: `plans/closure/local-runner-m002-post-closure-corrective/001-status.md`
 
 Repository baseline: `02212d5d9f78816eec5ef1b89d45e99c0dbe02d5`
 

@@ -10,7 +10,7 @@ protocol-specific workload or reset behavior.
 
 ```text
 preflight → startup/readiness → warmup 1..N → measured trial 1
-                                             ↓
+                                              ↓
                   next measured trial ← reset → cooldown
                          ↓
                workload drain → service teardown → evidence finalization
@@ -19,6 +19,14 @@ preflight → startup/readiness → warmup 1..N → measured trial 1
 Reset and cooldown occur only between measured trials. Reset runs first, so
 cooldown is post-reset stabilization time. Warmup state carries into measured
 trial 1. No reset or cooldown follows the final trial.
+
+Every code path that reaches the post-experimental tail — workload/reset
+failure, cancellation, evidence-staging failure — runs the same drain and
+teardown sequence before any evidence/finalization disposition is returned.
+Workload drain is attempted whenever the executor was reached, and managed
+`LocalSession::shutdown` is attempted whenever startup created owned processes.
+A drain or teardown failure is reported as secondary cleanup diagnostics; it
+never replaces the primary failure cause.
 
 ## Measurement boundary
 
@@ -36,6 +44,28 @@ duration, terminal execution status, and an optional typed redaction-safe
 failure category. It carries no normalized metrics or comparison verdict.
 Warmups have their own ordinal namespace and `warmups/NNN/result.json`
 artifacts with a distinct role; they never appear in `manifest.trials`.
+
+## Finalization phase semantics
+
+`PhaseKind::Finalization` records **runner evidence staging prior to
+immutable bundle publication**. It covers staging of `runner-phases.json` and
+any other runner-owned artifacts required before publication. The event is
+finished exactly once; the serialized phase event is identical to the in-memory
+event returned to the caller.
+
+Immutably publishing the bundle with `writer.finalize()` is the step that
+follows the finalization event. That publication itself is not representable
+inside the bundle it produces; the runner therefore does not claim that the
+finalization phase interval covers its own publication.
+
+A failure during staging — including workload artifact staging that fails
+after a measured invocation, lifecycle log/metadata staging, or phase
+artifact staging — is reported as `OrchestrationError::Evidence { source,
+cleanup }`. The primary cause is the source bundle error; any drain or
+teardown failure observed while attempting mandatory cleanup is attached as
+secondary cleanup diagnostics and never replaces the primary cause. Failed
+evidence publication never produces a finalized bundle; the staging directory
+remains incomplete and the final sibling path is not created.
 
 ## Timeout keys
 

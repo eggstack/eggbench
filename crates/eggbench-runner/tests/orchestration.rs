@@ -2,19 +2,20 @@
 #![cfg(unix)]
 
 use eggbench_core::{
-    ArtifactBounds, ArtifactPath, ArtifactRole, BundleReader, BundleWriter, DurationMs,
-    ExecutionStatus, Lifecycle, Name, PositiveCount, ResetPolicy, ResolvedPlan, RunId, Sensitivity,
-    Service, ServiceKind, Subject, TrialPolicy, Workload,
+    ArtifactBounds, ArtifactPath, ArtifactRole, BundleError, BundleReader, BundleWriter,
+    DurationMs, ExecutionStatus, Lifecycle, Name, PositiveCount, ResetPolicy, ResolvedPlan, RunId,
+    Sensitivity, Service, ServiceKind, Subject, TrialPolicy, Workload,
 };
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
-    FailureCategory, InvocationKind, LocalSession, MapSecretProvider, PhaseKind, PlatformAdapter,
-    PlatformSupport, ResetContext, ResetHook, ResetRegistry, RunnerOptions, UnixPlatform,
-    execute_run,
+    FailureCategory, InvocationKind, LocalSession, MapSecretProvider, OrchestrationError,
+    PhaseEvent, PhaseKind, PlatformAdapter, PlatformSupport, ResetContext, ResetHook,
+    ResetRegistry, RunnerOptions, UnixPlatform, WorkloadArtifact, execute_run,
 };
 use std::{
     collections::BTreeMap,
     future::Future,
+    io::{BufReader, Read},
     path::Path,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -883,5 +884,458 @@ async fn drain_timeout_still_tears_down_and_preserves_trial_evidence() {
             .phases
             .iter()
             .any(|event| event.phase == PhaseKind::Teardown && event.outcome.is_some())
+    );
+}
+
+/// Topological fixture that owns a real child process so the cleanup tests prove
+/// `LocalSession::shutdown` actually reclaims managed descendants when the run aborts
+/// on an evidence error.
+fn sleeper_service() -> Service {
+    Service {
+        name: name("sleeper"),
+        kind: ServiceKind::Command {
+            argv: vec![
+                env!("CARGO_BIN_EXE_eggbench-child-fixture").to_owned(),
+                "sleep".to_owned(),
+                "30000".to_owned(),
+            ],
+        },
+        lifecycle: Lifecycle::Managed,
+        depends_on: Vec::new(),
+        config: BTreeMap::new(),
+        readiness: None,
+        shutdown: None,
+        working_directory: None,
+        log_limit_bytes: 1024,
+    }
+}
+
+#[tokio::test]
+async fn unsafe_workload_artifact_name_after_measured_invocation_drains_and_tears_down() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    resolved.topology.push(sleeper_service());
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "../escape".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: b"x".to_vec(),
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("unsafe artifact name must surface as an OrchestrationError");
+    let OrchestrationError::Evidence { source, cleanup } = &error else {
+        panic!("expected OrchestrationError::Evidence, got {error:?}");
+    };
+    assert!(
+        matches!(
+            source,
+            BundleError::InvalidManifest("unsafe workload artifact name")
+        ),
+        "evidence source must be the artifact-safety cause: {source:?}"
+    );
+    assert!(cleanup.is_empty(), "no cleanup failure was injected");
+    assert!(
+        workload.drained,
+        "drain must be attempted after a measured invocation"
+    );
+    assert!(!session.is_running(), "managed services must be torn down");
+    assert!(
+        !temp.path().join("out.eggb").exists(),
+        "failed evidence staging must not publish the final bundle"
+    );
+}
+
+#[tokio::test]
+async fn too_many_workload_artifacts_after_measured_invocation_drains_and_tears_down() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    resolved.topology.push(sleeper_service());
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let overflow = (0..=256)
+        .map(|i| WorkloadArtifact {
+            name: format!("artifact-{i:03}.bin"),
+            media_type: "application/octet-stream".to_owned(),
+            bytes: vec![0_u8; 4],
+        })
+        .collect::<Vec<_>>();
+    workload.artifacts_by_invocation = vec![Some(overflow)];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("artifact-count overflow must surface as an OrchestrationError");
+    let OrchestrationError::Evidence { source, .. } = &error else {
+        panic!("expected OrchestrationError::Evidence, got {error:?}");
+    };
+    assert!(
+        matches!(
+            source,
+            BundleError::BoundExceeded("workload artifact count")
+        ),
+        "evidence source must be the artifact-count overflow: {source:?}"
+    );
+    assert!(
+        workload.drained,
+        "drain must be attempted after the measured invocation"
+    );
+    assert!(!session.is_running(), "managed services must be torn down");
+}
+
+#[tokio::test]
+async fn dynamic_workload_byte_overflow_after_preflight_passes_drains_and_tears_down() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    resolved.topology.push(sleeper_service());
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    // The mandatory runner preflight reserves room for the small fixed-size runner
+    // artifacts, but cannot know this large dynamic workload payload. The writer
+    // has a per-artifact cap that the payload will exceed.
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "overflow.bin".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: vec![0xAB; 12 * 1024],
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer_with_bounds(temp.path(), 32, 8 * 1024, 32 * 1024),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("dynamic byte overflow must surface as an OrchestrationError");
+    let OrchestrationError::Evidence { source, .. } = &error else {
+        panic!("expected OrchestrationError::Evidence, got {error:?}");
+    };
+    assert!(
+        matches!(source, BundleError::BoundExceeded(_)),
+        "evidence source must be the byte-bound overflow: {source:?}"
+    );
+    assert!(
+        workload.drained,
+        "drain must be attempted after the measured invocation"
+    );
+    assert!(!session.is_running(), "managed services must be torn down");
+}
+
+#[tokio::test]
+async fn warmup_staging_failure_skips_measured_trials_and_still_drains() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 1;
+    resolved.trials.cooldown_ms = None;
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "../escape".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: b"x".to_vec(),
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("warmup staging failure must surface as an OrchestrationError");
+    let OrchestrationError::Evidence { source, .. } = &error else {
+        panic!("expected OrchestrationError::Evidence, got {error:?}");
+    };
+    assert!(
+        matches!(
+            source,
+            BundleError::InvalidManifest("unsafe workload artifact name")
+        ),
+        "evidence source must be the warmup staging cause: {source:?}"
+    );
+    assert_eq!(workload.invocations.len(), 1, "only the warmup entered");
+    assert!(
+        workload.drained,
+        "drain must run after a warmup-staging failure"
+    );
+    assert!(
+        workload
+            .invocations
+            .first()
+            .is_some_and(|kind| matches!(kind, InvocationKind::Warmup { ordinal: 1 })),
+        "no measured trial may begin after a warmup staging failure"
+    );
+}
+
+#[tokio::test]
+async fn evidence_error_with_drain_failure_still_tears_down() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    resolved.topology.push(sleeper_service());
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.drain_fails = true;
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "../escape".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: b"x".to_vec(),
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("drain failure after evidence error must still surface");
+    let OrchestrationError::Evidence { source, cleanup } = &error else {
+        panic!("expected OrchestrationError::Evidence, got {error:?}");
+    };
+    assert!(
+        matches!(
+            source,
+            BundleError::InvalidManifest("unsafe workload artifact name")
+        ),
+        "evidence source must remain primary: {source:?}"
+    );
+    assert!(
+        workload.drained,
+        "drain must be attempted even though it is configured to fail"
+    );
+    assert!(
+        !session.is_running(),
+        "teardown must still run after evidence+drain failure"
+    );
+    assert!(
+        cleanup.is_empty(),
+        "no teardown failure was injected; cleanup diagnostics must remain empty"
+    );
+}
+
+#[tokio::test]
+async fn evidence_error_with_teardown_failure_preserves_primary_cause() {
+    let cancel = CancellationToken::new();
+    let platform: Arc<dyn PlatformAdapter> = Arc::new(FailKillOnStartup);
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    resolved.topology.push(sleeper_service());
+    let mut options = runner_options(temp.path());
+    options.platform = platform;
+    let mut session = LocalSession::prepare(&resolved, options).unwrap();
+    session.startup(&cancel).await.unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "../escape".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: b"x".to_vec(),
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("evidence error with teardown failure must surface");
+    let OrchestrationError::Evidence { source, cleanup } = &error else {
+        panic!("expected OrchestrationError::Evidence, got {error:?}");
+    };
+    assert!(
+        matches!(
+            source,
+            BundleError::InvalidManifest("unsafe workload artifact name")
+        ),
+        "primary evidence cause must be preserved when teardown also fails: {source:?}"
+    );
+    assert!(
+        !cleanup.is_empty(),
+        "teardown failure must be reported as secondary cleanup"
+    );
+    assert_eq!(cleanup[0].service, "sleeper");
+    assert!(workload.drained, "drain must still attempt to run");
+}
+
+/// Forces a teardown failure without affecting drain behavior. Lets a test prove that
+/// even when teardown reports a cleanup problem, the primary evidence error remains
+/// primary.
+#[derive(Debug, Clone, Copy)]
+struct FailKillOnStartup;
+impl PlatformAdapter for FailKillOnStartup {
+    fn support(&self) -> PlatformSupport {
+        UnixPlatform.support()
+    }
+    fn label(&self) -> &'static str {
+        "fail-kill-on-startup"
+    }
+    fn is_alive(&self, pid: u32) -> bool {
+        UnixPlatform.is_alive(pid)
+    }
+    fn terminate_group(&self, _pid: u32) -> Result<(), String> {
+        Err("injected terminate failure".to_owned())
+    }
+    fn kill_group(&self, _pid: u32) -> Result<(), String> {
+        Err("injected kill failure".to_owned())
+    }
+}
+
+#[tokio::test]
+async fn failed_evidence_staging_does_not_publish_final_bundle() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "../escape".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: b"x".to_vec(),
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("evidence error must surface");
+    assert!(matches!(error, OrchestrationError::Evidence { .. }));
+    assert!(
+        !temp.path().join("out.eggb").exists(),
+        "failed evidence staging must leave the final path absent"
+    );
+}
+
+#[tokio::test]
+async fn persisted_phase_vector_equals_returned_phase_vector_on_success() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.delay = Duration::from_millis(5);
+    let result = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.execution_status, ExecutionStatus::Completed);
+    assert_eq!(result.manifest.trials.len(), 2);
+    let bundle = BundleReader::open(&result.bundle_path).unwrap();
+    bundle.verify().unwrap();
+    let persisted_path = ArtifactPath::new("runner-phases.json").unwrap();
+    let bytes = {
+        let mut reader = BufReader::new(bundle.open_artifact(&persisted_path).unwrap());
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        buf
+    };
+    let persisted: Vec<PhaseEvent> = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        persisted, result.phases,
+        "persisted runner-phases.json must equal RunOutcome.phases"
+    );
+    assert!(
+        persisted.iter().all(|event| event.outcome.is_some()),
+        "every persisted event must be terminal"
+    );
+    assert_eq!(
+        persisted
+            .iter()
+            .filter(|event| event.phase == PhaseKind::Finalization)
+            .count(),
+        1,
+        "exactly one finalization event must be persisted"
+    );
+    let finalization = persisted
+        .iter()
+        .find(|event| event.phase == PhaseKind::Finalization)
+        .expect("finalization event must exist");
+    assert_eq!(
+        finalization.outcome,
+        Some(eggbench_runner::PhaseOutcome::Completed)
+    );
+    assert!(
+        finalization.elapsed_ns.is_some(),
+        "finalization must carry one terminal duration"
+    );
+}
+
+#[tokio::test]
+async fn finalization_event_is_terminalized_exactly_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.warmup = 0;
+    resolved.trials.cooldown_ms = None;
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let result = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result
+            .phases
+            .iter()
+            .filter(|event| event.phase == PhaseKind::Finalization)
+            .count(),
+        1,
+        "exactly one finalization event must be in the returned phase vector"
+    );
+    let finalization = result
+        .phases
+        .iter()
+        .find(|event| event.phase == PhaseKind::Finalization)
+        .expect("finalization event must exist");
+    assert_eq!(
+        finalization.outcome,
+        Some(eggbench_runner::PhaseOutcome::Completed)
+    );
+    assert!(
+        finalization.elapsed_ns.is_some(),
+        "finalization must have one terminal duration"
     );
 }

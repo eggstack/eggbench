@@ -193,7 +193,12 @@ pub enum PhaseKind {
     Drain,
     /// Managed-service teardown.
     Teardown,
-    /// Evidence serialization and bundle publication.
+    /// Runner-owned evidence staging prior to immutable bundle publication.
+    ///
+    /// This phase covers staging of `runner-phases.json` and any other
+    /// runner-owned artifacts required before the bundle is atomically
+    /// published. The immutable publication step itself is not representable
+    /// inside the bundle it publishes and is therefore outside this phase.
     Finalization,
 }
 
@@ -256,9 +261,87 @@ pub enum OrchestrationError {
     /// M002 configuration cannot be executed safely.
     #[error("orchestration preflight failed: {0}")]
     Preflight(&'static str),
-    /// Evidence could not be truthfully finalized.
-    #[error(transparent)]
-    Evidence(#[from] BundleError),
+    /// Evidence could not be truthfully finalized; the staged tree is incomplete and the
+    /// final bundle path was not published.
+    ///
+    /// `cleanup` carries any secondary drain or teardown failures observed while attempting
+    /// mandatory cleanup after the primary evidence error. The primary error is always the
+    /// `source` bundle error; cleanup diagnostics never replace it.
+    #[error("evidence finalization failed: {source}")]
+    Evidence {
+        /// Primary staging or finalization error.
+        source: BundleError,
+        /// Secondary cleanup diagnostics collected during mandatory drain/teardown.
+        cleanup: Vec<CleanupFailure>,
+    },
+}
+
+impl OrchestrationError {
+    /// Inspect the primary source bundle error, if this is an evidence error.
+    #[must_use]
+    pub fn source(&self) -> Option<&BundleError> {
+        match self {
+            Self::Evidence { source, .. } => Some(source),
+            Self::Preflight(_) => None,
+        }
+    }
+
+    /// Inspect secondary cleanup diagnostics collected during mandatory drain/teardown.
+    #[must_use]
+    pub fn cleanup(&self) -> &[CleanupFailure] {
+        match self {
+            Self::Evidence { cleanup, .. } => cleanup,
+            Self::Preflight(_) => &[],
+        }
+    }
+}
+
+/// Internal orchestration state for the cleanup-aware execution contract.
+///
+/// Tracks whether managed startup created owned processes, whether the workload
+/// executor was entered, and any evidence-staging error encountered during the
+/// experimental phase. Cleanup decisions at the bottom of [`execute_run`]
+/// derive from these flags so that drain and teardown cannot be bypassed by an
+/// evidence error propagating via `?`.
+struct RunState {
+    /// Bundle writer carrying all staged evidence up to the finalization tail.
+    writer: BundleWriter,
+    /// Run-relative state-machine event stream.
+    phases: Vec<PhaseEvent>,
+    /// Truthful lifecycle status; comparison is always absent in M002.
+    status: ExecutionStatus,
+    /// Primary redaction-safe failure, if any.
+    primary_failure: Option<FailureCategory>,
+    /// Cleanup failures from managed services and post-start failure paths.
+    cleanup_failures: Vec<CleanupFailure>,
+    /// Completed measured-trial descriptors ready for the manifest.
+    trials: Vec<TrialDescriptor>,
+    /// Identities in spawn order.
+    started: Vec<String>,
+    /// Whether managed startup created at least one owned process.
+    services_started: bool,
+    /// Whether the workload executor was entered for any invocation.
+    workload_entered: bool,
+    /// Primary evidence-staging failure encountered during the experimental phase,
+    /// if any. Preserved across the mandatory cleanup tail.
+    staging_error: Option<BundleError>,
+}
+
+impl RunState {
+    fn new(writer: BundleWriter, phases: Vec<PhaseEvent>) -> Self {
+        Self {
+            writer,
+            phases,
+            status: ExecutionStatus::Completed,
+            primary_failure: None,
+            cleanup_failures: Vec::new(),
+            trials: Vec::new(),
+            started: Vec::new(),
+            services_started: false,
+            workload_entered: false,
+            staging_error: None,
+        }
+    }
 }
 
 /// Run resolved work through startup, warmups, measured trials, and cleanup.
@@ -268,13 +351,18 @@ pub enum OrchestrationError {
 ///
 /// # Errors
 /// Returns an error for preflight or evidence finalization failures.
+///
+/// Any [`OrchestrationError::Evidence`] returned after managed startup carries the primary
+/// evidence failure plus any secondary cleanup failures observed while attempting mandatory
+/// drain and `LocalSession::shutdown`; the primary cause is never replaced by cleanup
+/// diagnostics. No failed evidence publication is represented as a valid finalized bundle.
 #[allow(clippy::too_many_lines)] // Keep the canonical phase transition order auditable in one place.
 pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     session: &mut LocalSession,
     resolved: &eggbench_core::ResolvedPlan,
     executor: &mut E,
     resets: &ResetRegistry,
-    mut writer: BundleWriter,
+    writer: BundleWriter,
     cancel: &CancellationToken,
 ) -> Result<RunOutcome, OrchestrationError> {
     let config = preflight(resolved, resets)?;
@@ -296,51 +384,66 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     preflight_evidence_capacity(&writer, session, resolved, phase_bound)?;
     let run_id = writer.run_id();
     let origin = Instant::now();
-    let mut phases = Vec::with_capacity(phase_bound);
-    let mut status = ExecutionStatus::Completed;
-    let mut primary_failure = None;
-    let mut cleanup_failures = Vec::new();
-    let mut trials = Vec::new();
-    let mut started = Vec::new();
+    let mut state = RunState::new(writer, Vec::with_capacity(phase_bound));
 
+    // ---- Startup / readiness ----
     if cancel.is_cancelled() {
-        let index = begin_phase(&mut phases, PhaseKind::StartupReadiness, None, None, origin);
-        status = ExecutionStatus::Cancelled;
-        primary_failure = Some(FailureCategory::Cancelled);
+        let index = begin_phase(
+            &mut state.phases,
+            PhaseKind::StartupReadiness,
+            None,
+            None,
+            origin,
+        );
+        state.status = ExecutionStatus::Cancelled;
+        state.primary_failure = Some(FailureCategory::Cancelled);
         finish_phase(
-            &mut phases,
+            &mut state.phases,
             index,
             origin,
             PhaseOutcome::Cancelled,
-            primary_failure,
+            state.primary_failure,
         );
     } else {
-        let index = begin_phase(&mut phases, PhaseKind::StartupReadiness, None, None, origin);
+        let index = begin_phase(
+            &mut state.phases,
+            PhaseKind::StartupReadiness,
+            None,
+            None,
+            origin,
+        );
         match session.startup(cancel).await {
             Ok(report) => {
-                started = report.started;
-                finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None);
+                state.started = report.started;
+                state.services_started = !state.started.is_empty();
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    PhaseOutcome::Completed,
+                    None,
+                );
             }
             Err(error) => {
-                started = session
+                state.started = session
                     .events()
                     .iter()
                     .filter(|event| event.kind == crate::LifecycleEventKind::Spawned)
                     .map(|event| event.identity.clone())
                     .collect();
-                status = if cancel.is_cancelled() {
+                state.status = if cancel.is_cancelled() {
                     ExecutionStatus::Cancelled
                 } else {
                     ExecutionStatus::Failed
                 };
-                primary_failure = Some(if cancel.is_cancelled() {
+                state.primary_failure = Some(if cancel.is_cancelled() {
                     FailureCategory::Cancelled
                 } else {
                     FailureCategory::StartupFailed
                 });
-                cleanup_failures.extend_from_slice(error.cleanup());
+                state.cleanup_failures.extend_from_slice(error.cleanup());
                 finish_phase(
-                    &mut phases,
+                    &mut state.phases,
                     index,
                     origin,
                     if cancel.is_cancelled() {
@@ -348,15 +451,22 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                     } else {
                         PhaseOutcome::Failed
                     },
-                    primary_failure,
+                    state.primary_failure,
                 );
             }
         }
     }
 
-    if status == ExecutionStatus::Completed {
+    // ---- Warmups ----
+    if state.status == ExecutionStatus::Completed && state.staging_error.is_none() {
         for ordinal in 1..=warmup_count {
-            let index = begin_phase(&mut phases, PhaseKind::Warmup, Some(ordinal), None, origin);
+            let index = begin_phase(
+                &mut state.phases,
+                PhaseKind::Warmup,
+                Some(ordinal),
+                None,
+                origin,
+            );
             match execute_invocation(
                 executor,
                 cancel,
@@ -369,43 +479,77 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
             .await
             {
                 InvocationResult::Completed(output, elapsed, _) => {
-                    finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None);
-                    stage_warmup(&mut writer, ordinal, elapsed, None, output)?;
+                    state.workload_entered = true;
+                    match stage_warmup(&mut state.writer, ordinal, elapsed, None, output) {
+                        Ok(()) => {
+                            finish_phase(
+                                &mut state.phases,
+                                index,
+                                origin,
+                                PhaseOutcome::Completed,
+                                None,
+                            );
+                        }
+                        Err(error) => {
+                            state.staging_error = Some(error);
+                            state.status = ExecutionStatus::Failed;
+                            finish_phase(
+                                &mut state.phases,
+                                index,
+                                origin,
+                                PhaseOutcome::Failed,
+                                None,
+                            );
+                            break;
+                        }
+                    }
                 }
                 InvocationResult::Failure(category, elapsed, _) => {
+                    state.workload_entered = true;
                     let category = workload_failure(category);
-                    status = status_for(category);
-                    primary_failure = Some(category);
+                    state.status = status_for(category);
+                    state.primary_failure = Some(category);
                     finish_phase(
-                        &mut phases,
+                        &mut state.phases,
                         index,
                         origin,
                         outcome_for(category),
                         Some(category),
                     );
-                    stage_warmup(
-                        &mut writer,
+                    if let Err(error) = stage_warmup(
+                        &mut state.writer,
                         ordinal,
                         elapsed,
                         Some(category),
                         WorkloadOutput::default(),
-                    )?;
+                    ) {
+                        // Preserve the workload failure as primary while recording the
+                        // staging error as the evidence-cause.
+                        state.staging_error = Some(error);
+                    }
                     break;
                 }
             }
         }
     }
 
-    if status == ExecutionStatus::Completed {
+    // ---- Measured trials ----
+    if state.status == ExecutionStatus::Completed && state.staging_error.is_none() {
         for number in 1..=trial_count {
             if cancel.is_cancelled() {
-                status = ExecutionStatus::Cancelled;
-                primary_failure = Some(FailureCategory::Cancelled);
+                state.status = ExecutionStatus::Cancelled;
+                state.primary_failure = Some(FailureCategory::Cancelled);
                 break;
             }
-            let trial_id = TrialId::new(number)?;
+            let trial_id = match TrialId::new(number) {
+                Ok(id) => id,
+                Err(error) => {
+                    state.staging_error = Some(error);
+                    break;
+                }
+            };
             let index = begin_phase(
-                &mut phases,
+                &mut state.phases,
                 PhaseKind::MeasuredTrial,
                 None,
                 Some(trial_id),
@@ -423,7 +567,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
             .await
             {
                 InvocationResult::Completed(output, elapsed, start_offset_ns) => {
-                    finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None);
+                    state.workload_entered = true;
                     let result = TrialExecutionResult {
                         schema_version: TRIAL_RESULT_SCHEMA_VERSION,
                         trial_id,
@@ -432,20 +576,42 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                         terminal_status: TrialExecutionStatus::Completed,
                         failure_category: None,
                     };
-                    let (result_path, artifacts) =
-                        stage_trial(&mut writer, trial_id, &result, output)?;
-                    trials.push(TrialDescriptor {
-                        id: trial_id,
-                        result: result_path,
-                        artifacts,
-                    });
+                    match stage_trial(&mut state.writer, trial_id, &result, output) {
+                        Ok((result_path, artifacts)) => {
+                            finish_phase(
+                                &mut state.phases,
+                                index,
+                                origin,
+                                PhaseOutcome::Completed,
+                                None,
+                            );
+                            state.trials.push(TrialDescriptor {
+                                id: trial_id,
+                                result: result_path,
+                                artifacts,
+                            });
+                        }
+                        Err(error) => {
+                            state.staging_error = Some(error);
+                            state.status = ExecutionStatus::Failed;
+                            finish_phase(
+                                &mut state.phases,
+                                index,
+                                origin,
+                                PhaseOutcome::Failed,
+                                None,
+                            );
+                            break;
+                        }
+                    }
                 }
                 InvocationResult::Failure(category, elapsed, start_offset_ns) => {
+                    state.workload_entered = true;
                     let category = workload_failure(category);
-                    status = status_for(category);
-                    primary_failure = Some(category);
+                    state.status = status_for(category);
+                    state.primary_failure = Some(category);
                     finish_phase(
-                        &mut phases,
+                        &mut state.phases,
                         index,
                         origin,
                         outcome_for(category),
@@ -468,20 +634,42 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                             _ => TrialExecutionFailure::WorkloadFailed,
                         }),
                     };
-                    let (result_path, artifacts) =
-                        stage_trial(&mut writer, trial_id, &result, WorkloadOutput::default())?;
-                    trials.push(TrialDescriptor {
-                        id: trial_id,
-                        result: result_path,
-                        artifacts,
-                    });
+                    match stage_trial(
+                        &mut state.writer,
+                        trial_id,
+                        &result,
+                        WorkloadOutput::default(),
+                    ) {
+                        Ok((result_path, artifacts)) => {
+                            state.trials.push(TrialDescriptor {
+                                id: trial_id,
+                                result: result_path,
+                                artifacts,
+                            });
+                        }
+                        Err(error) => {
+                            // Preserve the workload failure as primary while recording the
+                            // staging error as the evidence-cause. We cannot include this
+                            // trial descriptor in the manifest because the result artifact
+                            // could not be staged.
+                            state.staging_error = Some(error);
+                        }
+                    }
                     break;
                 }
             }
-            if number < trial_count && status == ExecutionStatus::Completed {
+            if number < trial_count
+                && state.status == ExecutionStatus::Completed
+                && state.staging_error.is_none()
+            {
                 if let Some(reset) = config.reset.as_ref() {
-                    let index =
-                        begin_phase(&mut phases, PhaseKind::Reset, None, Some(trial_id), origin);
+                    let index = begin_phase(
+                        &mut state.phases,
+                        PhaseKind::Reset,
+                        None,
+                        Some(trial_id),
+                        origin,
+                    );
                     let token = cancel.child_token();
                     let context = ResetContext {
                         run_id,
@@ -492,7 +680,13 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                     let result = tokio::select! { () = cancel.cancelled() => Err(FailureCategory::Cancelled), timed = timeout(context.timeout, reset.hook.reset(context)) => match timed { Ok(result) => result, Err(_) => Err(FailureCategory::TimedOut) } };
                     match result {
                         Ok(()) => {
-                            finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None);
+                            finish_phase(
+                                &mut state.phases,
+                                index,
+                                origin,
+                                PhaseOutcome::Completed,
+                                None,
+                            );
                         }
                         Err(category) => {
                             token.cancel();
@@ -500,10 +694,10 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                                 FailureCategory::Cancelled | FailureCategory::TimedOut => category,
                                 _ => FailureCategory::ResetFailed,
                             };
-                            status = status_for(category);
-                            primary_failure = Some(category);
+                            state.status = status_for(category);
+                            state.primary_failure = Some(category);
                             finish_phase(
-                                &mut phases,
+                                &mut state.phases,
                                 index,
                                 origin,
                                 outcome_for(category),
@@ -515,7 +709,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 }
                 if let Some(cooldown) = resolved.trials.cooldown_ms {
                     let index = begin_phase(
-                        &mut phases,
+                        &mut state.phases,
                         PhaseKind::Cooldown,
                         None,
                         Some(trial_id),
@@ -523,105 +717,177 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                     );
                     let sleep = tokio::time::sleep(Duration::from_millis(cooldown.get()));
                     tokio::pin!(sleep);
-                    tokio::select! { () = cancel.cancelled() => { status = ExecutionStatus::Cancelled; primary_failure = Some(FailureCategory::Cancelled); finish_phase(&mut phases, index, origin, PhaseOutcome::Cancelled, primary_failure); break; }, () = &mut sleep => finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None) }
+                    tokio::select! { () = cancel.cancelled() => { state.status = ExecutionStatus::Cancelled; state.primary_failure = Some(FailureCategory::Cancelled); finish_phase(&mut state.phases, index, origin, PhaseOutcome::Cancelled, state.primary_failure); break; }, () = &mut sleep => finish_phase(&mut state.phases, index, origin, PhaseOutcome::Completed, None) }
                 }
             }
         }
     }
 
-    let index = begin_phase(&mut phases, PhaseKind::Drain, None, None, origin);
-    let drain_context = DrainContext {
-        run_id,
-        cancellation: cancel.clone(),
-        timeout: config.drain_timeout,
-    };
-    match timeout(config.drain_timeout, executor.drain(drain_context)).await {
-        Ok(Ok(())) => finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None),
-        Ok(Err(category)) => {
-            if status == ExecutionStatus::Completed {
-                if category == FailureCategory::Cancelled {
-                    status = ExecutionStatus::Cancelled;
-                    primary_failure = Some(FailureCategory::Cancelled);
-                } else {
-                    status = ExecutionStatus::Failed;
-                    primary_failure = Some(FailureCategory::DrainFailed);
+    // ===========================================================
+    // Mandatory cleanup tail. Every code path that reaches here
+    // runs workload drain (if entered) and managed-service
+    // teardown (if startup created processes) before any
+    // evidence/finalization disposition.
+    // ===========================================================
+
+    // ---- Workload drain ----
+    // Always call drain to preserve existing M002 contract; the workload adapter is the
+    // canonical owner of its cleanup hook and is expected to be idempotent when no
+    // invocation was entered.
+    {
+        let index = begin_phase(&mut state.phases, PhaseKind::Drain, None, None, origin);
+        let drain_context = DrainContext {
+            run_id,
+            cancellation: cancel.clone(),
+            timeout: config.drain_timeout,
+        };
+        match timeout(config.drain_timeout, executor.drain(drain_context)).await {
+            Ok(Ok(())) => finish_phase(
+                &mut state.phases,
+                index,
+                origin,
+                PhaseOutcome::Completed,
+                None,
+            ),
+            Ok(Err(category)) => {
+                if state.status == ExecutionStatus::Completed {
+                    if category == FailureCategory::Cancelled {
+                        state.status = ExecutionStatus::Cancelled;
+                        state.primary_failure = Some(FailureCategory::Cancelled);
+                    } else {
+                        state.status = ExecutionStatus::Failed;
+                        state.primary_failure = Some(FailureCategory::DrainFailed);
+                    }
                 }
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    PhaseOutcome::Failed,
+                    Some(if category == FailureCategory::Cancelled {
+                        FailureCategory::Cancelled
+                    } else {
+                        FailureCategory::DrainFailed
+                    }),
+                );
+            }
+            Err(_) => {
+                if state.status == ExecutionStatus::Completed {
+                    state.status = ExecutionStatus::Failed;
+                    state.primary_failure = Some(FailureCategory::DrainFailed);
+                }
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    PhaseOutcome::TimedOut,
+                    Some(FailureCategory::TimedOut),
+                );
+            }
+        }
+        if cancel.is_cancelled() && state.status == ExecutionStatus::Completed {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+        }
+    }
+
+    // ---- Managed-service teardown ----
+    let teardown_index = begin_phase(&mut state.phases, PhaseKind::Teardown, None, None, origin);
+    let stopped_order = if state.services_started {
+        let shutdown = session.shutdown().await;
+        state.cleanup_failures.extend(shutdown.failures);
+        if cancel.is_cancelled() && state.status == ExecutionStatus::Completed {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+        }
+        if state.cleanup_failures.is_empty() {
+            finish_phase(
+                &mut state.phases,
+                teardown_index,
+                origin,
+                PhaseOutcome::Completed,
+                None,
+            );
+        } else {
+            if state.status == ExecutionStatus::Completed {
+                state.status = ExecutionStatus::Failed;
+                state.primary_failure = Some(FailureCategory::TeardownFailed);
             }
             finish_phase(
-                &mut phases,
-                index,
+                &mut state.phases,
+                teardown_index,
                 origin,
                 PhaseOutcome::Failed,
-                Some(if category == FailureCategory::Cancelled {
-                    FailureCategory::Cancelled
-                } else {
-                    FailureCategory::DrainFailed
-                }),
+                Some(FailureCategory::TeardownFailed),
             );
         }
-        Err(_) => {
-            if status == ExecutionStatus::Completed {
-                status = ExecutionStatus::Failed;
-                primary_failure = Some(FailureCategory::DrainFailed);
-            }
-            finish_phase(
-                &mut phases,
-                index,
-                origin,
-                PhaseOutcome::TimedOut,
-                Some(FailureCategory::TimedOut),
-            );
-        }
-    }
-    if cancel.is_cancelled() && status == ExecutionStatus::Completed {
-        status = ExecutionStatus::Cancelled;
-        primary_failure = Some(FailureCategory::Cancelled);
-    }
-    let index = begin_phase(&mut phases, PhaseKind::Teardown, None, None, origin);
-    let shutdown = session.shutdown().await;
-    let stopped_order = shutdown.stopped_order;
-    cleanup_failures.extend(shutdown.failures);
-    if cancel.is_cancelled() && status == ExecutionStatus::Completed {
-        status = ExecutionStatus::Cancelled;
-        primary_failure = Some(FailureCategory::Cancelled);
-    }
-    if cleanup_failures.is_empty() {
-        finish_phase(&mut phases, index, origin, PhaseOutcome::Completed, None);
+        shutdown.stopped_order
     } else {
-        if status == ExecutionStatus::Completed {
-            status = ExecutionStatus::Failed;
-            primary_failure = Some(FailureCategory::TeardownFailed);
-        }
         finish_phase(
-            &mut phases,
-            index,
+            &mut state.phases,
+            teardown_index,
             origin,
-            PhaseOutcome::Failed,
-            Some(FailureCategory::TeardownFailed),
+            PhaseOutcome::Completed,
+            None,
         );
+        Vec::new()
+    };
+
+    // ---- Lifecycle evidence staging ----
+    let lifecycle = LifecycleOutcome {
+        started: std::mem::take(&mut state.started),
+        stopped_order,
+        cleanup: state.cleanup_failures.clone(),
+    };
+    let lifecycle_logs = stage_lifecycle_logs(session, &mut state.writer).await;
+    if let Err(error) = lifecycle_logs {
+        if state.staging_error.is_none() {
+            state.staging_error = Some(error);
+        }
+    } else if state.staging_error.is_none()
+        && let Err(error) = stage_lifecycle_metadata(session, &lifecycle, &mut state.writer)
+    {
+        state.staging_error = Some(error);
     }
 
-    let lifecycle = LifecycleOutcome {
-        started,
-        stopped_order,
-        cleanup: cleanup_failures.clone(),
-    };
-    stage_lifecycle_logs(session, &mut writer).await?;
-    stage_lifecycle_metadata(session, &lifecycle, &mut writer)?;
+    // ===========================================================
+    // Finalization phase: the in-memory finalization event is
+    // finished exactly once. `runner-phases.json` is staged from
+    // that terminal state and is not mutated again. Immutable
+    // bundle publication follows; its result is the
+    // evidence-cause when it fails.
+    // ===========================================================
 
-    let final_index = begin_phase(&mut phases, PhaseKind::Finalization, None, None, origin);
+    let final_index = begin_phase(
+        &mut state.phases,
+        PhaseKind::Finalization,
+        None,
+        None,
+        origin,
+    );
     finish_phase(
-        &mut phases,
+        &mut state.phases,
         final_index,
         origin,
         PhaseOutcome::Completed,
         None,
     );
-    stage_phase_artifacts(&mut writer, &phases)?;
-    // Finalization event covers phase artifact staging; manifest publication follows it.
-    let path = writer.final_path().to_path_buf();
-    let bundle = writer.finalize(
-        status,
+    if state.staging_error.is_none()
+        && let Err(error) = stage_phase_artifacts(&mut state.writer, &state.phases)
+    {
+        state.staging_error = Some(error);
+    }
+
+    if let Some(source) = state.staging_error.take() {
+        return Err(OrchestrationError::Evidence {
+            source,
+            cleanup: state.cleanup_failures,
+        });
+    }
+
+    let path = state.writer.final_path().to_path_buf();
+    let bundle = match state.writer.finalize(
+        state.status,
         None::<ComparisonVerdict>,
         resolved.subject.clone(),
         resolved
@@ -629,22 +895,24 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
             .values()
             .map(|driver| driver.descriptor.clone())
             .collect(),
-        trials,
+        state.trials,
         None,
         None,
-    )?;
-    finish_phase(
-        &mut phases,
-        final_index,
-        origin,
-        PhaseOutcome::Completed,
-        None,
-    );
+    ) {
+        Ok(bundle) => bundle,
+        Err(source) => {
+            return Err(OrchestrationError::Evidence {
+                source,
+                cleanup: state.cleanup_failures,
+            });
+        }
+    };
+
     Ok(RunOutcome {
-        execution_status: status,
-        primary_failure,
-        cleanup_failures,
-        phases,
+        execution_status: state.status,
+        primary_failure: state.primary_failure,
+        cleanup_failures: state.cleanup_failures,
+        phases: state.phases,
         bundle_path: path,
         manifest: bundle.manifest().clone(),
     })
@@ -1061,6 +1329,13 @@ pub struct FakeWorkload {
     pub drain_delay: Duration,
     /// Whether drain returns a failure.
     pub drain_fails: bool,
+    /// Per-invocation artifacts to return alongside the workload output. Indexed by
+    /// invocation ordinal (warmups first, then measured trials). An entry of `Some(artifacts)`
+    /// overrides the default empty output; `None` returns an empty [`WorkloadOutput`].
+    ///
+    /// Use this to exercise evidence-staging paths that respond to adversarial artifact
+    /// names, counts, or byte sizes.
+    pub artifacts_by_invocation: Vec<Option<Vec<WorkloadArtifact>>>,
     invocation_count: u32,
     /// Invocation kinds in execution order.
     pub invocations: Vec<InvocationKind>,
@@ -1075,6 +1350,7 @@ impl Default for FakeWorkload {
             pending_on: None,
             drain_delay: Duration::ZERO,
             drain_fails: false,
+            artifacts_by_invocation: Vec::new(),
             invocation_count: 0,
             invocations: Vec::new(),
             drained: false,
@@ -1097,7 +1373,14 @@ impl WorkloadExecutor for FakeWorkload {
             if self.fail_on == Some(self.invocation_count) {
                 Err(FailureCategory::WorkloadFailed)
             } else {
-                Ok(WorkloadOutput::default())
+                let output = self
+                    .artifacts_by_invocation
+                    .get(self.invocation_count as usize - 1)
+                    .and_then(Clone::clone)
+                    .map_or_else(WorkloadOutput::default, |artifacts| WorkloadOutput {
+                        artifacts,
+                    });
+                Ok(output)
             }
         })
     }

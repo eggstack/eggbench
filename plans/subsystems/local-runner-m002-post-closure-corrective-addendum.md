@@ -1,6 +1,6 @@
 # Local Runner M002 — Post-Closure Evidence-Safety Corrective Addendum
 
-Status: active
+Status: closed
 
 Repository audit baseline: `02212d5d9f78816eec5ef1b89d45e99c0dbe02d5`
 
@@ -296,13 +296,17 @@ External Oracles M001 may remain independently plan-authorable, but should not c
 
 ### C001 — Evidence-error cleanup and finalization timeline truthfulness
 
-Class: invariant/correctness corrective.
+Class: invariant/correctiveness corrective.
 
 Implementation plan:
 
 - `plans/implementation/local-runner-m002-post-closure-corrective/001-evidence-error-cleanup-and-finalization-timeline.md`
 
-Status: ready.
+Status: closed.
+
+Closure record:
+
+- `plans/closure/local-runner-m002-post-closure-corrective/001-status.md`
 
 Exit conditions:
 
