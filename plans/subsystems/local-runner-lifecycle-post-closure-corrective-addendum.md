@@ -1,6 +1,6 @@
 # Local Runner and Lifecycle — Post-Closure Corrective Addendum
 
-Status: active
+Status: closed
 
 Repository audit baseline: `319b5816604e39578af4e20f5880945123b042e1`
 
@@ -268,4 +268,4 @@ The corrective closes when managed local execution has a truthful filesystem, en
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| C001 | ready | `plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md` | none | none |
+| C001 | closed | `plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md` | `plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md`; historical M001 SHA erratum: `plans/closure/local-runner-lifecycle/001-errata.md` | none |

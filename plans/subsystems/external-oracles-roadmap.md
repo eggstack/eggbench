@@ -90,4 +90,4 @@ The roadmap closes when Eggbench can qualify network subjects with independent g
 
 ## 8. Milestone status
 
-Blocked on driver and runner contracts.
+M001 is ready for planning: the typed driver boundary and qualified runner command substrate are present. No M001 implementation plan has been written yet.

@@ -1,6 +1,8 @@
 # Local Runner Post-Closure Corrective C001 — Filesystem, Environment, and Platform Qualification
 
-Status: ready for handoff
+Status: closed
+
+Closure record: `plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md`
 
 Repository planning baseline: `f10e03d224a3ca62cec04cd124154ace7685398f` (Foundation corrective C001 implementation).
 

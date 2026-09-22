@@ -37,11 +37,11 @@ Canonical direction remains in:
 | Subsystem | Status | Roadmap / corrective | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle post-closure corrective | active | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 ready | none |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 blocked; M003 blocked | M002 waits for both post-closure correctives and then needs a fresh implementation plan |
+| Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
+| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001 closed; M002 ready; M003 blocked | M002 needs a fresh reviewed implementation plan before execution; M003 waits for M002 |
 | Measurement/comparison | proposed | plans/subsystems/measurement-comparison-roadmap.md | M001 blocked | corrected foundation status/verdict contract + local trial evidence |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Foundation + local runner + measurement contracts |
-| External measurement oracles | proposed | plans/subsystems/external-oracles-roadmap.md | M001 blocked | Driver contracts + local runner |
+| External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -51,7 +51,8 @@ Canonical direction remains in:
 |---|---|---|---|
 | Foundation experiment/evidence | closed | plans/subsystems/foundation-experiment-evidence-roadmap.md | plans/closure/foundation-experiment-evidence/001-status.md; 002-status.md; 003-status.md |
 | Foundation status/verdict corrective C001 | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md |
-| Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; post-closure corrective records the SHA erratum and additional findings |
+| Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
+| Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
@@ -65,7 +66,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| Local runner/lifecycle | M002 Trial phase orchestration + fake workload | blocked | not yet written | Local Runner corrective C001; then write a fresh plan against the corrected repository |
+| Local runner/lifecycle | M002 Trial phase orchestration + fake workload | ready | not yet written | Both post-closure correctives are closed; write and review a fresh plan against the corrected repository before implementation |
 
 ## Current execution order and dependency gates
 
@@ -83,7 +84,7 @@ Do not begin Local Runner M002 or Measurement/Comparison implementation until th
 
 ### Gate C — Local Runner M001 corrective
 
-Run Local Runner post-closure corrective C001, now dependency-ready after Foundation C001.
+Local Runner post-closure corrective C001 is closed at `plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md`. Its implementation added filesystem-resolved cwd confinement, a hermetic child environment contract, explicit executable resolution, truthful platform support, and cross-platform qualification. The historical M001 SHA erratum is recorded at `plans/closure/local-runner-lifecycle/001-errata.md`.
 
 It must:
 
@@ -98,7 +99,7 @@ The predecessor closure incorrectly lists `9387a45e1bbf9c1f9a55fb8ad875b07f6f880
 
 ### Gate D — Local Runner M002
 
-Only after both corrective C001 milestones close should a fresh Local Runner M002 implementation plan be written.
+Both corrective C001 milestones are now closed. A fresh Local Runner M002 implementation plan may be written and reviewed; do not implement M002 until that plan is ready.
 
 M002 remains warmup -> measured trial -> cooldown/reset phase orchestration with a fake workload. It must consume the corrected evidence status model and corrected process/session boundary.
 
@@ -156,8 +157,4 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The current dependency-ready implementation plan is:
-
-`plans/implementation/local-runner-lifecycle-post-closure-corrective/001-filesystem-environment-and-platform-qualification.md`
-
-After Local Runner corrective C001 closes, write a fresh Local Runner M002 plan against the corrected repository. Do not write or execute Local Runner M002 before then.
+The next implementation plan to write is a fresh Local Runner M002 plan. M002 is dependency-ready but has no reviewed implementation plan yet. External Oracles M001 is also ready for planning. Measurement/Comparison remains blocked until local trial evidence exists.
