@@ -8,6 +8,38 @@ The resolver derives the required load-model capability from the plan and verifi
 
 ResolvedPlan schema v1 freezes the source-plan version, resolved schema version, exact driver descriptors and upstream versions, paths supplied for external drivers, normalized topology/workload, trial defaults, environment/comparison requests, seed, and warnings. It contains no process or runtime handles. Unknown v1 fields and unknown capability variants are rejected; adding serialized capability variants requires an explicit compatibility/version decision.
 
+## Production catalog ownership (External Oracles M001)
+
+`eggbench-drivers` is the sole production adapter/catalog ownership crate
+(`DriverCatalog::production`, currently empty). The CLI consumes the catalog
+rather than owning registration; the qualification fake remains
+test/qualification-only and is never linked into the production path.
+Dependency direction stays `core <- runner <- drivers <- cli`.
+
+## External command substrate (External Oracles M001)
+
+Reusable machinery for optional external benchmark tools (no oha/h2load/
+iperf3 adapter ships in M001):
+
+- trusted executable resolution (`BinaryResolver`): explicit absolute paths
+  only; `PATH` search skips empty/relative components (no implicit cwd);
+  Unix requires executable mode bits; Windows accepts only direct `.exe`/
+  `.com` targets and rejects `.bat`/`.cmd` shell wrappers; canonical target
+  is SHA-256 hashed for provenance;
+- bounded argv-only version probes (`VersionProbe`) with explicit timeout,
+  output caps, cancellation, and a parsed version token;
+- argv-only command execution (`run_command`) with `env_clear` plus explicit
+  driver environment, null stdin, concurrent bounded stdout/stderr draining
+  (draining continues past the cap so children never block), cancellation/
+  timeout cleanup via the runner's process-group semantics on Unix and
+  explicit `direct_child_only` reporting on Windows;
+- raw artifact helpers (`stdout.raw`, `stderr.raw`, `command-metadata.json`)
+  with no metric normalization;
+- versioned parser contract (`ExternalOutputParser`) independent of
+  spawning; M001 ships only a trivial fixture parser, not a tool parser.
+
+See [external drivers](../docs/external-drivers.md).
+
 Future Eggstack integrations should first use stable sibling-owned crates or process/protocol seams, as ADR-0004 directs. Independent external measurement tools remain separate workload adapters where they provide an independent oracle.
 
 For local orchestration, runtime adapter instances remain in

@@ -1,9 +1,11 @@
 //! Workload driver registry with an explicit production/qualification split.
 //!
-//! Production `eggbench` registers no workload adapter at this milestone:
-//! [`WorkloadRegistry::production`] (and the legacy [`WorkloadRegistry::with_builtin`]
-//! alias) return an empty registry, so `run` fails before managed startup
-//! with a stable `missing_driver`/`unsupported_workload` category.
+//! Production driver inventory is owned by `eggbench-drivers`
+//! ([`eggbench_drivers::DriverCatalog`]); this module is a thin CLI-facing
+//! compatibility view over that catalog. [`WorkloadRegistry::production`]
+//! (and the legacy [`WorkloadRegistry::with_builtin`] alias) return an empty
+//! registry, so `run` fails before managed startup with a stable
+//! `missing_driver`/`unsupported_workload` category.
 //!
 //! Deterministic qualification uses [`WorkloadRegistry::with_qualification_fake`]
 //! (or [`QualificationRuntime`]) to inject the `FakeWorkload` descriptor and
@@ -168,11 +170,14 @@ impl WorkloadRuntime for QualificationRuntime {
 impl WorkloadRegistry {
     /// Production registry state: no synthetic workload driver.
     ///
-    /// At this milestone the set of real compiled production adapters is
-    /// empty, so `doctor` reports `has_workload_driver=false` and `run`
-    /// fails before managed startup.
+    /// Delegates to the authoritative [`eggbench_drivers::DriverCatalog`]
+    /// production inventory, which is empty after External Oracles M001.
+    /// `doctor` reports `has_workload_driver=false` and `run` fails before
+    /// managed startup.
     #[must_use]
     pub fn production() -> Self {
+        let catalog = eggbench_drivers::production_catalog();
+        debug_assert!(catalog.is_empty(), "M001 production catalog is empty");
         Self::default()
     }
 

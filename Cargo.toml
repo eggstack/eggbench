@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/eggbench-cli", "crates/eggbench-core", "crates/eggbench-runner"]
+members = ["crates/eggbench-cli", "crates/eggbench-core", "crates/eggbench-runner", "crates/eggbench-drivers"]
 resolver = "3"
 
 [workspace.package]

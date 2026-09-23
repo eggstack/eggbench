@@ -72,11 +72,12 @@ categories must be added through planning review.
 
 ## Driver registry and unsupported workloads
 
-Production `eggbench` has no workload adapter yet: the production registry
-is empty, `doctor` truthfully reports `has_workload_driver=false`, and `run`
-fails before managed startup with the stable `missing_driver` /
-`unsupported_workload` category. No service process is started and no bundle
-is published on that path.
+Production `eggbench` has no workload adapter yet: the production catalog
+owned by `eggbench-drivers` (`DriverCatalog::production`) is empty, `doctor`
+truthfully reports `has_workload_driver=false`, and `run` fails before
+managed startup with the stable `missing_driver` / `unsupported_workload`
+category. No service process is started and no bundle is published on that
+path. The CLI consumes the drivers catalog rather than owning registration.
 
 A deterministic `fake-load` adapter exists only as explicit test injection
 for qualification harnesses. It is not a production traffic generator, has

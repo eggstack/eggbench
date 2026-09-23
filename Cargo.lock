@@ -172,6 +172,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "eggbench-core",
+ "eggbench-drivers",
  "eggbench-runner",
  "nix",
  "serde",
@@ -194,6 +195,22 @@ dependencies = [
  "thiserror",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "eggbench-drivers"
+version = "0.1.0"
+dependencies = [
+ "eggbench-core",
+ "eggbench-runner",
+ "nix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
