@@ -20,6 +20,28 @@ driver inventory. Bundle finalization records execution status and leaves the
 comparison verdict absent. This is execution infrastructure, not a
 performance-comparison capability.
 
+## M003 pre-start preparation
+
+`LocalEnvironmentCollector::collect()` produces a versioned
+[`EnvironmentFingerprint`](../docs/environment-fingerprint.md) before
+managed startup. Collection failure cannot leave managed processes running
+because startup has not begun.
+
+`SubjectSnapshot::build()` records the resolved executable path, its
+SHA-256 digest, the declared revision/digest hints, and whether the
+declared digest matches the observed digest for managed subjects. External
+and label subjects keep declared identity only.
+
+`prepare_bundle(...)` stages the four primary evidence artifacts
+(`plan.json`, `resolved-plan.json`, `environment.json`, `subject.json`) into
+a still-unpublished `BundleWriter` before the first measured workload
+invocation. The helper centralizes CLI boilerplate and keeps CLI input
+parsing out of the runner's execution engine.
+
+The CLI in [`eggbench-cli`](../docs/cli.md) consumes these helpers and
+delegates measurement work to `execute_run`; it does not duplicate
+orchestration.
+
 ## Post-start cleanup contract
 
 Every terminal exit from `execute_run` that follows a successful managed

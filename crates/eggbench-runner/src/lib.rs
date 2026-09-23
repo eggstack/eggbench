@@ -29,15 +29,19 @@
 #![forbid(unsafe_code)]
 
 mod bundle;
+mod environment;
 mod error;
 pub(crate) mod orchestration;
 mod platform;
+mod prepare;
 mod probe;
 mod secret;
 mod session;
 mod spec;
+mod subject;
 
 pub use bundle::{stage_lifecycle_logs, stage_lifecycle_metadata};
+pub use environment::{EnvironmentError, LocalEnvironmentCollector};
 pub use error::{CleanupFailure, RunnerError};
 pub use orchestration::{
     DrainContext, FailureCategory, InvocationContext, InvocationKind, OrchestrationError,
@@ -59,6 +63,10 @@ pub mod test_support {
     /// Fake workload with configurable delay, failure, timeout, and drain behavior.
     pub use crate::orchestration::FakeWorkload;
 }
+pub use prepare::{
+    BundlePreparation, PrepareError, SubjectSnapshotError, build_subject_snapshot,
+    collect_local_environment, prepare_bundle,
+};
 pub use session::{
     BoundedOutput, LifecycleEvent, LifecycleEventKind, LifecycleOutcome, LocalSession,
     RunnerOptions, ServiceLogs, ShutdownReport, StartupReport,
@@ -67,3 +75,4 @@ pub use spec::{
     DEFAULT_GRACE_MS, DEFAULT_SUBJECT_LOG_LIMIT_BYTES, PrepareOptions, ProcessSpec,
     SUBJECT_IDENTITY, SpawnPlan, prepare,
 };
+pub use subject::{MAX_SUBJECT_SNAPSHOT_BYTES, SUBJECT_SNAPSHOT_SCHEMA_VERSION, SubjectSnapshot};

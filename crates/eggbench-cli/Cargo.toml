@@ -1,18 +1,26 @@
 [package]
-name = "eggbench-runner"
+name = "eggbench-cli"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "eggbench"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
 eggbench-core = { path = "../eggbench-core" }
+eggbench-runner = { path = "../eggbench-runner" }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["process", "signal"] }
