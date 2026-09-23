@@ -39,8 +39,9 @@ Canonical direction remains in:
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
-| Local runner/lifecycle | closing | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002 closed; M003 conditionally closed | M003 closure at plans/closure/local-runner-lifecycle/003-status.md; corrective follow-up: exit-code routing + SIGINT wiring + hosted CI |
-| Measurement/comparison | active | plans/subsystems/measurement-comparison-roadmap.md | M001 closed; M002 ready for plan authoring | M001 closure at plans/closure/measurement-comparison/001-status.md |
+| post-M003/M001 qualification corrective | active | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 ready | Current HEAD CI 35803742746 fails macOS/Windows; CLI truthfulness gaps remain |
+| Local runner/lifecycle | closing | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002 closed; M003 conditionally closed; C001 ready | Cross-cutting qualification corrective must close before full M003 closure |
+| Measurement/comparison | closing | plans/subsystems/measurement-comparison-roadmap.md | M001 conditionally closed for qualification; M002 blocked | Cross-cutting qualification corrective C001 must close before M002 implementation |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Local Runner M003 + Measurement/Comparison M001 must close before integrations |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -55,8 +56,8 @@ Canonical direction remains in:
 | Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M002 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/002-status.md; C001 evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md |
 | Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
-| Local runner/lifecycle M003 | conditionally closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md |
-| Measurement/comparison M001 | closed | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md |
+| Local runner/lifecycle M003 | conditionally closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md; corrective: plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md |
+| Measurement/comparison M001 | conditionally closed for qualification | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md; qualification corrective: plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md |
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
@@ -64,8 +65,15 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | conditionally closed | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | Closure: plans/closure/local-runner-lifecycle/003-status.md; corrective follow-up covers exit-code routing, SIGINT wiring, hosted CI |
-| Measurement/comparison | M001 Metric vocabulary + trial normalization | closed | plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md | Closure: plans/closure/measurement-comparison/001-status.md; M002 comparison ready for plan authoring |
+| post-M003/M001 qualification corrective | C001 CLI truthfulness, portability, and hosted qualification | ready | plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md | Next implementation handoff; closes production-fake, exit-code, SIGINT, and macOS/Windows qualification gaps |
+
+## Blocked next milestones
+
+| Subsystem | Milestone | Status | Blocker |
+|---|---|---|---|
+| Measurement/comparison | M002 Baselines, comparability, and statistical gates | blocked | Qualification corrective C001 must close with green hosted CI |
+| Eggstack integrations | M001 first integration slice | blocked | Local Runner M003 full closure + Measurement M001 qualification |
+| External measurement oracles | M001 implementation | blocked for implementation; plan authoring allowed | Production workload-registry boundary must be corrected first |
 
 ## Current execution order and dependency gates
 
@@ -115,11 +123,15 @@ Corrective C001 closed at
 `plans/closure/local-runner-m002-post-closure-corrective/001-status.md` and is fully qualified by hosted CI run `35797812233`, which passed Linux stable, Linux Rust 1.89 MSRV, macOS stable, and Windows stable supported-subset jobs.
 Historical M002 closure remains preserved; the corrective records the new defects and the evidence that proves cleanup is now mandatory.
 
-### Gate E — Comparison
+### Gate E — M003/M001 qualification corrective and comparison
 
-Measurement/Comparison M001 is now implementation-ready at `plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md`. It consumes lifecycle-safe trial evidence from the corrected orchestration and re-uses the unchanged M002 trial-result schema v1 and manifest v2 contracts.
+Measurement M001's metric vocabulary/normalization implementation is landed and locally qualified, but the combined repository hosted run `35803742746` failed on macOS and Windows. Local Runner M003 also has unresolved production-CLI correctness gaps.
 
-ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
+The dependency-ready corrective is:
+
+`plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md`
+
+Measurement M002 implementation remains blocked until C001 closes. ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 
 ### Gate F — Integrations
 
@@ -167,13 +179,12 @@ Before marking a plan ready, verify:
 10. machine-readable schema/version effects are explicit;
 11. closure evidence is sufficient to prove more than compilation.
 
-## Next handoffs
+## Next handoff
 
-Both next-round plans are now closed or conditionally closed:
+The only dependency-ready implementation handoff is:
 
-1. Local Runner M003 — conditionally closed at `plans/closure/local-runner-lifecycle/003-status.md`. Corrective follow-up: binary exit-code routing (codes 4/5), SIGINT→cancellation wiring, hosted CI lanes.
-2. Measurement/Comparison M001 — closed at `plans/closure/measurement-comparison/001-status.md`. M002 comparison (baselines, comparability, statistical gates) is ready for plan authoring.
+`plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md`
 
-External Oracles M001 remains plan-authorable, and may now build against the stable normalized metric seam (`WorkloadMetricObservation` in, `TrialMetrics` out; drivers never write normalized JSON themselves).
+It must close before Measurement M002 or production driver/integration implementation proceeds.
 
-External Oracles M001 remains plan-authorable, but its implementation should wait until Measurement M001 stabilizes the normalized metric seam unless it is limited strictly to external command discovery/raw-output capture.
+Plan authoring for later milestones may continue, but no implementation should consume the current production fake-workload registry boundary.
