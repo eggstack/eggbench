@@ -22,3 +22,11 @@ validation and the normalized evidence type; drivers own parsing upstream
 output and never write `TrialMetrics` JSON themselves. `BundleReader`
 exposes `trial_metrics(trial_id)` so later comparison and CLI surfaces can
 load normalized evidence without reconstructing paths.
+
+Measurement M002 adds a dependency-light `comparison` module: immutable
+bundle identities, digest-pinned baseline aliases, typed comparability,
+deterministic trial-level bootstrap policy v1
+(`eggbench.trial-bootstrap.v1`), per-metric and aggregate verdicts, and the
+standalone comparison receipt. Core stays free of Tokio/process/network
+dependencies; bundle reads use bounded synchronous filesystem I/O. No
+p-value, paired inference, or bundle mutation exists in policy v1.

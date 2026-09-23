@@ -1,12 +1,14 @@
 //! Dependency-light domain contracts for Eggbench.
 #![forbid(unsafe_code)]
 
+mod comparison;
 mod evidence;
 mod metrics;
 mod plan;
 mod resolved;
 mod types;
 
+pub use comparison::*;
 pub use evidence::*;
 pub use metrics::*;
 pub use plan::*;

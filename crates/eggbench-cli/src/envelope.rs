@@ -22,6 +22,12 @@ pub enum ExitCode {
     RunCompletedNonSuccess = 4,
     /// Evidence/bundle I/O or verification failure.
     EvidenceIo = 5,
+    /// Comparison aggregate verdict is `Fail`.
+    ComparisonFail = 6,
+    /// Comparison aggregate verdict is `Inconclusive`.
+    ComparisonInconclusive = 7,
+    /// Comparison aggregate verdict is `Invalid`.
+    ComparisonInvalid = 8,
     /// Internal/unclassified CLI failure.
     Internal = 1,
 }
@@ -72,6 +78,22 @@ pub enum CliOutput {
         primary_failure: Option<String>,
         /// Comparison verdict when present.
         comparison_verdict: Option<String>,
+    },
+    /// `compare` summary with the standalone receipt reference.
+    Compare {
+        /// Aggregate verdict label, when a gated primary metric produced one.
+        aggregate_verdict: Option<String>,
+        /// Candidate run identity.
+        candidate_run_id: String,
+        /// Baseline run identity, when a baseline participates.
+        baseline_run_id: Option<String>,
+        /// Whether comparison-critical dimensions match.
+        comparability_match: bool,
+        /// Receipt file path, when `--output` wrote one.
+        receipt_path: Option<PathBufPayload>,
+        /// Full versioned comparison receipt (boxed: variants differ greatly
+        /// in size and the envelope must stay compact).
+        receipt: Box<eggbench_core::ComparisonReceipt>,
     },
     /// `inspect` summary with manifest-relevant fields.
     Inspect {
@@ -238,6 +260,41 @@ impl PresentedCommandResult {
         Self {
             envelope,
             exit_code: ExitCode::RunCompletedNonSuccess,
+        }
+    }
+
+    /// Comparison outcome with the aggregate verdict mapped to a stable exit.
+    ///
+    /// `Pass`, descriptive-only, and no-verdict comparisons succeed with
+    /// code 0. `Fail`, `Inconclusive`, and `Invalid` aggregates retain the
+    /// compare result alongside a stable error and exit 6, 7, or 8.
+    #[must_use]
+    pub fn compare_verdict(
+        command: impl Into<String>,
+        compare: CliOutput,
+        aggregate: Option<eggbench_core::AggregateVerdict>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let exit_code = match aggregate {
+            None | Some(eggbench_core::AggregateVerdict::Pass) => {
+                return Self::success(command, compare);
+            }
+            Some(eggbench_core::AggregateVerdict::Fail) => ExitCode::ComparisonFail,
+            Some(eggbench_core::AggregateVerdict::Inconclusive) => ExitCode::ComparisonInconclusive,
+            Some(eggbench_core::AggregateVerdict::Invalid) => ExitCode::ComparisonInvalid,
+        };
+        let category = match aggregate {
+            Some(eggbench_core::AggregateVerdict::Fail) => "comparison_fail",
+            Some(eggbench_core::AggregateVerdict::Inconclusive) => "comparison_inconclusive",
+            _ => "comparison_invalid",
+        };
+        let failure = CliFailure::new(category, detail.into(), exit_code);
+        let mut envelope = CliEnvelope::ok(command, compare);
+        envelope.ok = false;
+        envelope.error = Some(failure.to_payload());
+        Self {
+            envelope,
+            exit_code,
         }
     }
 }

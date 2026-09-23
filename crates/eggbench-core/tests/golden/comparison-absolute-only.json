@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "policy_id": "eggbench.trial-bootstrap.v1",
+  "created_by_version": "0.1.0",
+  "candidate_identity": {
+    "manifest_schema_version": 2,
+    "run_id": "123e4567-e89b-12d3-a456-426614174000",
+    "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "environment_policy": {
+    "kind": "strict_same_testbed"
+  },
+  "comparability": {
+    "testbed": [],
+    "workload_match": true,
+    "workload_detail": "absolute-only comparison uses no baseline",
+    "driver_match": true,
+    "driver_detail": "absolute-only comparison uses no baseline",
+    "topology_match": true,
+    "topology_detail": "absolute-only comparison uses no baseline",
+    "critical_mismatch": false
+  },
+  "base_seed": 12310250141153614296,
+  "metrics": [
+    {
+      "name": "latency_p99",
+      "unit": "ms",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "primary",
+      "gate": {
+        "kind": "absolute",
+        "value": 500.0
+      },
+      "candidate_included": [
+        1,
+        2,
+        3
+      ],
+      "candidate_excluded": [],
+      "baseline_included": [],
+      "baseline_excluded": [],
+      "candidate_estimate": 100.0,
+      "disposition": "pass"
+    }
+  ],
+  "aggregate_verdict": "pass",
+  "warnings": []
+}

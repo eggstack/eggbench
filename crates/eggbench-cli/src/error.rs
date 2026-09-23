@@ -23,6 +23,14 @@ pub enum CliError {
     /// Bundle I/O or verification failed.
     #[error("bundle failure: {0}")]
     Bundle(#[from] BundleError),
+    /// Baseline alias file was invalid or failed to resolve.
+    #[error("baseline alias failure [{category}]: {detail}")]
+    BaselineAlias {
+        /// Stable machine-readable category.
+        category: String,
+        /// Human-readable context.
+        detail: String,
+    },
     /// Internal/unclassified CLI failure.
     #[error("internal CLI failure: {0}")]
     Internal(String),
@@ -59,6 +67,11 @@ impl CliError {
                 CliFailure::new(category, error.to_string(), ExitCode::CapabilityPreflight)
             }
             Self::Bundle(_) => CliFailure::new("bundle", self.to_string(), ExitCode::EvidenceIo),
+            Self::BaselineAlias { category, detail } => CliFailure::new(
+                category,
+                format!("baseline alias failure: {detail}"),
+                ExitCode::ParseValidation,
+            ),
             Self::Internal(_) => CliFailure::new("internal", self.to_string(), ExitCode::Internal),
         }
     }

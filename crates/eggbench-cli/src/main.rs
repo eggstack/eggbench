@@ -62,6 +62,25 @@ enum CliCommand {
         #[arg(long)]
         manifest_json: bool,
     },
+    /// Compare two immutable bundles without modifying them.
+    Compare {
+        /// Baseline `.eggb` bundle path.
+        baseline: Option<PathBuf>,
+        /// Candidate `.eggb` bundle path.
+        candidate: Option<PathBuf>,
+        /// Baseline alias file (`*.eggbaseline.json`).
+        #[arg(long)]
+        alias: Option<PathBuf>,
+        /// Candidate-only absolute-gate comparison without a baseline.
+        #[arg(long)]
+        absolute_only: bool,
+        /// Write the versioned comparison receipt JSON to this file.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Explicit deterministic seed (default derives from bundle digests).
+        #[arg(long)]
+        seed: Option<u64>,
+    },
 }
 
 /// CLI-side wrapper around [`InputFormat`].
@@ -87,38 +106,74 @@ async fn main() -> StdExitCode {
         json: cli.json,
         quiet: cli.quiet,
     };
-    let command = build_command(cli.command);
+    let command = match build_command(cli.command) {
+        Ok(command) => command,
+        Err(detail) => {
+            eprintln!("eggbench: compare failed [usage] {detail}");
+            return StdExitCode::from(2);
+        }
+    };
 
     let presented = execute(command, options).await;
     present(&presented, options)
 }
 
-fn build_command(command: CliCommand) -> Command {
+fn build_command(command: CliCommand) -> Result<Command, String> {
     match command {
-        CliCommand::Validate { plan, input_format } => Command::Validate {
+        CliCommand::Validate { plan, input_format } => Ok(Command::Validate {
             plan,
             input_format: input_format.map(Into::into),
-        },
-        CliCommand::Doctor { plan, input_format } => Command::Doctor {
+        }),
+        CliCommand::Doctor { plan, input_format } => Ok(Command::Doctor {
             plan,
             input_format: input_format.map(Into::into),
-        },
+        }),
         CliCommand::Run {
             plan,
             input_format,
             bundle,
-        } => Command::Run {
+        } => Ok(Command::Run {
             plan,
             input_format: input_format.map(Into::into),
             bundle,
-        },
+        }),
         CliCommand::Inspect {
             bundle,
             manifest_json,
-        } => Command::Inspect {
+        } => Ok(Command::Inspect {
             bundle,
             emit_manifest_json: manifest_json,
-        },
+        }),
+        CliCommand::Compare {
+            baseline,
+            candidate,
+            alias,
+            absolute_only,
+            output,
+            seed,
+        } => {
+            // One positional pair covers `<baseline> <candidate>`; single
+            // positional covers `--alias <file> <candidate>` and
+            // `--absolute-only <candidate>`.
+            let (baseline_path, candidate_path) = match (baseline, candidate) {
+                (Some(left), Some(right)) => (Some(left), right),
+                (Some(only), None) if absolute_only || alias.is_some() => (None, only),
+                _ => {
+                    return Err(
+                        "provide <baseline> <candidate>, --alias <file> <candidate>, or --absolute-only <candidate>"
+                            .to_owned(),
+                    );
+                }
+            };
+            Ok(Command::Compare {
+                baseline: baseline_path,
+                candidate: candidate_path,
+                alias,
+                absolute_only,
+                output,
+                seed,
+            })
+        }
     }
 }
 

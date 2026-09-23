@@ -15,6 +15,16 @@ Production `eggbench run` is substrate-only until an External Oracles / Eggstack
 
 Measurement M001 normalizes every measured trial into `trials/NNN/metrics.json`: one `observed`/`missing`/`invalid` record per requested metric, with explicit units, direction, aggregation, and provenance. Trial — not request — is the comparison unit. No baseline comparison or verdict is implemented yet.
 
+Measurement M002 compares two immutable bundles under policy `eggbench.trial-bootstrap.v1` without modifying them:
+
+```text
+eggbench compare <baseline.eggb> <candidate.eggb>
+eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb>
+eggbench compare --absolute-only <candidate.eggb>
+```
+
+Deterministic trial-level bootstrap (10,000 resamples, 95% interval), practical thresholds, digest-pinned baseline aliases, and pass/fail/inconclusive/invalid aggregation with additive exit codes 6/7/8. See [comparison](docs/comparison.md) and [baselines](docs/baselines.md).
+
 - [Experiment plan schema](docs/experiment-plan.md)
 - [Core architecture](architecture/core.md)
 - [Driver resolution](docs/driver-capabilities.md)
@@ -24,5 +34,7 @@ Measurement M001 normalizes every measured trial into `trials/NNN/metrics.json`:
 - [Environment fingerprint](docs/environment-fingerprint.md)
 - [CLI reference](docs/cli.md)
 - [Metrics and trial normalization](docs/metrics.md)
+- [Comparison policy](docs/comparison.md)
+- [Baselines](docs/baselines.md)
 - [Active implementation plans](plans/registry.md)
 

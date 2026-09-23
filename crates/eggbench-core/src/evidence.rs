@@ -140,7 +140,7 @@ impl ArtifactPath {
         &self.0
     }
 
-    fn to_path_buf(&self) -> PathBuf {
+    pub(crate) fn to_path_buf(&self) -> PathBuf {
         self.0.split('/').collect()
     }
 }

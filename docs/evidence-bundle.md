@@ -47,3 +47,14 @@ Interrupted staging directories have a `.staging-` name and are not accepted by 
 The ordinary API has no mutation operation for a finalized bundle. Verification reports missing, wrong-size, wrong-digest, extra-file, incomplete, unsupported-schema, and unsafe-path conditions without rewriting data. Manifest v1 ignores unknown top-level additive metadata and rejects unknown nested fields/variants. Any field that changes interpretation requires an explicit schema compatibility decision.
 
 Retention, garbage collection, indexing, and database-backed search are outside this milestone. `Sensitivity` is metadata for future policies; raw security payload retention policy is deferred to security integrations.
+
+## Offline comparison receipts
+
+`eggbench compare` never mutates either bundle. It emits a standalone
+versioned JSON receipt (schema v1, policy `eggbench.trial-bootstrap.v1`)
+carrying both bundle identities, the baseline reference, environment policy,
+typed comparability, seed, per-metric estimates/intervals/thresholds/
+verdicts, the aggregate verdict, and warnings. The manifest
+`comparison_verdict` field remains reserved for future run-time comparison
+performed before finalization. See [comparison](comparison.md) and
+[baselines](baselines.md).

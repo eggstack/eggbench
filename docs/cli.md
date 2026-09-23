@@ -13,7 +13,18 @@ eggbench validate <plan>     Parse and validate an experiment plan.
 eggbench doctor <plan>       Validate plus driver/capability/environment preflight.
 eggbench run <plan> <bundle> Validate, resolve, prepare, and execute the experiment.
 eggbench inspect <bundle>    Open, verify, and summarize a finalized bundle.
+eggbench compare <baseline.eggb> <candidate.eggb>
+eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb>
+eggbench compare --absolute-only <candidate.eggb>
 ```
+
+`compare` never modifies either bundle. It emits the standalone versioned
+comparison receipt as machine JSON (stdout, or `--output <comparison.json>`)
+with `--seed <u64>` available for explicit seeding. Aggregate `Fail`,
+`Inconclusive`, and `Invalid` retain the compare result alongside a stable
+error and exit 6, 7, or 8; passing, descriptive-only, and no-verdict
+comparisons exit 0. See [comparison](comparison.md) and
+[baselines](baselines.md).
 
 `validate`, `doctor`, and `run` accept `<plan>` as a path to a `.toml` or
 `.json` file, or `-` for stdin. Stdin requires `--input-format toml|json`
@@ -33,7 +44,7 @@ Envelope schema v1:
 ```jsonc
 {
   "schema_version": 1,
-  "command": "validate|doctor|run|inspect",
+  "command": "validate|doctor|run|inspect|compare",
   "ok": true,
   "result": { /* command-specific payload */ },
   "error": { "category": "<stable>", "detail": "<human prose>" },
@@ -60,6 +71,9 @@ The CLI uses a compact stable mapping:
 | `3` | Capability / doctor / preflight unsupported or invalid. |
 | `4` | Run completed with `Failed`/`Cancelled`/`Invalid` execution status. |
 | `5` | Evidence/bundle I/O or verification failure. |
+| `6` | Comparison aggregate verdict is `Fail`. |
+| `7` | Comparison aggregate verdict is `Inconclusive`. |
+| `8` | Comparison aggregate verdict is `Invalid`. |
 
 Exit codes are stable and locked by subprocess tests in both JSON and
 human modes: the same outcome yields the same numeric code regardless of

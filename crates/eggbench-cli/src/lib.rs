@@ -65,6 +65,21 @@ pub enum Command {
         /// Emit normalized manifest JSON to stdout.
         emit_manifest_json: bool,
     },
+    /// Compare two immutable bundles (or one bundle alone) under policy v1.
+    Compare {
+        /// Baseline bundle path; mutually exclusive with `alias` and `absolute_only`.
+        baseline: Option<PathBuf>,
+        /// Candidate bundle path.
+        candidate: PathBuf,
+        /// Baseline alias file path; mutually exclusive with `baseline`.
+        alias: Option<PathBuf>,
+        /// Candidate-only absolute-gate comparison without a baseline.
+        absolute_only: bool,
+        /// Optional receipt output file.
+        output: Option<PathBuf>,
+        /// Explicit deterministic seed.
+        seed: Option<u64>,
+    },
 }
 
 /// Explicit input format override for stdin or non-standard extensions.
@@ -119,6 +134,21 @@ pub async fn execute(command: Command, options: CommandOptions) -> PresentedComm
             bundle,
             emit_manifest_json,
         } => commands::inspect::run(&bundle, emit_manifest_json),
+        Command::Compare {
+            baseline,
+            candidate,
+            alias,
+            absolute_only,
+            output,
+            seed,
+        } => commands::compare::run(
+            baseline.as_deref(),
+            &candidate,
+            alias.as_deref(),
+            absolute_only,
+            output.as_deref(),
+            seed,
+        ),
     };
     match outcome {
         Ok(presented) => presented,
@@ -135,6 +165,7 @@ fn command_label(command: &Command) -> &'static str {
         Command::Doctor { .. } => "doctor",
         Command::Run { .. } => "run",
         Command::Inspect { .. } => "inspect",
+        Command::Compare { .. } => "compare",
     }
 }
 

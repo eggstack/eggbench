@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "policy_id": "eggbench.trial-bootstrap.v1",
+  "created_by_version": "0.1.0",
+  "candidate_identity": {
+    "manifest_schema_version": 2,
+    "run_id": "123e4567-e89b-12d3-a456-426614174000",
+    "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "baseline_reference": {
+    "kind": "bundle",
+    "identity": {
+      "manifest_schema_version": 2,
+      "run_id": "123e4567-e89b-12d3-a456-426614174000",
+      "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "path": "baseline.eggb"
+  },
+  "baseline_identity": {
+    "manifest_schema_version": 2,
+    "run_id": "123e4567-e89b-12d3-a456-426614174000",
+    "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "environment_policy": {
+    "kind": "cross_testbed_descriptive"
+  },
+  "comparability": {
+    "testbed": [
+      {
+        "field": "cpu_class",
+        "candidate": "x86_64",
+        "baseline": "x86_64",
+        "outcome": "equal"
+      },
+      {
+        "field": "hostname",
+        "candidate": "lab",
+        "baseline": "lab",
+        "outcome": "equal"
+      },
+      {
+        "field": "kernel_release",
+        "candidate": "6.8",
+        "baseline": "6.8",
+        "outcome": "equal"
+      },
+      {
+        "field": "os_family",
+        "candidate": "linux",
+        "baseline": "linux",
+        "outcome": "equal"
+      }
+    ],
+    "workload_match": true,
+    "workload_detail": "workload semantics match (finite_count target=api requests=100 concurrency=5)",
+    "driver_match": true,
+    "driver_detail": "workload driver semantics match (name=fake-load adapter=0.1.0 upstream=fake-load:None capabilities=[LoadMode { mode: ClosedLoop }])",
+    "topology_match": true,
+    "topology_detail": "service topology and subject kind match",
+    "critical_mismatch": false
+  },
+  "base_seed": 11297366011660203496,
+  "metrics": [
+    {
+      "name": "latency_p99",
+      "unit": "ms",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "primary",
+      "gate": {
+        "kind": "statistical_relative",
+        "allowance": 500,
+        "min_trials": 1
+      },
+      "candidate_included": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "candidate_excluded": [],
+      "baseline_included": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "baseline_excluded": [],
+      "candidate_estimate": 130.0,
+      "baseline_estimate": 100.00000000000013,
+      "degradation": 0.29999999999999805,
+      "threshold": 0.05,
+      "disposition": "descriptive",
+      "reason": "cross_testbed_descriptive"
+    }
+  ],
+  "warnings": []
+}

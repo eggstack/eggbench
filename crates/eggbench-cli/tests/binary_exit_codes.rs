@@ -182,6 +182,48 @@ fn missing_bundle_inspect_exits_five_in_both_modes() {
 }
 
 #[test]
+fn compare_missing_bundle_exits_five_in_both_modes() {
+    for json in [false, true] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing = tmp.path().join("missing.eggb");
+        let candidate = tmp.path().join("candidate.eggb");
+        let owned = if json {
+            vec![
+                "compare".to_owned(),
+                missing.to_str().unwrap().to_owned(),
+                candidate.to_str().unwrap().to_owned(),
+                "--json".to_owned(),
+            ]
+        } else {
+            vec![
+                "compare".to_owned(),
+                missing.to_str().unwrap().to_owned(),
+                candidate.to_str().unwrap().to_owned(),
+            ]
+        };
+        let args = arg_strings(&owned);
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(5), "json={json}");
+        if json {
+            let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
+            assert_eq!(value["ok"], false);
+        }
+    }
+}
+
+#[test]
+fn compare_without_roles_exits_two_in_both_modes() {
+    for json in [false, true] {
+        let mut args = vec!["compare"];
+        if json {
+            args.push("--json");
+        }
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "json={json}");
+    }
+}
+
+#[test]
 fn json_failures_emit_exactly_one_document() {
     // Invalid plan in JSON mode: stdout must be exactly one envelope.
     let plan = fixture("invalid-cycle.json");
