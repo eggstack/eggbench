@@ -1,6 +1,6 @@
 # External Measurement Oracles Roadmap
 
-Status: proposed
+Status: active
 
 Long-term references:
 
@@ -90,4 +90,4 @@ The roadmap closes when Eggbench can qualify network subjects with independent g
 
 ## 8. Milestone status
 
-M001 is ready for planning: the typed driver boundary and qualified runner command substrate are present. No M001 implementation plan has been written yet.
+M001 is ready for implementation at `plans/implementation/external-oracles/001-external-command-driver-substrate.md`. It establishes the shared `eggbench-drivers` crate/catalog and external-command substrate. M002 remains blocked on M001 closure.
