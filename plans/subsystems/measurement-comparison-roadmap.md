@@ -107,11 +107,11 @@ The roadmap closes when Eggbench can compare two immutable evidence bundles unde
 
 ### M001 — Metric vocabulary and trial normalization
 
-Status: closed. Implementation plan: `plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md`. Closure: `plans/closure/measurement-comparison/001-status.md`. Vocabulary v1, `TrialMetrics` schema v1, post-measurement staging, `BundleReader::trial_metrics`, synthetic producer, and the trial-as-statistical-unit guard are landed (135 workspace tests green locally; hosted CI outstanding).
+Status: conditionally closed for qualification. Implementation plan: `plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md`. Historical closure: `plans/closure/measurement-comparison/001-status.md`. Vocabulary v1, `TrialMetrics` schema v1, post-measurement staging, `BundleReader::trial_metrics`, synthetic producer, and the trial-as-statistical-unit guard are landed and locally green; hosted qualification is deferred to the registered post-M003/M001 corrective.
 
 ### M002 — Baselines, comparability, and statistical gates
 
-Status: ready for plan authoring. M001 metric vocabulary and normalized trial summaries are closed; no comparison verdict/statistics were implemented in M001.
+Status: blocked on post-M003/M001 qualification corrective C001. M002 plan authoring may continue privately, but implementation must not begin until hosted qualification closes.
 
 ### M003 — Paired/interleaved experiment qualification
 
