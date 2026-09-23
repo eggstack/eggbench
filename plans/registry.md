@@ -41,7 +41,7 @@ Canonical direction remains in:
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | active | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 ready | Implementation plan registered and ready |
+| Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 closed | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`); M003 paired/interleaved unblocked |
 | Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001a/M001b ready | External Oracles M001 closed (`plans/closure/external-oracles/001-status.md`); shared `eggbench-drivers` crate/catalog landed |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed | Closure at `plans/closure/external-oracles/001-status.md`; M002 tool adapters unblocked |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -58,6 +58,7 @@ Canonical direction remains in:
 | Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M003 | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md; corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
 | Measurement/comparison M001 | closed (qualified) | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md; qualification corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
+| Measurement/comparison M002 | closed | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/002-status.md |
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
@@ -65,7 +66,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Measurement/comparison | M002 Baselines, comparability, and statistical gates | ready | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | May proceed independently; offline immutable-bundle comparison |
+| Measurement/comparison | M002 Baselines, comparability, and statistical gates | closed | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`) |
 | External measurement oracles | M001 External command-driver substrate | closed | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Closure: plans/closure/external-oracles/001-status.md (commit `7afa054`) |
 | Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | ready | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | Unblocked by External Oracles M001 closure; shared `eggbench-drivers` crate/catalog landed |
 | Eggstack integrations | M001b Gregg host telemetry | ready | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | Unblocked by External Oracles M001 closure; shared `eggbench-drivers` crate/catalog landed |
@@ -124,7 +125,7 @@ run `35808371805` green on all four jobs. The earlier red run `35803742746`
 is superseded. Local Runner M003 is fully closed and Measurement M001 is
 hosted-qualified with its schemas untouched.
 
-Measurement M002 is implementation-ready at `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`. ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
+Measurement M002 is closed at `plans/closure/measurement-comparison/002-status.md` (commit `80ff6d1`). ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states. M003 paired/interleaved qualification is unblocked but has no authored implementation plan yet.
 
 ### Gate F — Drivers and integrations
 
@@ -189,15 +190,11 @@ Before marking a plan ready, verify:
 
 ## Next handoffs
 
-Three plans may be handed off immediately (M001a and M001b in parallel if
-their runner/driver interface changes are reconciled rather than duplicated):
+Two plans may be handed off immediately in parallel (their runner/driver
+interface changes must be reconciled rather than duplicated):
 
-1. `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`
-2. `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
-3. `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
+1. `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
+2. `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
 
-External Oracles M002 tool adapters are unblocked but have no authored
-implementation plan yet.
-
-This sequencing keeps comparison work independent while ensuring all
-production adapters share one driver/catalog ownership boundary.
+External Oracles M002 tool adapters and Measurement M003 paired/interleaved
+qualification are unblocked but have no authored implementation plans yet.

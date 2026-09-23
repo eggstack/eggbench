@@ -111,7 +111,7 @@ Status: closed for qualification. Implementation plan: `plans/implementation/mea
 
 ### M002 — Baselines, comparability, and statistical gates
 
-Status: ready. Implementation plan: `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`. Qualification corrective C001 is closed with green hosted CI; implementation may proceed under ADR-0003.
+Status: closed. Implementation commit `80ff6d1`, closure record at `plans/closure/measurement-comparison/002-status.md`. Immutable bundle identities, digest-pinned aliases, three observably distinct environment policies, deterministic trial-level bootstrap policy v1, per-metric/aggregate verdicts, standalone receipts, `eggbench compare` with additive exits 6/7/8, and golden fixtures are landed and regression-tested.
 
 ### M003 — Paired/interleaved experiment qualification
 
