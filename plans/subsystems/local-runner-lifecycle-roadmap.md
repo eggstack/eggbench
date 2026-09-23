@@ -129,7 +129,7 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 |---|---|---|---|---|
 | M001 | closed | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | plans/closure/local-runner-lifecycle/001-status.md | none |
 | M002 | closed historical predecessor | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | plans/closure/local-runner-lifecycle/002-status.md; post-closure evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md | none |
-| M003 | conditionally closed | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | plans/closure/local-runner-lifecycle/003-status.md | Corrective follow-up required: binary exit-code routing (codes 4/5 unreachable) and SIGINT→token wiring; hosted CI lanes outstanding |
+| M003 | conditionally closed; corrective ready | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | plans/closure/local-runner-lifecycle/003-status.md | C001 cross-cutting corrective required: production fake separation, exit-code routing, SIGINT wiring, macOS/Windows CI qualification |
 
 
 ## 12. Post-closure corrective
@@ -159,3 +159,15 @@ once and the serialized `runner-phases.json` equals the in-memory
 corrective closure record explains the missed verification classes.
 
 M003 and Measurement/Comparison implementation plans are now authored and ready for handoff. Neither may re-open the M002 evidence contract or design a new workflow engine.
+
+
+## 13. M003 qualification corrective
+
+The post-implementation qualification corrective is:
+
+- `plans/subsystems/post-m003-m001-qualification-corrective-addendum.md`
+- `plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md`
+
+Status: **C001 ready for handoff**.
+
+M003 remains conditionally closed until this corrective closes with a green four-lane hosted CI run.
