@@ -1,6 +1,6 @@
 # Eggstack Integration Roadmap
 
-Status: proposed
+Status: active
 
 Long-term references:
 
@@ -119,4 +119,27 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ## 10. Milestone status
 
-All milestones are blocked on foundation, local-runner, and measurement contracts.
+### M001 — Controlled origin, native HTTP workload, host telemetry
+
+Status: plans authored; implementation sequencing is gated on the shared drivers substrate.
+
+Implementation plans:
+
+- `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
+- `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
+
+Blocker:
+
+- External Oracles M001 must land first because it establishes `crates/eggbench-drivers` and production catalog ownership. After that, M001a and M001b may proceed in parallel if they preserve the shared runner/driver interfaces.
+
+### M002 — Route and stream-fault topology
+
+Status: blocked on M001 closure.
+
+### M003 — Replay and diagnostics
+
+Status: blocked on M001/M002 integration seams.
+
+### M004 — Eggsec workload/correctness adapter
+
+Status: blocked on measurement comparison plus preceding integration seams.
