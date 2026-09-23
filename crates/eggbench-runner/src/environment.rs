@@ -15,7 +15,9 @@ use eggbench_core::{
     ENVIRONMENT_FINGERPRINT_SCHEMA_VERSION, EnvironmentField, EnvironmentFieldClass,
     EnvironmentFingerprint, Name, SchemaVersion,
 };
-use std::{collections::BTreeMap, fs, path::Path};
+use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
+use std::{fs, path::Path};
 
 /// One factual non-secret environment attribute.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,8 +279,7 @@ fn os_version_label() -> Option<String> {
     }
     #[cfg(target_os = "macos")]
     {
-        let release = kernel_release().unwrap_or_default();
-        Some(format!("macos {release}"))
+        kernel_release().map(|release| format!("macos {release}"))
     }
     #[cfg(target_os = "windows")]
     {
