@@ -60,7 +60,9 @@ rewriting either historical closure.
 Intermediate hosted run `35808047844` is retained as evidence that the first
 push fixed `cargo check` on both hosted targets while surfacing the final
 two Clippy defects; it is superseded by the green run above, not a separate
-qualification basis.
+qualification basis. The plans-only closure commit itself is likewise green
+(CI run `35808813055`, four lanes success), so closure HEAD carries the same
+qualification.
 
 ## 4. Compatibility, security, and limitations
 
