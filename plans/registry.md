@@ -41,9 +41,9 @@ Canonical direction remains in:
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | active | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 ready | M002 implementation plan not yet written |
-| Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 ready for planning | Truthful CLI/runner substrate qualified; comparison M002 proceeds in parallel |
-| External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready | Production workload-registry boundary corrected; first real adapter may land; implementation plan not yet written |
+| Measurement/comparison | active | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 ready | Implementation plan registered and ready |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001a/M001b plans authored | External Oracles M001 must establish shared eggbench-drivers crate/catalog first |
+| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 ready | Shared driver crate/catalog + external-command substrate plan registered |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -63,16 +63,19 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 ## Dependency-ready implementation plans
 
-No corrective handoff remains. The next handoff is Measurement/Comparison
-M002 plan authoring (implementation plan not yet written).
+| Subsystem | Milestone | Status | Implementation plan | Handoff note |
+|---|---|---|---|---|
+| Measurement/comparison | M002 Baselines, comparability, and statistical gates | ready | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | May proceed independently; offline immutable-bundle comparison |
+| External measurement oracles | M001 External command-driver substrate | ready | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Establishes crates/eggbench-drivers and production catalog ownership; no real tool adapter yet |
 
-## Unblocked next milestones
+## Authored but dependency-blocked implementation plans
 
-| Subsystem | Milestone | Status | Note |
-|---|---|---|---|
-| Measurement/comparison | M002 Baselines, comparability, and statistical gates | ready | C001 closed with green hosted CI run 35808371805 |
-| Eggstack integrations | M001 first integration slice | ready for planning | M003 closed + M001 qualified; truthful substrate |
-| External measurement oracles | M001 implementation | ready | Production workload-registry boundary corrected; first real adapter may land |
+| Subsystem | Milestone | Status | Implementation plan | Blocker |
+|---|---|---|---|---|
+| Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | blocked | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | External Oracles M001 shared driver crate/catalog |
+| Eggstack integrations | M001b Gregg host telemetry | blocked | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | External Oracles M001 shared driver crate/catalog |
+
+After External Oracles M001 closes, M001a and M001b may proceed in parallel if their runner/driver interface changes are reconciled rather than duplicated.
 
 ## Current execution order and dependency gates
 
@@ -92,16 +95,7 @@ This gate closed before Local Runner M002 began; the corrected status/verdict co
 
 Local Runner post-closure corrective C001 is closed at `plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md`. Its implementation added filesystem-resolved cwd confinement, a hermetic child environment contract, explicit executable resolution, truthful platform support, and cross-platform qualification. The historical M001 SHA erratum is recorded at `plans/closure/local-runner-lifecycle/001-errata.md`.
 
-It must:
-
-- reject filesystem-resolved cwd escapes including symlinks;
-- make the current `env_clear()` behavior an explicit hermetic execution contract;
-- eliminate implicit ambient-PATH executable resolution;
-- scope Unix-only process dependencies correctly;
-- add Linux/macOS/Windows CI with truthful platform support;
-- record an erratum for the invalid full SHA in the historical M001 closure record.
-
-The predecessor closure incorrectly lists `9387a45e1bbf9c1f9a55fb8ad875b07f6f880d21`. The actual M001 implementation commit is `9387a459103078c1ccdbca7d4db41ae0f6cefc11`. The corrective must preserve the old record and add explicit errata.
+The predecessor closure incorrectly listed `9387a45e1bbf9c1f9a55fb8ad875b07f6f880d21`; the actual M001 implementation commit is `9387a459103078c1ccdbca7d4db41ae0f6cefc11`. This gate is historical and has no remaining action item.
 
 ### Gate D — Local Runner M002 and post-closure evidence-safety corrective
 
@@ -131,18 +125,25 @@ run `35808371805` green on all four jobs. The earlier red run `35803742746`
 is superseded. Local Runner M003 is fully closed and Measurement M001 is
 hosted-qualified with its schemas untouched.
 
-Measurement M002 plan authoring/implementation is unblocked. ADR-0003 remains
-controlling: trial is the statistical unit; practical threshold and
-uncertainty are separate; pass/fail/inconclusive/invalid are comparison
-verdicts, not process lifecycle states.
+Measurement M002 is implementation-ready at `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`. ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 
-### Gate F — Integrations
+### Gate F — Drivers and integrations
 
-EggServe/Eggfetch/Gregg remain the first Eggstack integration slice after runner/comparison foundations.
+Two next-round implementation tracks are independent:
 
-Eggress/Eggchaos, EggReplay/Eggprobe, and Eggsec follow as separate milestones.
+- Measurement M002;
+- External Oracles M001.
 
-External oha/h2load/iperf3 drivers proceed after the external command substrate and measurement model are stable.
+External Oracles M001 establishes the shared `eggbench-drivers` crate, production catalog ownership, trusted executable resolution, bounded command capture, and parser contract. It deliberately ships no oha/h2load/iperf3 adapter.
+
+Eggstack M001 is already decomposed into:
+
+- M001a EggServe controlled origin + Eggfetch native H1 workload;
+- M001b Gregg host telemetry.
+
+Those implementation plans are blocked only on the shared drivers crate/catalog landing. Once External Oracles M001 closes, M001a and M001b may proceed in parallel.
+
+External Oracles M002 will add oha/h2load/iperf3 after the substrate closes. Eggress/Eggchaos, EggReplay/Eggprobe, and Eggsec remain later Eggstack milestones.
 
 ### Gate G — Security profiles
 
@@ -154,13 +155,13 @@ Distributed execution remains deferred. Do not add SSH/scheduler/credential mach
 
 ## Planning-time sibling integration facts to re-audit before implementation
 
-As of 2026-09-22 planning:
+As of 2026-09-23 planning:
 
-- Eggfetch core is published in the 0.2 series and already carries its own Criterion/resource benchmark machinery.
+- Eggfetch core is currently 0.2.0, Rust 1.89, with a lean `standard-http1` embedding profile; its Criterion/resource benchmark crate remains unpublished and Eggfetch-owned.
 - Eggress 1.0.8 exposes narrow reusable crates including relay/outbound/metrics/testkit surfaces.
-- EggServe exposes 0.2-series reusable serving crates.
+- EggServe workspace is currently 0.2.1; `eggserve-server` + `eggserve-primitives` are the documented direct generic H1 embedding seam.
 - Eggchaos, EggReplay, and Eggprobe are pre-release 0.1 projects with useful but evolving integration seams.
-- Gregg exposes v2 host telemetry over HTTP.
+- Gregg is currently 1.0.14; `gregg-protocol` exposes the versioned v2 wire contract and `/v2/status` is the universal status endpoint.
 - Eggsec owns structured scoped security/load-testing semantics.
 - SynVoid is an initial high-value benchmark subject, not an Eggbench dependency.
 
@@ -182,9 +183,16 @@ Before marking a plan ready, verify:
 10. machine-readable schema/version effects are explicit;
 11. closure evidence is sufficient to prove more than compilation.
 
-## Next handoff
+## Next handoffs
 
-C001 is closed. The next handoff is Measurement/Comparison M002 plan
-authoring (implementation plan not yet written), followed by External
-Oracles M001 (first real workload adapter) and Eggstack Integration M001
-planning against the now-truthful CLI/runner substrate.
+Two plans may be handed off immediately and in parallel:
+
+1. `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`
+2. `plans/implementation/external-oracles/001-external-command-driver-substrate.md`
+
+After External Oracles M001 establishes `eggbench-drivers`, the already-authored Eggstack M001 plans become executable:
+
+3. `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
+4. `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
+
+This sequencing keeps comparison work independent while ensuring all production adapters share one driver/catalog ownership boundary.
