@@ -111,7 +111,7 @@ Status: closed for qualification. Implementation plan: `plans/implementation/mea
 
 ### M002 — Baselines, comparability, and statistical gates
 
-Status: ready — qualification corrective C001 closed with green hosted CI. M002 plan authoring/implementation may proceed under ADR-0003.
+Status: ready. Implementation plan: `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`. Qualification corrective C001 is closed with green hosted CI; implementation may proceed under ADR-0003.
 
 ### M003 — Paired/interleaved experiment qualification
 
