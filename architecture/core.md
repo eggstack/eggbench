@@ -15,3 +15,10 @@ The `Subject` enum is preserved in `BundleManifest` for trial provenance.
 The companion `SubjectSnapshot` (lives in `eggbench-runner` because it
 hashes executables) extends the manifest with the resolved executable path
 and its SHA-256 digest, plus declared/observed digest matching.
+
+Measurement M001 adds a dependency-light `metrics` module: metric vocabulary
+v1, `TrialMetrics` schema v1, and a pure normalization function. Core owns
+validation and the normalized evidence type; drivers own parsing upstream
+output and never write `TrialMetrics` JSON themselves. `BundleReader`
+exposes `trial_metrics(trial_id)` so later comparison and CLI surfaces can
+load normalized evidence without reconstructing paths.

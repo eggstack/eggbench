@@ -6,8 +6,10 @@ use crate::{
 };
 use eggbench_core::{
     ArtifactPath, ArtifactRole, BundleError, BundleManifest, BundleWriter, ComparisonVerdict,
-    ExecutionStatus, Name, ResetPolicy, RunId, SchemaVersion, Sensitivity, TrialDescriptor,
-    TrialExecutionFailure, TrialExecutionResult, TrialExecutionStatus, TrialId, Workload,
+    ExecutionStatus, Name, NormalizationInput, RawHistogramInput, RawMetricObservation,
+    ResetPolicy, RunId, SchemaVersion, Sensitivity, TrialDescriptor, TrialExecutionFailure,
+    TrialExecutionResult, TrialExecutionStatus, TrialId, Workload, normalize_trial_metrics,
+    trial_metrics_path,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -81,11 +83,23 @@ pub struct WorkloadArtifact {
     pub bytes: Vec<u8>,
 }
 
-/// Non-metric result from a workload invocation.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Result from a workload invocation: diagnostic files plus protocol-neutral
+/// raw metric inputs for post-measurement normalization.
+///
+/// Raw observations are driver output to be validated, never normalized
+/// evidence. Normalization runs after the measured interval ends and stages a
+/// separate deterministic `metrics.json` artifact per measured trial.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorkloadOutput {
     /// Optional diagnostic files, bounded during bundle staging.
     pub artifacts: Vec<WorkloadArtifact>,
+    /// Raw metric observations for post-measurement normalization.
+    /// Unrequested names never become gate-eligible normalized metrics.
+    pub metrics: Vec<RawMetricObservation>,
+    /// Raw histogram inputs referencing same-invocation artifacts.
+    pub histograms: Vec<RawHistogramInput>,
+    /// Raw error-category counts `(category, count)`.
+    pub error_counts: Vec<(String, u64)>,
 }
 
 /// Redaction-safe operation failure category.
@@ -576,7 +590,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                         terminal_status: TrialExecutionStatus::Completed,
                         failure_category: None,
                     };
-                    match stage_trial(&mut state.writer, trial_id, &result, output) {
+                    match stage_trial(&mut state.writer, trial_id, &result, output, resolved) {
                         Ok((result_path, artifacts)) => {
                             finish_phase(
                                 &mut state.phases,
@@ -639,6 +653,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                         trial_id,
                         &result,
                         WorkloadOutput::default(),
+                        resolved,
                     ) {
                         Ok((result_path, artifacts)) => {
                             state.trials.push(TrialDescriptor {
@@ -1037,8 +1052,15 @@ fn preflight_evidence_capacity(
         .len()
         .checked_mul(2)
         .ok_or(OrchestrationError::Preflight("log artifact count overflow"))?;
+    // Each measured trial stages `result.json` plus normalized `metrics.json`.
     let required_count = warmups
-        .checked_add(measured)
+        .checked_add(
+            measured
+                .checked_mul(2)
+                .ok_or(OrchestrationError::Preflight(
+                    "evidence artifact count overflow",
+                ))?,
+        )
         .and_then(|count| count.checked_add(2)) // phase timeline and lifecycle metadata
         .and_then(|count| count.checked_add(log_artifact_count))
         .ok_or(OrchestrationError::Preflight(
@@ -1079,7 +1101,10 @@ fn preflight_evidence_capacity(
     let mut required_bytes = phase_bytes
         .checked_add(lifecycle_bytes)
         .and_then(|bytes| bytes.checked_add(u64::try_from(warmups).ok()?.checked_mul(512)?))
-        .and_then(|bytes| bytes.checked_add(u64::try_from(measured).ok()?.checked_mul(512)?))
+        .and_then(|bytes| {
+            // `result.json` plus normalized `metrics.json` per measured trial.
+            bytes.checked_add(u64::try_from(measured).ok()?.checked_mul(1_024)?)
+        })
         .ok_or(OrchestrationError::Preflight(
             "runner artifact byte bound overflow",
         ))?;
@@ -1195,6 +1220,7 @@ fn stage_trial(
     id: TrialId,
     result: &TrialExecutionResult,
     output: WorkloadOutput,
+    resolved: &eggbench_core::ResolvedPlan,
 ) -> Result<(ArtifactPath, Vec<ArtifactPath>), BundleError> {
     let base = format!("trials/{:03}", id.get());
     let bytes = serde_json::to_vec_pretty(&result)
@@ -1207,8 +1233,60 @@ fn stage_trial(
         Sensitivity::Public,
         bytes.as_slice(),
     )?;
-    let artifacts = stage_workload_artifacts(writer, &base, output, true)?;
+    // Capture raw artifact names before staging consumes the output so metric
+    // provenance can resolve same-trial references without trusting driver paths.
+    let artifact_names: Vec<String> = output
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.name.clone())
+        .collect();
+    let metrics = output.metrics.clone();
+    let histograms = output.histograms.clone();
+    let error_counts = output.error_counts.clone();
+    let mut artifacts = stage_workload_artifacts(writer, &base, output, true)?;
+    let mut artifact_map = BTreeMap::new();
+    for (name, path) in artifact_names.into_iter().zip(artifacts.iter().cloned()) {
+        artifact_map.insert(name, path);
+    }
+    let (producer, producer_version) = workload_producer(resolved);
+    let input = NormalizationInput {
+        trial_id: id,
+        metrics: &resolved.metrics,
+        terminal_status: result.terminal_status,
+        observations: &metrics,
+        histograms: &histograms,
+        error_counts: &error_counts,
+        artifact_map: &artifact_map,
+        producer: &producer,
+        producer_version: producer_version.as_deref(),
+    };
+    let normalized = normalize_trial_metrics(&input)?;
+    let metrics_bytes = normalized.to_json_bytes()?;
+    let metrics_path = trial_metrics_path(id)?;
+    writer.add_artifact(
+        metrics_path.clone(),
+        ArtifactRole::TrialArtifact,
+        "application/json",
+        Sensitivity::Public,
+        metrics_bytes.as_slice(),
+    )?;
+    artifacts.push(metrics_path);
     Ok((result_path, artifacts))
+}
+
+/// Resolve the workload producer label/version from the resolved driver
+/// inventory. Falls back to the `unknown-workload` label only when no
+/// workload driver was resolved; provenance always names the source.
+fn workload_producer(resolved: &eggbench_core::ResolvedPlan) -> (String, Option<String>) {
+    use eggbench_core::DriverCategory;
+    if let Some(driver) = resolved.drivers.get(&DriverCategory::Workload) {
+        (
+            driver.descriptor.name.as_str().to_owned(),
+            Some(driver.descriptor.adapter_version.clone()),
+        )
+    } else {
+        ("unknown-workload".to_owned(), None)
+    }
 }
 fn stage_warmup(
     writer: &mut BundleWriter,
@@ -1336,6 +1414,13 @@ pub struct FakeWorkload {
     /// Use this to exercise evidence-staging paths that respond to adversarial artifact
     /// names, counts, or byte sizes.
     pub artifacts_by_invocation: Vec<Option<Vec<WorkloadArtifact>>>,
+    /// Per-invocation raw metric observations for normalization qualification.
+    /// Indexed like `artifacts_by_invocation`; `None` means no observations.
+    pub metrics_by_invocation: Vec<Option<Vec<RawMetricObservation>>>,
+    /// Per-invocation raw histogram inputs. Indexed like `artifacts_by_invocation`.
+    pub histograms_by_invocation: Vec<Option<Vec<RawHistogramInput>>>,
+    /// Per-invocation raw error-category counts. Indexed like `artifacts_by_invocation`.
+    pub error_counts_by_invocation: Vec<Option<Vec<(String, u64)>>>,
     invocation_count: u32,
     /// Invocation kinds in execution order.
     pub invocations: Vec<InvocationKind>,
@@ -1351,6 +1436,9 @@ impl Default for FakeWorkload {
             drain_delay: Duration::ZERO,
             drain_fails: false,
             artifacts_by_invocation: Vec::new(),
+            metrics_by_invocation: Vec::new(),
+            histograms_by_invocation: Vec::new(),
+            error_counts_by_invocation: Vec::new(),
             invocation_count: 0,
             invocations: Vec::new(),
             drained: false,
@@ -1373,14 +1461,33 @@ impl WorkloadExecutor for FakeWorkload {
             if self.fail_on == Some(self.invocation_count) {
                 Err(FailureCategory::WorkloadFailed)
             } else {
-                let output = self
+                let index = self.invocation_count as usize - 1;
+                let artifacts = self
                     .artifacts_by_invocation
-                    .get(self.invocation_count as usize - 1)
+                    .get(index)
                     .and_then(Clone::clone)
-                    .map_or_else(WorkloadOutput::default, |artifacts| WorkloadOutput {
-                        artifacts,
-                    });
-                Ok(output)
+                    .unwrap_or_default();
+                let metrics = self
+                    .metrics_by_invocation
+                    .get(index)
+                    .and_then(Clone::clone)
+                    .unwrap_or_default();
+                let histograms = self
+                    .histograms_by_invocation
+                    .get(index)
+                    .and_then(Clone::clone)
+                    .unwrap_or_default();
+                let error_counts = self
+                    .error_counts_by_invocation
+                    .get(index)
+                    .and_then(Clone::clone)
+                    .unwrap_or_default();
+                Ok(WorkloadOutput {
+                    artifacts,
+                    metrics,
+                    histograms,
+                    error_counts,
+                })
             }
         })
     }

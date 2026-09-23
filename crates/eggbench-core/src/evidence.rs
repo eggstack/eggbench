@@ -1,5 +1,7 @@
 //! Immutable, portable `.eggb` evidence bundles.
-use crate::{ArtifactBounds, DriverDescriptor, Name, ResolvedPlan, SchemaVersion, Subject};
+use crate::{
+    ArtifactBounds, DriverDescriptor, Name, ResolvedPlan, SchemaVersion, Subject, TrialMetrics,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -1188,6 +1190,47 @@ impl BundleReader {
     pub fn verify(&self) -> Result<(), BundleError> {
         self.validate_paths()?;
         verify_artifact_tree(&self.root, &self.manifest.artifacts, true)
+    }
+
+    /// Load normalized per-trial metrics when the trial staged `metrics.json`.
+    ///
+    /// Returns `None` for legacy/pre-M001 bundles that carry execution facts
+    /// only. The metrics artifact must be manifest-listed and belong to the
+    /// requested trial; no caller-supplied path is ever opened blindly.
+    ///
+    /// # Errors
+    /// Returns an error when the metrics artifact is listed but unreadable or
+    /// fails normalized-schema validation.
+    pub fn trial_metrics(&self, trial_id: TrialId) -> Result<Option<TrialMetrics>, BundleError> {
+        let descriptor = self
+            .manifest
+            .trials
+            .iter()
+            .find(|trial| trial.id == trial_id);
+        let Some(descriptor) = descriptor else {
+            return Ok(None);
+        };
+        let expected = crate::trial_metrics_path(trial_id)?;
+        if !descriptor.artifacts.contains(&expected) {
+            return Ok(None);
+        }
+        let mut file = self.open_artifact(&expected)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| io_error(expected.to_path_buf(), error))?;
+        if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+            return Err(BundleError::BoundExceeded("trial metrics bytes"));
+        }
+        let metrics: TrialMetrics = serde_json::from_slice(&bytes)
+            .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+        if metrics.trial_id != trial_id {
+            return Err(BundleError::ManifestParse(format!(
+                "trial metrics identity mismatch: expected trial {}",
+                trial_id.get()
+            )));
+        }
+        metrics.validate()?;
+        Ok(Some(metrics))
     }
 
     /// Open a manifest-listed artifact read-only after checking path components for symlinks.

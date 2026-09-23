@@ -39,8 +39,8 @@ Canonical direction remains in:
 | Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
-| Local runner/lifecycle | active | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002 closed; M003 ready | M003 implementation plan is registered and ready for handoff |
-| Measurement/comparison | ready | plans/subsystems/measurement-comparison-roadmap.md | M001 ready | M001 implementation plan is registered and ready for handoff |
+| Local runner/lifecycle | closing | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002 closed; M003 conditionally closed | M003 closure at plans/closure/local-runner-lifecycle/003-status.md; corrective follow-up: exit-code routing + SIGINT wiring + hosted CI |
+| Measurement/comparison | active | plans/subsystems/measurement-comparison-roadmap.md | M001 closed; M002 ready for plan authoring | M001 closure at plans/closure/measurement-comparison/001-status.md |
 | Eggstack integrations | proposed | plans/subsystems/eggstack-integration-roadmap.md | M001 blocked | Local Runner M003 + Measurement/Comparison M001 must close before integrations |
 | External measurement oracles | ready | plans/subsystems/external-oracles-roadmap.md | M001 ready for planning | Driver boundary + qualified local runner command substrate; implementation plan not yet written |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -55,6 +55,8 @@ Canonical direction remains in:
 | Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M002 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/002-status.md; C001 evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md |
 | Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
+| Local runner/lifecycle M003 | conditionally closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md |
+| Measurement/comparison M001 | closed | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md |
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
@@ -62,8 +64,8 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | ready | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | Independent next-round handoff; must preserve M002 orchestration/timing and explicit unsupported-driver behavior |
-| Measurement/comparison | M001 Metric vocabulary + trial normalization | ready | plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md | Independent next-round handoff; adds normalized per-trial evidence but no baseline/statistical comparison |
+| Local runner/lifecycle | M003 Environment fingerprint + CLI lifecycle | conditionally closed | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | Closure: plans/closure/local-runner-lifecycle/003-status.md; corrective follow-up covers exit-code routing, SIGINT wiring, hosted CI |
+| Measurement/comparison | M001 Metric vocabulary + trial normalization | closed | plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md | Closure: plans/closure/measurement-comparison/001-status.md; M002 comparison ready for plan authoring |
 
 ## Current execution order and dependency gates
 
@@ -167,16 +169,11 @@ Before marking a plan ready, verify:
 
 ## Next handoffs
 
-Two implementation plans are dependency-ready and may proceed independently:
+Both next-round plans are now closed or conditionally closed:
 
-1. `plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md`
-2. `plans/implementation/measurement-comparison/001-metric-vocabulary-and-trial-normalization.md`
+1. Local Runner M003 — conditionally closed at `plans/closure/local-runner-lifecycle/003-status.md`. Corrective follow-up: binary exit-code routing (codes 4/5), SIGINT→cancellation wiring, hosted CI lanes.
+2. Measurement/Comparison M001 — closed at `plans/closure/measurement-comparison/001-status.md`. M002 comparison (baselines, comparability, statistical gates) is ready for plan authoring.
 
-The plans deliberately separate ownership:
-
-- M003 owns host fingerprinting, subject/bundle preparation, and CLI presentation/dispatch.
-- Measurement M001 owns the versioned normalized per-trial metric vocabulary/evidence contract.
-
-They may be implemented in either order. If both touch runner exports/workspace metadata, rebase and preserve both contracts rather than duplicating modules.
+External Oracles M001 remains plan-authorable, and may now build against the stable normalized metric seam (`WorkloadMetricObservation` in, `TrialMetrics` out; drivers never write normalized JSON themselves).
 
 External Oracles M001 remains plan-authorable, but its implementation should wait until Measurement M001 stabilizes the normalized metric seam unless it is limited strictly to external command discovery/raw-output capture.

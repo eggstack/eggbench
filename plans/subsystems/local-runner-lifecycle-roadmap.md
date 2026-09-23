@@ -129,7 +129,7 @@ The roadmap closes when one synthetic local experiment executes repeatably and p
 |---|---|---|---|---|
 | M001 | closed | plans/implementation/local-runner-lifecycle/001-managed-process-and-readiness-lifecycle.md | plans/closure/local-runner-lifecycle/001-status.md | none |
 | M002 | closed historical predecessor | plans/implementation/local-runner-lifecycle/002-warmup-trial-cooldown-reset-state-machine.md | plans/closure/local-runner-lifecycle/002-status.md; post-closure evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md | none |
-| M003 | ready | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | none | M002 corrective C001 closed and hosted qualification green |
+| M003 | conditionally closed | plans/implementation/local-runner-lifecycle/003-environment-fingerprint-and-cli-lifecycle.md | plans/closure/local-runner-lifecycle/003-status.md | Corrective follow-up required: binary exit-code routing (codes 4/5 unreachable) and SIGINT→token wiring; hosted CI lanes outstanding |
 
 
 ## 12. Post-closure corrective

@@ -22,6 +22,16 @@ example.eggb/
   trials/001/result.json
 ~~~
 
+Measured trials additionally stage `trials/NNN/metrics.json`
+(`ArtifactRole::TrialArtifact`, `Public`): normalized per-trial metric
+evidence owned by Measurement M001. Each file carries the metric schema and
+vocabulary versions, one `observed`/`missing`/`invalid` record per requested
+metric in deterministic name order, raw histogram references, an optional
+error-category distribution, and bounded warnings. Warmups never receive
+this artifact. Pre-M001 bundles simply have no `metrics.json`;
+`BundleReader::trial_metrics(trial_id)` returns `None` for them. See
+[`metrics.md`](metrics.md).
+
 Environment data has a separate schema version (`EnvironmentFingerprint` v1). Each selected, non-secret field is classified as comparison-critical, warning-only, or informational. The schema does not fingerprint the host automatically.
 
 ## Staging and finalization

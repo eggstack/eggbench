@@ -2,11 +2,13 @@
 #![forbid(unsafe_code)]
 
 mod evidence;
+mod metrics;
 mod plan;
 mod resolved;
 mod types;
 
 pub use evidence::*;
+pub use metrics::*;
 pub use plan::*;
 pub use resolved::*;
 pub use types::*;

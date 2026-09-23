@@ -15,10 +15,25 @@ runner-owned serialization and evidence finalization happen after the timer
 stops.
 
 The coordinator records typed run-relative `PhaseEvent`s, versioned trial
-execution facts, separate warmup artifacts, lifecycle logs, and the resolved
-driver inventory. Bundle finalization records execution status and leaves the
-comparison verdict absent. This is execution infrastructure, not a
+execution facts, normalized per-trial metrics, separate warmup artifacts,
+lifecycle logs, and the resolved driver inventory. Bundle finalization
+records execution status and leaves the comparison verdict absent. This is
+execution infrastructure plus normalized metric evidence, not a
 performance-comparison capability.
+
+## M001 trial normalization
+
+`WorkloadOutput` carries protocol-neutral raw observations, histogram
+inputs, and error counts alongside diagnostic artifacts. After the measured
+interval ends, `stage_trial` stages raw artifacts, resolves provenance
+references against the same-trial artifact map, and normalizes every
+resolved-plan request into `trials/NNN/metrics.json`
+(`ArtifactRole::TrialArtifact`). Semantic data problems become
+`missing`/`invalid` states inside a valid bundle; structural bound
+violations return `BundleError` through the mandatory drain/teardown
+cleanup path. Warmups never receive `TrialMetrics`. The `FakeWorkload`
+qualification adapter can inject deterministic metric, histogram, and error
+inputs per invocation. See [`metrics.md`](../docs/metrics.md).
 
 ## M003 pre-start preparation
 
