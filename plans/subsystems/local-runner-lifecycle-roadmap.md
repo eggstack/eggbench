@@ -1,6 +1,6 @@
 # Local Runner and Lifecycle Roadmap
 
-Status: active
+Status: closed
 
 Long-term references:
 
@@ -158,7 +158,7 @@ once and the serialized `runner-phases.json` equals the in-memory
 `RunOutcome.phases`. Historical M002 closure remains preserved; the
 corrective closure record explains the missed verification classes.
 
-M003 and Measurement/Comparison implementation plans are now authored and ready for handoff. Neither may re-open the M002 evidence contract or design a new workflow engine.
+M003 is fully closed. Later driver, comparison, and integration work must preserve the M002 evidence/cleanup contract rather than reopening the runner as a general workflow engine.
 
 
 ## 13. M003 qualification corrective
