@@ -1,6 +1,6 @@
 # Eggstack Integration M001b — Gregg Host Telemetry
 
-Status: planned; implementation blocked on External Oracles M001 shared driver crate/catalog
+Status: ready; unblocked by External Oracles M001 closure (`plans/closure/external-oracles/001-status.md`)
 
 Repository planning baseline: `46ebaa6baa13ec1b74512295a1886a54d2911ace`
 
@@ -8,9 +8,9 @@ Source roadmap:
 
 - `plans/subsystems/eggstack-integration-roadmap.md` — second half of M001
 
-Hard dependency:
+Hard dependency (satisfied):
 
-- `plans/implementation/external-oracles/001-external-command-driver-substrate.md` must land first because it establishes `crates/eggbench-drivers` and production catalog ownership.
+- `plans/implementation/external-oracles/001-external-command-driver-substrate.md` landed first (closure `plans/closure/external-oracles/001-status.md`, commit `7afa054`) and established `crates/eggbench-drivers` and production catalog ownership.
 
 Interface dependency:
 

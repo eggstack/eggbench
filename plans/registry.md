@@ -42,8 +42,8 @@ Canonical direction remains in:
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | active | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 ready | Implementation plan registered and ready |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001a/M001b plans authored | External Oracles M001 must establish shared eggbench-drivers crate/catalog first |
-| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 ready | Shared driver crate/catalog + external-command substrate plan registered |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001a/M001b ready | External Oracles M001 closed (`plans/closure/external-oracles/001-status.md`); shared `eggbench-drivers` crate/catalog landed |
+| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed | Closure at `plans/closure/external-oracles/001-status.md`; M002 tool adapters unblocked |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -66,14 +66,13 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
 | Measurement/comparison | M002 Baselines, comparability, and statistical gates | ready | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | May proceed independently; offline immutable-bundle comparison |
-| External measurement oracles | M001 External command-driver substrate | ready | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Establishes crates/eggbench-drivers and production catalog ownership; no real tool adapter yet |
+| External measurement oracles | M001 External command-driver substrate | closed | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Closure: plans/closure/external-oracles/001-status.md (commit `7afa054`) |
+| Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | ready | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | Unblocked by External Oracles M001 closure; shared `eggbench-drivers` crate/catalog landed |
+| Eggstack integrations | M001b Gregg host telemetry | ready | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | Unblocked by External Oracles M001 closure; shared `eggbench-drivers` crate/catalog landed |
 
 ## Authored but dependency-blocked implementation plans
 
-| Subsystem | Milestone | Status | Implementation plan | Blocker |
-|---|---|---|---|---|
-| Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | blocked | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | External Oracles M001 shared driver crate/catalog |
-| Eggstack integrations | M001b Gregg host telemetry | blocked | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | External Oracles M001 shared driver crate/catalog |
+None currently. External Oracles M002 tool adapters are unblocked but have no authored implementation plan yet.
 
 After External Oracles M001 closes, M001a and M001b may proceed in parallel if their runner/driver interface changes are reconciled rather than duplicated.
 
@@ -134,14 +133,19 @@ Two next-round implementation tracks are independent:
 - Measurement M002;
 - External Oracles M001.
 
-External Oracles M001 establishes the shared `eggbench-drivers` crate, production catalog ownership, trusted executable resolution, bounded command capture, and parser contract. It deliberately ships no oha/h2load/iperf3 adapter.
+External Oracles M001 is closed (`plans/closure/external-oracles/001-status.md`,
+commit `7afa054`). It established the shared `eggbench-drivers` crate,
+production catalog ownership, trusted executable resolution, bounded command
+capture, and parser contract. It deliberately ships no oha/h2load/iperf3
+adapter.
 
 Eggstack M001 is already decomposed into:
 
 - M001a EggServe controlled origin + Eggfetch native H1 workload;
 - M001b Gregg host telemetry.
 
-Those implementation plans are blocked only on the shared drivers crate/catalog landing. Once External Oracles M001 closes, M001a and M001b may proceed in parallel.
+Those implementation plans are unblocked (External Oracles M001 closed) and
+may proceed in parallel.
 
 External Oracles M002 will add oha/h2load/iperf3 after the substrate closes. Eggress/Eggchaos, EggReplay/Eggprobe, and Eggsec remain later Eggstack milestones.
 
@@ -185,14 +189,15 @@ Before marking a plan ready, verify:
 
 ## Next handoffs
 
-Two plans may be handed off immediately and in parallel:
+Three plans may be handed off immediately (M001a and M001b in parallel if
+their runner/driver interface changes are reconciled rather than duplicated):
 
 1. `plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md`
-2. `plans/implementation/external-oracles/001-external-command-driver-substrate.md`
+2. `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
+3. `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
 
-After External Oracles M001 establishes `eggbench-drivers`, the already-authored Eggstack M001 plans become executable:
+External Oracles M002 tool adapters are unblocked but have no authored
+implementation plan yet.
 
-3. `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
-4. `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
-
-This sequencing keeps comparison work independent while ensuring all production adapters share one driver/catalog ownership boundary.
+This sequencing keeps comparison work independent while ensuring all
+production adapters share one driver/catalog ownership boundary.

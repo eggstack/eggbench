@@ -1,6 +1,6 @@
 # Eggstack Integration M001a — EggServe Controlled Origin and Eggfetch Native HTTP Workload
 
-Status: planned; implementation blocked on External Oracles M001 shared driver crate/catalog
+Status: ready; unblocked by External Oracles M001 closure (`plans/closure/external-oracles/001-status.md`)
 
 Repository planning baseline: `852bf2dab6a266cc5043cf0817b429a8073d6339`
 
@@ -8,9 +8,9 @@ Source roadmap:
 
 - `plans/subsystems/eggstack-integration-roadmap.md` — first half of M001
 
-Hard dependency:
+Hard dependency (satisfied):
 
-- `plans/implementation/external-oracles/001-external-command-driver-substrate.md` must land first because it establishes `crates/eggbench-drivers` and production catalog ownership.
+- `plans/implementation/external-oracles/001-external-command-driver-substrate.md` landed first (closure `plans/closure/external-oracles/001-status.md`, commit `7afa054`) and established `crates/eggbench-drivers` and production catalog ownership.
 
 Closed semantic prerequisites:
 
