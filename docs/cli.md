@@ -61,22 +61,38 @@ The CLI uses a compact stable mapping:
 | `4` | Run completed with `Failed`/`Cancelled`/`Invalid` execution status. |
 | `5` | Evidence/bundle I/O or verification failure. |
 
-Exit codes are stable and locked by tests; new categories must be added
-through planning review.
+Exit codes are stable and locked by subprocess tests in both JSON and
+human modes: the same outcome yields the same numeric code regardless of
+presentation. JSON failures still emit exactly one envelope document on
+stdout; human diagnostics go to stderr. `--quiet` suppresses optional prose
+but never changes the exit status. A finalized run with `Failed`, `Cancelled`,
+or `Invalid` execution status retains its `run` result (including the bundle
+path) alongside a stable `run_non_success` error and exits `4`. New
+categories must be added through planning review.
 
 ## Driver registry and unsupported workloads
 
-M003 ships a deterministic `fake-load` driver for end-to-end qualification.
-It is not a production traffic generator. Production adapters (for example
-`oha`, `h2load`, `Eggfetch`) belong to External Oracles / Eggstack
-Integration milestones. The CLI fails closed with the stable
-`unsupported_workload` category when no production adapter is registered.
+Production `eggbench` has no workload adapter yet: the production registry
+is empty, `doctor` truthfully reports `has_workload_driver=false`, and `run`
+fails before managed startup with the stable `missing_driver` /
+`unsupported_workload` category. No service process is started and no bundle
+is published on that path.
+
+A deterministic `fake-load` adapter exists only as explicit test injection
+for qualification harnesses. It is not a production traffic generator, has
+no public `--fake-workload` (or similar) switch, and never appears in the
+production driver inventory. Production adapters (for example `oha`,
+`h2load`, `Eggfetch`) belong to External Oracles / Eggstack Integration
+milestones.
 
 ## Cancellation
 
-`run` forwards SIGINT/Ctrl-C to the M002 cancellation token. The first signal
-requests normal cancellation and runs mandatory cleanup. A second
-"force kill everything immediately" path is intentionally absent in M003.
+`run` wires one SIGINT/Ctrl-C signal into the existing M002
+`CancellationToken`: the signal only requests cancellation, and the normal
+drain/teardown path remains authoritative. Cancellation produces a finalized
+`Cancelled` bundle with mandatory cleanup, retains the bundle in the code-4
+result, and leaves no detached signal-listener task after completion. A
+second "force kill everything immediately" path is intentionally absent.
 
 ## Inspection
 

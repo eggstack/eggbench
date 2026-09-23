@@ -5,32 +5,114 @@
 //! subject snapshot → prepare BundleWriter → LocalSession::prepare →
 //! WorkloadExecutor/reset hooks → execute_run → machine/human result`.
 //!
-//! M003 ships with the deterministic `FakeWorkload` adapter only. Production
-//! traffic generators belong to External Oracles / Eggstack Integrations
-//! milestones; the CLI fails closed with `unsupported_capability` instead
-//! of inventing a production workload.
+//! Production `eggbench` registers no workload adapter at this milestone, so
+//! [`run`] fails before managed startup with a stable
+//! `missing_driver`/`unsupported_workload` category. Deterministic
+//! qualification uses [`run_with_qualification`] with an explicitly injected
+//! `FakeWorkload`; that path is never used by `main.rs` and is not reachable
+//! through any public production flag.
 
-use crate::envelope::{CliEnvelope, CliOutput, ExitCode, PathBufPayload};
+use crate::envelope::{CliOutput, ExitCode, PathBufPayload, PresentedCommandResult};
 use crate::error::{CliError, CliFailure};
 use crate::plan_input::load_plan;
-use crate::workload_registry::{BuiltinWorkloadExecutor, WorkloadRegistry};
+use crate::workload_registry::{
+    BuiltinWorkloadExecutor, ProductionRuntime, QualificationRuntime, WorkloadRuntime,
+};
 use crate::{CommandOptions, InputFormat};
-use eggbench_core::{DefaultDriverPolicy, DriverCategory, LoadMode, Name, ResolutionOptions};
+use eggbench_core::{
+    DefaultDriverPolicy, DriverCategory, DriverDescriptor, ExecutionStatus, LoadMode, Name,
+    ResolutionOptions,
+};
 use eggbench_runner::{
     BundlePreparation, MapSecretProvider, PlatformAdapter, ResetRegistry, RunnerOptions,
-    SecretProvider, UnixPlatform, collect_local_environment, prepare_bundle,
+    SecretProvider, UnixPlatform, WorkloadExecutor, collect_local_environment, prepare_bundle,
 };
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
-/// Run the experiment end-to-end and produce a finalized bundle.
+/// Production run: no synthetic driver is registered.
+///
+/// Resolution against the empty production inventory fails with
+/// `missing_driver` before environment/bundle preparation, managed startup,
+/// workload invocation, or bundle publication.
+#[allow(clippy::unused_async)]
 pub async fn run(
     plan: &Path,
     input_format: Option<InputFormat>,
     bundle: &Path,
     _options: CommandOptions,
-) -> Result<CliEnvelope, CliError> {
+) -> Result<PresentedCommandResult, CliError> {
+    let input = load_plan(plan, input_format)?;
+    let plan = input.plan;
+    let platform = platform_name()?;
+    let runtime = ProductionRuntime::new();
+    let descriptors = runtime.driver_descriptors();
+
+    let mut options = resolution_options(platform, &plan);
+    let _ = &mut options;
+    let resolved =
+        eggbench_core::resolve_plan(&plan, &descriptors, &options).map_err(CliError::Resolution)?;
+
+    // Defense in depth: even if resolution ever succeeded without a workload
+    // adapter, production must still fail before startup.
+    if !runtime.has_workload_driver() {
+        let failure = CliFailure::new(
+            "unsupported_workload",
+            "no workload driver is registered",
+            ExitCode::CapabilityPreflight,
+        );
+        return Ok(PresentedCommandResult::failure("run", &failure));
+    }
+
+    // Unreachable with the empty production inventory: resolution already
+    // failed above. Keep the tail explicit so a future real adapter lands
+    // through the qualification seam, not by reviving a production fake.
+    let _ = (bundle, resolved);
+    let failure = CliFailure::new(
+        "unsupported_workload",
+        "no production workload adapter is compiled in",
+        ExitCode::CapabilityPreflight,
+    );
+    Ok(PresentedCommandResult::failure("run", &failure))
+}
+
+/// Qualification-only run with an explicitly injected fake workload.
+///
+/// Not used by `main.rs`. Tests and qualification harnesses supply the fake
+/// executor behavior (success, failure, pending-until-cancelled) and the
+/// matching fake descriptors. No public CLI flag selects this path.
+pub async fn run_with_qualification(
+    plan: &Path,
+    input_format: Option<InputFormat>,
+    bundle: &Path,
+    _options: CommandOptions,
+    fake: eggbench_runner::test_support::FakeWorkload,
+    signal: impl Future<Output = ()> + Send + 'static,
+) -> Result<PresentedCommandResult, CliError> {
+    let runtime = QualificationRuntime::new();
+    let descriptors = runtime.driver_descriptors();
+    let mut executor = QualificationRuntime::workload_executor(fake);
+    run_impl(
+        plan,
+        input_format,
+        bundle,
+        &descriptors,
+        &mut executor,
+        signal,
+    )
+    .await
+}
+
+async fn run_impl(
+    plan: &Path,
+    input_format: Option<InputFormat>,
+    bundle: &Path,
+    descriptors: &[DriverDescriptor],
+    executor: &mut impl WorkloadExecutor,
+    signal: impl Future<Output = ()> + Send + 'static,
+) -> Result<PresentedCommandResult, CliError> {
     let input = load_plan(plan, input_format)?;
     let plan = input.plan;
     let plan_bytes = input.bytes;
@@ -39,57 +121,32 @@ pub async fn run(
         InputFormat::Json => "application/json",
     };
 
-    let platform_label = UnixPlatform.label().to_owned();
-    let platform =
-        Name::new(platform_label.clone()).unwrap_or_else(|_| Name::new("unknown").unwrap());
-
-    let registry = WorkloadRegistry::with_builtin();
-    let driver_inventory = registry.inventory();
-    let descriptors: Vec<_> = driver_inventory
-        .iter()
-        .map(|entry| entry.descriptor.to_descriptor())
-        .collect();
-
-    let mut options = ResolutionOptions {
-        selections: BTreeMap::default(),
-        default_policy: DefaultDriverPolicy::Deterministic,
-        platform,
-        executable_paths: BTreeMap::default(),
-        required_capabilities: BTreeMap::default(),
-    };
-    let workload_mode = workload_load_mode(&plan);
-    let mut caps = BTreeMap::new();
-    caps.insert(
-        DriverCategory::Workload,
-        std::collections::BTreeSet::from([eggbench_core::Capability::LoadMode {
-            mode: workload_mode,
-        }]),
-    );
-    options.required_capabilities = caps;
+    let platform = platform_name()?;
+    let options = resolution_options(platform, &plan);
 
     let resolved =
-        eggbench_core::resolve_plan(&plan, &descriptors, &options).map_err(CliError::Resolution)?;
+        eggbench_core::resolve_plan(&plan, descriptors, &options).map_err(CliError::Resolution)?;
 
-    let managed_executable = match &resolved.subject {
-        eggbench_core::Subject::ManagedCommand { argv, .. } => argv.first().cloned(),
-        _ => None,
-    };
-    let resolved_executable_path = if let (eggbench_core::Subject::ManagedCommand { .. }, Some(_)) =
-        (&resolved.subject, &managed_executable)
-    {
-        match resolve_managed_executable_path(&resolved) {
-            Ok(path) => Some(path),
-            Err(failure) => return Ok(failure_envelope("run", &failure)),
+    let resolved_executable_path = match &resolved.subject {
+        eggbench_core::Subject::ManagedCommand { .. } => {
+            match resolve_managed_executable_path(&resolved) {
+                Ok(path) => Some(path),
+                Err(failure) => {
+                    return Ok(PresentedCommandResult::failure("run", &failure));
+                }
+            }
         }
-    } else {
-        None
+        _ => None,
     };
 
     let (environment, subject_snapshot) =
         match collect_local_environment(&resolved, resolved_executable_path.as_deref()) {
             Ok(pair) => pair,
             Err(error) => {
-                return Ok(failure_envelope_from_prepare("run", &error.to_string()));
+                return Ok(PresentedCommandResult::failure(
+                    "run",
+                    &CliFailure::new("prepare", error.to_string(), ExitCode::CapabilityPreflight),
+                ));
             }
         };
 
@@ -99,28 +156,7 @@ pub async fn run(
             "declared subject digest does not match observed executable digest",
             ExitCode::CapabilityPreflight,
         );
-        return Ok(CliEnvelope::fail("run", &failure));
-    }
-
-    if let Some(workload) = registry.default_workload() {
-        if workload.name != "fake-load" {
-            let failure = CliFailure::new(
-                "unsupported_workload",
-                format!(
-                    "workload driver {} is not a production adapter",
-                    workload.name
-                ),
-                ExitCode::CapabilityPreflight,
-            );
-            return Ok(CliEnvelope::fail("run", &failure));
-        }
-    } else {
-        let failure = CliFailure::new(
-            "unsupported_workload",
-            "no workload driver is registered",
-            ExitCode::CapabilityPreflight,
-        );
-        return Ok(CliEnvelope::fail("run", &failure));
+        return Ok(PresentedCommandResult::failure("run", &failure));
     }
 
     let bounds = plan.bounds;
@@ -137,7 +173,12 @@ pub async fn run(
 
     let session = match eggbench_runner::LocalSession::prepare(&resolved, runner_options) {
         Ok(session) => session,
-        Err(error) => return Ok(failure_envelope("run", &failure_from_runner_error(error))),
+        Err(error) => {
+            return Ok(PresentedCommandResult::failure(
+                "run",
+                &failure_from_runner_error(error),
+            ));
+        }
     };
 
     let writer = match prepare_bundle(&BundlePreparation {
@@ -151,33 +192,68 @@ pub async fn run(
         bounds,
     }) {
         Ok(writer) => writer,
-        Err(error) => return Ok(failure_envelope("run", &failure_from_bundle_error(error))),
+        Err(error) => {
+            return Ok(PresentedCommandResult::failure(
+                "run",
+                &failure_from_bundle_error(error),
+            ));
+        }
     };
-
-    let mut fake_workload = eggbench_runner::test_support::FakeWorkload::default();
-    fake_workload.delay = std::time::Duration::from_millis(0);
-    let mut executor = BuiltinWorkloadExecutor::new(fake_workload);
 
     let resets = ResetRegistry::default();
     let mut session = session;
     let cancel = CancellationToken::new();
-    let outcome = match eggbench_runner::execute_run(
-        &mut session,
-        &resolved,
-        &mut executor,
-        &resets,
-        writer,
-        &cancel,
-    )
-    .await
-    {
+    // One OS Ctrl-C signal requests cancellation through the existing M002
+    // token; drain/teardown remain authoritative. The listener is aborted and
+    // joined after completion so no detached task remains.
+    let signal_handle = spawn_signal_forwarder(cancel.clone(), signal);
+    let outcome =
+        eggbench_runner::execute_run(&mut session, &resolved, executor, &resets, writer, &cancel)
+            .await;
+    signal_handle.abort();
+    let _ = signal_handle.await;
+
+    let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
             let failure = CliFailure::new("evidence", error.to_string(), ExitCode::EvidenceIo);
-            return Ok(CliEnvelope::fail("run", &failure));
+            return Ok(PresentedCommandResult::failure("run", &failure));
         }
     };
 
+    Ok(presented_run_outcome(&outcome))
+}
+
+/// Forward one signal future into the M002 cancellation token.
+///
+/// The future resolves when Ctrl-C (or a deterministic test trigger) fires.
+/// Cleanup/drain semantics stay inside `execute_run`; this only requests
+/// cancellation and never terminates the process directly.
+pub async fn forward_signal(cancel: CancellationToken, signal: impl Future<Output = ()>) {
+    signal.await;
+    cancel.cancel();
+}
+
+fn spawn_signal_forwarder(
+    cancel: CancellationToken,
+    signal: impl Future<Output = ()> + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        forward_signal(cancel, signal).await;
+    })
+}
+
+/// Real Ctrl-C listener used by future production drivers.
+///
+/// Currently only qualification harnesses reach `execute_run`, but the seam
+/// is provided so a real adapter reuses the same cancellation wiring without
+/// bypassing M002 cleanup.
+#[allow(dead_code)]
+pub async fn wait_for_ctrl_c() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+fn presented_run_outcome(outcome: &eggbench_runner::RunOutcome) -> PresentedCommandResult {
     let primary_failure = outcome
         .primary_failure
         .map(|category| format!("{category:?}"));
@@ -189,17 +265,58 @@ pub async fn run(
     let bundle_payload = PathBufPayload::from_path(&outcome.bundle_path)
         .unwrap_or_else(|| PathBufPayload::from_string(outcome.bundle_path.display().to_string()));
 
-    Ok(CliEnvelope::ok(
-        "run",
-        CliOutput::Run {
-            bundle: bundle_payload,
-            bundle_published: true,
-            execution_status: format!("{:?}", outcome.execution_status).to_lowercase(),
-            measured_trials: outcome.manifest.trials.len(),
-            primary_failure,
-            comparison_verdict,
-        },
-    ))
+    let run = CliOutput::Run {
+        bundle: bundle_payload,
+        bundle_published: true,
+        execution_status: format!("{:?}", outcome.execution_status).to_lowercase(),
+        measured_trials: outcome.manifest.trials.len(),
+        primary_failure,
+        comparison_verdict,
+    };
+
+    match outcome.execution_status {
+        ExecutionStatus::Completed => PresentedCommandResult::success("run", run),
+        ExecutionStatus::Failed | ExecutionStatus::Cancelled | ExecutionStatus::Invalid => {
+            PresentedCommandResult::run_non_success(
+                "run",
+                run,
+                format!(
+                    "run finalized with execution status {:?}",
+                    outcome.execution_status
+                ),
+            )
+        }
+    }
+}
+
+fn resolution_options(platform: Name, plan: &eggbench_core::ExperimentPlan) -> ResolutionOptions {
+    let mut options = ResolutionOptions {
+        selections: BTreeMap::default(),
+        default_policy: DefaultDriverPolicy::Deterministic,
+        platform,
+        executable_paths: BTreeMap::default(),
+        required_capabilities: BTreeMap::default(),
+    };
+    let workload_mode = workload_load_mode(plan);
+    let mut caps = BTreeMap::new();
+    caps.insert(
+        DriverCategory::Workload,
+        std::collections::BTreeSet::from([eggbench_core::Capability::LoadMode {
+            mode: workload_mode,
+        }]),
+    );
+    options.required_capabilities = caps;
+    options
+}
+
+/// Resolve the platform label without a masked `unknown` fallback.
+///
+/// An invalid platform label is a caller-visible internal defect, not a value
+/// to silently coerce.
+fn platform_name() -> Result<Name, CliError> {
+    let label = UnixPlatform.label().to_owned();
+    Name::new(label.clone())
+        .map_err(|error| CliError::Internal(format!("invalid platform label {label:?}: {error}")))
 }
 
 fn workload_load_mode(plan: &eggbench_core::ExperimentPlan) -> LoadMode {
@@ -209,15 +326,6 @@ fn workload_load_mode(plan: &eggbench_core::ExperimentPlan) -> LoadMode {
         Workload::OpenLoop { .. } => LoadMode::OpenLoop,
         Workload::TimeBounded { mode, .. } => *mode,
     }
-}
-
-fn failure_envelope(command: &str, failure: &CliFailure) -> CliEnvelope {
-    CliEnvelope::fail(command, failure)
-}
-
-fn failure_envelope_from_prepare(command: &str, detail: &str) -> CliEnvelope {
-    let failure = CliFailure::new("prepare", detail, ExitCode::CapabilityPreflight);
-    CliEnvelope::fail(command, &failure)
 }
 
 fn failure_from_runner_error(error: eggbench_runner::RunnerError) -> CliFailure {
@@ -247,17 +355,24 @@ fn failure_from_bundle_error(error: eggbench_core::BundleError) -> CliFailure {
 
 fn resolve_managed_executable_path(
     resolved: &eggbench_core::ResolvedPlan,
-) -> Result<std::path::PathBuf, CliFailure> {
+) -> Result<PathBuf, CliFailure> {
     let argv0 = match &resolved.subject {
         eggbench_core::Subject::ManagedCommand { argv, .. } => argv.first().cloned(),
         _ => None,
     };
     match argv0 {
-        Some(value) => Ok(std::path::PathBuf::from(value)),
+        Some(value) => Ok(PathBuf::from(value)),
         None => Err(CliFailure::new(
             "managed_executable_path",
             "no managed executable path",
             ExitCode::CapabilityPreflight,
         )),
     }
+}
+
+#[allow(dead_code)]
+fn builtin_executor_for_tests(
+    fake: eggbench_runner::test_support::FakeWorkload,
+) -> BuiltinWorkloadExecutor {
+    BuiltinWorkloadExecutor::new(fake)
 }

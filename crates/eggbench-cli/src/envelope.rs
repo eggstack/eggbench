@@ -183,6 +183,65 @@ impl CliFailure {
     }
 }
 
+/// Internal command result pairing the machine envelope with process-exit
+/// metadata.
+///
+/// The envelope remains the machine compatibility surface; the exit code is
+/// process metadata. Presentation must use the attached code and never guess
+/// it from `ok` alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PresentedCommandResult {
+    /// Machine envelope written to stdout in JSON mode.
+    pub envelope: CliEnvelope,
+    /// Numeric process status for the same outcome.
+    pub exit_code: ExitCode,
+}
+
+impl PresentedCommandResult {
+    /// Successful command with the given payload.
+    #[must_use]
+    pub fn success(command: impl Into<String>, result: CliOutput) -> Self {
+        Self {
+            envelope: CliEnvelope::ok(command, result),
+            exit_code: ExitCode::Success,
+        }
+    }
+
+    /// Failed command with no result payload.
+    #[must_use]
+    pub fn failure(command: impl Into<String>, failure: &CliFailure) -> Self {
+        Self {
+            envelope: CliEnvelope::fail(command, failure),
+            exit_code: failure.exit_code,
+        }
+    }
+
+    /// Finalized run with non-success execution status.
+    ///
+    /// Retains the run result (including bundle path) alongside a stable
+    /// `run_non_success` error so the bundle is preserved while the process
+    /// exits with code 4.
+    #[must_use]
+    pub fn run_non_success(
+        command: impl Into<String>,
+        run: CliOutput,
+        detail: impl Into<String>,
+    ) -> Self {
+        let failure = CliFailure::new(
+            "run_non_success",
+            detail.into(),
+            ExitCode::RunCompletedNonSuccess,
+        );
+        let mut envelope = CliEnvelope::ok(command, run);
+        envelope.ok = false;
+        envelope.error = Some(failure.to_payload());
+        Self {
+            envelope,
+            exit_code: ExitCode::RunCompletedNonSuccess,
+        }
+    }
+}
+
 impl CliEnvelope {
     /// Build a successful envelope.
     #[must_use]
@@ -208,6 +267,16 @@ impl CliEnvelope {
             error: Some(failure.to_payload()),
             warnings: Vec::new(),
         }
+    }
+
+    /// Build a finalized non-success run envelope retaining the run result.
+    ///
+    /// Sets `ok = false`, keeps `result = Some(run)`, and attaches a stable
+    /// `run_non_success` error. Prefer [`PresentedCommandResult::run_non_success`]
+    /// when an exit code is also required.
+    #[must_use]
+    pub fn run_non_success(command: impl Into<String>, run: CliOutput, detail: String) -> Self {
+        PresentedCommandResult::run_non_success(command, run, detail).envelope
     }
 
     /// Append a warning to the envelope.

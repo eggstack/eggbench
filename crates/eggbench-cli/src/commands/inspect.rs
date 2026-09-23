@@ -1,7 +1,7 @@
 //! `eggbench inspect <bundle>` command.
 
 use crate::envelope::{
-    CliEnvelope, CliOutput, DriverSummary, EnvironmentSummary, ExitCode, SubjectSummary,
+    CliOutput, DriverSummary, EnvironmentSummary, PresentedCommandResult, SubjectSummary,
     TrialSummary,
 };
 use crate::error::CliError;
@@ -13,7 +13,7 @@ use std::path::Path;
 ///
 /// # Errors
 /// Returns [`CliError`] when the bundle cannot be opened or verified.
-pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<CliEnvelope, CliError> {
+pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandResult, CliError> {
     let reader = BundleReader::open(bundle).map_err(CliError::Bundle)?;
     reader.verify().map_err(CliError::Bundle)?;
 
@@ -95,7 +95,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<CliEnvelope, CliEr
         None
     };
 
-    let envelope = CliEnvelope::ok(
+    Ok(PresentedCommandResult::success(
         "inspect",
         CliOutput::Inspect {
             manifest_schema_version: manifest.schema_version.0,
@@ -117,9 +117,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<CliEnvelope, CliEr
             artifact_bytes,
             manifest_json,
         },
-    );
-    let _ = ExitCode::Success;
-    Ok(envelope)
+    ))
 }
 
 fn subject_label(subject: &eggbench_core::Subject) -> String {

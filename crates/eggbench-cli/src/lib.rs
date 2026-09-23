@@ -21,11 +21,13 @@ mod error;
 mod plan_input;
 mod workload_registry;
 
-pub use envelope::{CliEnvelope, CliOutput, CliResult, CliWarnings, ExitCode};
+pub use envelope::{
+    CliEnvelope, CliOutput, CliResult, CliWarnings, ExitCode, PresentedCommandResult,
+};
 pub use error::{CliError, CliFailure};
 pub use workload_registry::{
-    BuiltinWorkloadExecutor, DriverInventoryEntry, NoProductionAdapter, WorkloadDescriptor,
-    WorkloadRegistry,
+    BuiltinWorkloadExecutor, DriverInventoryEntry, NoProductionAdapter, QualificationRuntime,
+    WorkloadDescriptor, WorkloadRegistry, WorkloadRuntime,
 };
 
 use std::path::PathBuf;
@@ -94,13 +96,16 @@ impl CommandOptions {
     }
 }
 
-/// Execute a parsed CLI command, producing a [`CliEnvelope`] suitable for
-/// presentation by the binary or by integration tests.
+/// Execute a parsed CLI command, producing a [`PresentedCommandResult`]
+/// pairing the machine [`CliEnvelope`] with its process-exit [`ExitCode`].
 ///
-/// # Errors
-/// Returns [`CliError`] when command execution fails.
-pub async fn execute(command: Command, options: CommandOptions) -> Result<CliEnvelope, CliError> {
-    match command {
+/// The envelope remains the machine compatibility surface; the exit code is
+/// process metadata. Presentation must use the attached code and never guess
+/// it from `ok` alone. `CliError` failures are converted with the same
+/// mapping so direct error conversion yields the identical structure.
+pub async fn execute(command: Command, options: CommandOptions) -> PresentedCommandResult {
+    let label = command_label(&command);
+    let outcome: Result<PresentedCommandResult, CliError> = match command {
         Command::Validate { plan, input_format } => commands::validate::run(&plan, input_format),
         Command::Doctor { plan, input_format } => {
             commands::doctor::run(&plan, input_format, options)
@@ -114,5 +119,57 @@ pub async fn execute(command: Command, options: CommandOptions) -> Result<CliEnv
             bundle,
             emit_manifest_json,
         } => commands::inspect::run(&bundle, emit_manifest_json),
+    };
+    match outcome {
+        Ok(presented) => presented,
+        Err(error) => {
+            let failure = error.into_failure();
+            PresentedCommandResult::failure(label, &failure)
+        }
     }
+}
+
+fn command_label(command: &Command) -> &'static str {
+    match command {
+        Command::Validate { .. } => "validate",
+        Command::Doctor { .. } => "doctor",
+        Command::Run { .. } => "run",
+        Command::Inspect { .. } => "inspect",
+    }
+}
+
+/// Qualification/test seam: `doctor` with an explicit driver inventory.
+///
+/// Production uses [`execute`]; qualification tests inject the fake inventory
+/// explicitly. No public production flag selects the fake path.
+pub fn commands_doctor_run_with_registry(
+    plan: &std::path::Path,
+    input_format: Option<InputFormat>,
+    inventory: &[DriverInventoryEntry],
+) -> Result<PresentedCommandResult, CliError> {
+    commands::doctor::run_with_registry(plan, input_format, inventory)
+}
+
+/// Qualification/test seam: `run` with an explicitly injected fake workload.
+///
+/// Not used by the production binary. The `signal` future deterministically
+/// triggers M002 cancellation in tests; production drivers would pass a
+/// Ctrl-C listener instead.
+pub async fn commands_run_with_qualification(
+    plan: &std::path::Path,
+    input_format: Option<InputFormat>,
+    bundle: &std::path::Path,
+    options: CommandOptions,
+    fake: eggbench_runner::test_support::FakeWorkload,
+    signal: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<PresentedCommandResult, CliError> {
+    commands::r#run::run_with_qualification(plan, input_format, bundle, options, fake, signal).await
+}
+
+/// Test seam for the SIGINT forwarding helper.
+pub async fn commands_run_forward_signal(
+    cancel: tokio_util::sync::CancellationToken,
+    signal: impl std::future::Future<Output = ()>,
+) {
+    commands::r#run::forward_signal(cancel, signal).await;
 }

@@ -1,9 +1,15 @@
-//! Built-in workload driver registry.
+//! Workload driver registry with an explicit production/qualification split.
 //!
-//! M003 does not register a production workload adapter. The CLI exposes a
-//! single deterministic `FakeWorkload` adapter used for end-to-end
-//! qualification; it is not a real load generator. Production adapters
-//! belong to External Oracles / Eggstack Integrations milestones.
+//! Production `eggbench` registers no workload adapter at this milestone:
+//! [`WorkloadRegistry::production`] (and the legacy [`WorkloadRegistry::with_builtin`]
+//! alias) return an empty registry, so `run` fails before managed startup
+//! with a stable `missing_driver`/`unsupported_workload` category.
+//!
+//! Deterministic qualification uses [`WorkloadRegistry::with_qualification_fake`]
+//! (or [`QualificationRuntime`]) to inject the `FakeWorkload` descriptor and
+//! executor explicitly. That path is never used by `main.rs` and never
+//! appears in production help or the default driver inventory. Production
+//! adapters belong to External Oracles / Eggstack Integrations milestones.
 
 use eggbench_core::{DriverCategory, DriverDescriptor, LoadMode, Name};
 use eggbench_runner::test_support::FakeWorkload;
@@ -69,17 +75,124 @@ pub enum NoProductionAdapter {
 }
 
 /// In-memory registry of available workload drivers.
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct WorkloadRegistry {
     drivers: BTreeMap<String, WorkloadDescriptor>,
 }
 
+/// Minimal workload-runtime seam separating production and qualification.
+///
+/// Production returns only real compiled/registered adapters (empty at this
+/// milestone). Qualification registers the deterministic fake descriptor and
+/// can build its executor. A smaller injection seam with the same invariant
+/// would also satisfy the corrective.
+pub trait WorkloadRuntime {
+    /// Stable inventory view of registered drivers.
+    fn inventory(&self) -> Vec<DriverInventoryEntry>;
+    /// Canonical descriptors used for plan resolution.
+    fn driver_descriptors(&self) -> Vec<eggbench_core::DriverDescriptor>;
+    /// True when at least one workload driver is registered.
+    fn has_workload_driver(&self) -> bool;
+}
+
+/// Production runtime: no synthetic driver unless a real adapter is compiled
+/// in (none at this milestone).
+#[derive(Debug, Default, Clone)]
+pub struct ProductionRuntime {
+    registry: WorkloadRegistry,
+}
+
+impl ProductionRuntime {
+    /// Empty production registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            registry: WorkloadRegistry::production(),
+        }
+    }
+}
+
+impl WorkloadRuntime for ProductionRuntime {
+    fn inventory(&self) -> Vec<DriverInventoryEntry> {
+        self.registry.inventory()
+    }
+
+    fn driver_descriptors(&self) -> Vec<eggbench_core::DriverDescriptor> {
+        self.registry.descriptors()
+    }
+
+    fn has_workload_driver(&self) -> bool {
+        self.registry.has_workload_driver()
+    }
+}
+
+/// Qualification/test runtime: deterministic fake descriptor plus executor.
+///
+/// Never used by `main.rs`. Test and qualification harnesses inject this
+/// explicitly; no public production flag selects it.
+#[derive(Debug, Default, Clone)]
+pub struct QualificationRuntime {
+    registry: WorkloadRegistry,
+}
+
+impl QualificationRuntime {
+    /// Registry with the deterministic `fake-load` descriptor.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            registry: WorkloadRegistry::with_qualification_fake(),
+        }
+    }
+
+    /// Build the qualification executor wrapping the given fake workload.
+    #[must_use]
+    pub fn workload_executor(inner: FakeWorkload) -> BuiltinWorkloadExecutor {
+        BuiltinWorkloadExecutor::new(inner)
+    }
+}
+
+impl WorkloadRuntime for QualificationRuntime {
+    fn inventory(&self) -> Vec<DriverInventoryEntry> {
+        self.registry.inventory()
+    }
+
+    fn driver_descriptors(&self) -> Vec<eggbench_core::DriverDescriptor> {
+        self.registry.descriptors()
+    }
+
+    fn has_workload_driver(&self) -> bool {
+        self.registry.has_workload_driver()
+    }
+}
+
 impl WorkloadRegistry {
-    /// Create a registry with the M003 default state: a deterministic fake
-    /// workload registered for qualification. The fake is not a production
-    /// adapter.
+    /// Production registry state: no synthetic workload driver.
+    ///
+    /// At this milestone the set of real compiled production adapters is
+    /// empty, so `doctor` reports `has_workload_driver=false` and `run`
+    /// fails before managed startup.
+    #[must_use]
+    pub fn production() -> Self {
+        Self::default()
+    }
+
+    /// Legacy constructor preserved for call-site compatibility.
+    ///
+    /// Returns the production (empty) registry. Qualification harnesses must
+    /// use [`Self::with_qualification_fake`] explicitly.
     #[must_use]
     pub fn with_builtin() -> Self {
+        Self::production()
+    }
+
+    /// Qualification-only registry with the deterministic `fake-load`
+    /// descriptor registered.
+    ///
+    /// Not used by the production binary. Injected explicitly by tests and
+    /// qualification harnesses; it never appears in production help or the
+    /// default driver inventory.
+    #[must_use]
+    pub fn with_qualification_fake() -> Self {
         let mut registry = Self::default();
         registry.register(WorkloadDescriptor {
             name: "fake-load".to_owned(),
@@ -122,14 +235,27 @@ impl WorkloadRegistry {
     pub fn has_workload_driver(&self) -> bool {
         !self.drivers.is_empty()
     }
+
+    /// Canonical descriptors used for plan resolution, in inventory order.
+    #[must_use]
+    pub fn descriptors(&self) -> Vec<eggbench_core::DriverDescriptor> {
+        self.inventory()
+            .iter()
+            .map(|entry| entry.descriptor.to_descriptor())
+            .collect()
+    }
+
+    /// Reset the registry to the empty production state.
+    pub fn reset_registry(&mut self) {
+        self.drivers.clear();
+    }
 }
 
-/// Wraps a [`FakeWorkload`] in an `Arc<Mutex<...>>` and presents it as a
-/// `WorkloadExecutor` for qualification runs.
+/// Qualification-only executor wrapping a [`FakeWorkload`].
 ///
-/// The M003 CLI uses this executor only when the caller explicitly selects
-/// the deterministic qualification path; production CLI usage reports
-/// `unsupported_capability` instead.
+/// Never constructed by the production binary. Qualification harnesses inject
+/// it explicitly through [`QualificationRuntime::workload_executor`]; the
+/// production `run` path fails before it could reach this executor.
 #[derive(Clone)]
 pub struct BuiltinWorkloadExecutor {
     inner: Arc<Mutex<FakeWorkload>>,
@@ -172,11 +298,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_registry_contains_fake_load() {
+    fn production_registry_contains_no_fake_driver() {
+        let registry = WorkloadRegistry::production();
+        assert!(!registry.has_workload_driver());
+        assert!(registry.default_workload().is_none());
+        assert!(registry.inventory().is_empty());
+        assert!(
+            !registry
+                .inventory()
+                .iter()
+                .any(|entry| entry.descriptor.name == "fake-load")
+        );
+    }
+
+    #[test]
+    fn legacy_builtin_constructor_is_production_empty() {
         let registry = WorkloadRegistry::with_builtin();
+        assert!(!registry.has_workload_driver());
+        assert!(
+            !registry
+                .inventory()
+                .iter()
+                .any(|entry| entry.descriptor.name == "fake-load")
+        );
+    }
+
+    #[test]
+    fn qualification_registry_injects_fake_load() {
+        let registry = WorkloadRegistry::with_qualification_fake();
         assert!(registry.has_workload_driver());
         assert_eq!(registry.default_workload().unwrap().name, "fake-load");
         assert_eq!(registry.inventory().len(), 1);
+    }
+
+    #[test]
+    fn production_runtime_reports_no_driver() {
+        let runtime = ProductionRuntime::new();
+        assert!(!runtime.has_workload_driver());
+        assert!(runtime.inventory().is_empty());
+        assert!(runtime.driver_descriptors().is_empty());
+    }
+
+    #[test]
+    fn qualification_runtime_reports_fake_driver() {
+        let runtime = QualificationRuntime::new();
+        assert!(runtime.has_workload_driver());
+        assert_eq!(runtime.inventory().len(), 1);
+        assert_eq!(runtime.driver_descriptors().len(), 1);
     }
 
     #[test]

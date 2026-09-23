@@ -282,10 +282,7 @@ fn os_version_label() -> Option<String> {
     }
     #[cfg(target_os = "windows")]
     {
-        Some(format!(
-            "windows {}",
-            kernel_release().unwrap_or_else(|| "unknown".to_owned())
-        ))
+        kernel_release().map(|release| format!("windows {release}"))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
@@ -315,6 +312,7 @@ fn cpu_model() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(target_os = "linux")]
 fn cpuinfo_logical_count() -> Option<usize> {
     let raw = std::fs::read_to_string("/proc/cpuinfo").ok()?;
     let mut logical = 0usize;
@@ -359,7 +357,7 @@ fn cpu_logical_count() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let value = run_collect(["sysctl", "-n", "hw.ncpu"]).ok();
-        value.and_then(|raw| usize::from_str(raw.trim()).ok().map(|v| v.to_string()))
+        value.and_then(|raw| raw.trim().parse::<usize>().ok().map(|v| v.to_string()))
     }
     #[cfg(target_os = "windows")]
     {
@@ -372,6 +370,7 @@ fn cpu_logical_count() -> Option<String> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn parse_cpu_range_count(value: &str) -> usize {
     let mut total = 0usize;
     for part in value.split(',') {
@@ -441,7 +440,7 @@ fn cpu_physical_count() -> Option<String> {
     {
         run_collect(["sysctl", "-n", "hw.physicalcpu"])
             .ok()
-            .and_then(|raw| usize::from_str(raw.trim()).ok().map(|v| v.to_string()))
+            .and_then(|raw| raw.trim().parse::<usize>().ok().map(|v| v.to_string()))
     }
     #[cfg(target_os = "windows")]
     {
@@ -521,7 +520,10 @@ fn total_memory_bytes() -> Option<String> {
     }
 }
 
-fn read_cpuinfo_field(key: &str) -> Option<String> {
+fn read_cpuinfo_field(
+    #[cfg(target_os = "linux")] key: &str,
+    #[cfg(not(target_os = "linux"))] _key: &str,
+) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         let raw = std::fs::read_to_string("/proc/cpuinfo").ok()?;
@@ -541,11 +543,11 @@ fn read_cpuinfo_field(key: &str) -> Option<String> {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = key;
         None
     }
 }
 
+#[cfg(target_os = "linux")]
 fn read_trimmed(path: &str) -> Result<String, std::io::Error> {
     let raw = fs::read_to_string(Path::new(path))?;
     Ok(raw.trim().to_owned())
@@ -623,10 +625,26 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn parse_cpu_range_count_handles_union_and_single() {
         assert_eq!(parse_cpu_range_count("0-3"), 4);
         assert_eq!(parse_cpu_range_count("0-3,5,7-9"), 8);
         assert_eq!(parse_cpu_range_count(""), 0);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_missing_version_stays_absent() {
+        // Windows cannot truthfully report a version here without a real OS
+        // version API; the field must stay absent rather than fabricated.
+        assert_eq!(os_version_label(), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_cpuinfo_helper_ignores_key_without_unused_warning() {
+        // `read_cpuinfo_field` on macOS uses sysctl and cfg-ignores its key.
+        let _ = read_cpuinfo_field("model name");
     }
 
     #[test]

@@ -11,7 +11,7 @@ eggbench run      <plan> <bundle>  # full lifecycle, finalized .eggb bundle
 eggbench inspect  <bundle>    # open, verify, and summarize a finalized bundle
 ```
 
-The CLI ships with a deterministic qualification workload adapter. Production traffic generators (for example `oha`, `h2load`, `Eggfetch`) belong to External Oracles / Eggstack Integrations milestones.
+Production `eggbench run` is substrate-only until an External Oracles / Eggstack driver lands: the production workload registry is empty, so `run` fails before managed startup with a stable capability category. A deterministic fake workload remains injectable in tests and qualification harnesses only. Production traffic generators (for example `oha`, `h2load`, `Eggfetch`) belong to External Oracles / Eggstack Integrations milestones.
 
 Measurement M001 normalizes every measured trial into `trials/NNN/metrics.json`: one `observed`/`missing`/`invalid` record per requested metric, with explicit units, direction, aggregation, and provenance. Trial — not request — is the comparison unit. No baseline comparison or verdict is implemented yet.
 

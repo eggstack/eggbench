@@ -1,9 +1,13 @@
 //! Thin CLI binary: parses args, dispatches commands, writes JSON to stdout
 //! when requested, and human progress/diagnostics to stderr.
+//!
+//! Production `eggbench` registers no workload adapter: `run` fails before
+//! managed startup with a stable capability category. Exit status exactly
+//! matches the documented CLI result class in both JSON and human modes.
 
 use clap::{Parser, Subcommand};
 use eggbench_cli::{
-    CliEnvelope, CliFailure, Command, CommandOptions, ExitCode, InputFormat, execute,
+    CliFailure, Command, CommandOptions, ExitCode, InputFormat, PresentedCommandResult, execute,
 };
 use std::io::Write;
 use std::path::PathBuf;
@@ -79,28 +83,14 @@ impl From<InputFormatArg> for InputFormat {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> StdExitCode {
     let cli = Cli::parse();
-    let cli_label = command_label(&cli.command);
     let options = CommandOptions {
         json: cli.json,
         quiet: cli.quiet,
     };
     let command = build_command(cli.command);
 
-    let envelope = match execute(command, options).await {
-        Ok(envelope) => envelope,
-        Err(failure) => return exit_with_failure(&cli_label, &failure.into_failure(), options),
-    };
-    present(&envelope, options);
-    StdExitCode::SUCCESS
-}
-
-fn command_label(command: &CliCommand) -> String {
-    match command {
-        CliCommand::Validate { .. } => "validate".to_owned(),
-        CliCommand::Doctor { .. } => "doctor".to_owned(),
-        CliCommand::Run { .. } => "run".to_owned(),
-        CliCommand::Inspect { .. } => "inspect".to_owned(),
-    }
+    let presented = execute(command, options).await;
+    present(&presented, options)
 }
 
 fn build_command(command: CliCommand) -> Command {
@@ -132,10 +122,20 @@ fn build_command(command: CliCommand) -> Command {
     }
 }
 
-fn present(envelope: &CliEnvelope, options: CommandOptions) {
+/// Write command output and return the process status.
+///
+/// The numeric status is taken from [`PresentedCommandResult::exit_code`] in
+/// both JSON and human modes so the same outcome yields the same code
+/// regardless of presentation. Only `main` converts this into the final
+/// process status, which keeps binary behavior testable.
+fn present(presented: &PresentedCommandResult, options: CommandOptions) -> StdExitCode {
+    let envelope = &presented.envelope;
+    let code = u8::try_from(presented.exit_code.code()).unwrap_or(1);
     if options.json {
-        let body = match envelope.to_pretty_json() {
-            Ok(json) => json,
+        match envelope.to_pretty_json() {
+            Ok(body) => {
+                println!("{body}");
+            }
             Err(error) => {
                 let failure = CliFailure::new(
                     "internal",
@@ -143,18 +143,16 @@ fn present(envelope: &CliEnvelope, options: CommandOptions) {
                     ExitCode::Internal,
                 );
                 let _ = writeln!(std::io::stderr(), "eggbench: {}", failure.detail);
-                std::process::exit(failure.exit_code.code());
+                return StdExitCode::from(1);
             }
-        };
-        println!("{body}");
-        return;
+        }
+        return StdExitCode::from(code);
     }
 
     if envelope.ok {
         if !options.quiet {
             let _ = writeln!(std::io::stderr(), "eggbench: {} ok", envelope.command);
         }
-        std::process::exit(ExitCode::Success.code());
     } else if let Some(error) = &envelope.error {
         let _ = writeln!(
             std::io::stderr(),
@@ -163,15 +161,13 @@ fn present(envelope: &CliEnvelope, options: CommandOptions) {
             error.category,
             error.detail
         );
-        std::process::exit(ExitCode::CapabilityPreflight.code());
     } else {
-        std::process::exit(ExitCode::Internal.code());
+        let _ = writeln!(
+            std::io::stderr(),
+            "eggbench: {} failed [internal] missing error payload",
+            envelope.command
+        );
+        return StdExitCode::from(1);
     }
-}
-
-fn exit_with_failure(command: &str, failure: &CliFailure, options: CommandOptions) -> StdExitCode {
-    let envelope = CliEnvelope::fail(command, failure);
-    present(&envelope, options);
-    let code = u8::try_from(failure.exit_code.code()).unwrap_or(1);
     StdExitCode::from(code)
 }
