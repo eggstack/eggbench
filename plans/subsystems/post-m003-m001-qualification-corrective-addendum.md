@@ -1,6 +1,6 @@
 # Local Runner M003 + Measurement M001 — Post-Implementation Qualification Corrective Addendum
 
-Status: active
+Status: closed (C001 closed 2026-09-23; closure: `plans/closure/post-m003-m001-qualification-corrective/001-status.md`; hosted qualification: CI run `35808371805`, four lanes green)
 
 Repository audit baseline: `6c9a3906874618978e68a1f92e49c25f23b0ab1c`
 
@@ -97,7 +97,7 @@ Implementation plan:
 
 - `plans/implementation/post-m003-m001-qualification-corrective/001-cli-truthfulness-portability-and-hosted-qualification.md`
 
-Status: ready.
+Status: closed (see closure record above).
 
 Closing C001:
 
