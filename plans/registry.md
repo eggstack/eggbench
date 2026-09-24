@@ -40,10 +40,11 @@ Canonical direction remains in:
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
+| post-M003 combined hosted qualification corrective | active | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 ready | CI run 36014465034 failed Linux/macOS Clippy and Windows schema-v2 fixture compilation |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 closed; M003 closed | Closures: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`), 003-status.md (commit `49a4105`) |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 closed (M001a + M001b) | Closures: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`), 001b-status.md (commit `a0ff206`) |
-| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed; M002 closed | Closures: plans/closure/external-oracles/001-status.md (commit `7afa054`), 002-status.md (commit `3384a89`); M003 netem future |
+| Measurement/comparison | conditionally closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 implementation-closed; M003 conditionally closed | Current-tip hosted qualification C001 must close; red run 36014465034 |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 implementation-closed; M002 plan-authorable | M001 hosted qualification pending cross-cutting C001; M002 implementation blocked until C001 closes |
+| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 implementation-closed; M003 future | M001/M002 hosted qualification pending cross-cutting C001; M003 implementation blocked until C001 closes |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -66,18 +67,13 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Measurement/comparison | M002 Baselines, comparability, and statistical gates | closed | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`) |
-| Measurement/comparison | M003 Paired/interleaved qualification | closed | plans/implementation/measurement-comparison/003-paired-interleaved-qualification.md | Closure: plans/closure/measurement-comparison/003-status.md (commit `49a4105`) |
-| External measurement oracles | M001 External command-driver substrate | closed | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Closure: plans/closure/external-oracles/001-status.md (commit `7afa054`) |
-| Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | closed | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | Closure: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`) |
-| Eggstack integrations | M001b Gregg host telemetry | closed | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | Closure: plans/closure/eggstack-integration/001b-status.md (commit `a0ff206`) |
+| post-M003 combined hosted qualification corrective | C001 Current-tip CI repair and closure reconciliation | ready | plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md | Only implementation-ready handoff; must restore a four-lane green current tip before new capability implementation |
 
 ## Authored but dependency-blocked implementation plans
 
-None currently. Eggstack M002 route/stream-fault topology is unblocked but
-has no authored implementation plan yet.
+No new capability implementation plan is dependency-ready.
 
-After External Oracles M001 closes, M001a and M001b may proceed in parallel if their runner/driver interface changes are reconciled rather than duplicated.
+Eggstack M002 route/stream-fault topology is ready for plan authoring/research but implementation is blocked on the hosted-qualification corrective. External Oracles M003 netem and security qualification remain blocked.
 
 ## Current execution order and dependency gates
 
@@ -118,35 +114,29 @@ Corrective C001 closed at
 `plans/closure/local-runner-m002-post-closure-corrective/001-status.md` and is fully qualified by hosted CI run `35797812233`, which passed Linux stable, Linux Rust 1.89 MSRV, macOS stable, and Windows stable supported-subset jobs.
 Historical M002 closure remains preserved; the corrective records the new defects and the evidence that proves cleanup is now mandatory.
 
-### Gate E — M003/M001 qualification corrective and comparison
+### Gate E — Comparison and current-tip hosted qualification
 
-Corrective C001 is closed (`plans/closure/post-m003-m001-qualification-corrective/001-status.md`):
-production fake removed, exit codes truthful and locked, SIGINT wired into
-M002 cancellation, macOS/Windows collectors cfg-correct, and fresh hosted
-run `35808371805` green on all four jobs. The earlier red run `35803742746`
-is superseded. Local Runner M003 is fully closed and Measurement M001 is
-hosted-qualified with its schemas untouched.
+The earlier post-M003/M001 corrective is closed and qualified by hosted run `35808371805`.
 
-Measurement M002 is closed at `plans/closure/measurement-comparison/002-status.md` (commit `80ff6d1`). Measurement M003 paired/interleaved qualification is closed at `plans/closure/measurement-comparison/003-status.md` (commit `49a4105`): predeclared alternating designs, arm/pair evidence, paired trial-level bootstrap policy v2, descriptive drift diagnostics, and `eggbench compare --paired`, with v1 behavior proven unchanged. ADR-0003 remains controlling: trial is the statistical unit; pair is the resampling unit only where the runner created pair identities. Practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
+Measurement M002 (`80ff6d1`) and Measurement M003 (`49a4105`) subsequently landed with local closure evidence. Their original closure records explicitly left four-lane hosted qualification outstanding. The first combined current-tip hosted run, `36014465034`, failed for narrow portability/configuration defects: stable Clippy rejects the M003 manual ceiling division on Linux/macOS, and a Windows-only ResolvedPlan fixture is missing the additive `paired` field. Default-feature CLI tests also expose two `unused_mut` warnings that must be cleared before rerun.
+
+The dependency-ready corrective is:
+
+`plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md`
+
+Until it closes, Measurement M003 is conditionally closed and the newer accumulated feature set is not release-qualified.
 
 ### Gate F — Drivers and integrations
 
-Measurement M002 and External Oracles M001 are both closed (commits
-`80ff6d1`, `7afa054`). Eggstack M001 is closed via M001a (`8426e08`) plus
-M001b (`a0ff206`).
+External Oracles M001 (`7afa054`) and M002 (`3384a89`) are implementation-closed. Eggstack M001 is implementation-closed through M001a (`8426e08`) and M001b (`a0ff206`). Their closure records explicitly note that hosted four-lane qualification was still outstanding.
 
-The next-round tracks now in progress or awaiting plans:
+The post-M003 hosted qualification corrective C001 supplies the combined current-tip hosted gate for these implemented layers without reopening driver or Eggstack semantics.
 
-- External Oracles M002 (oha/h2load/iperf3): closed
-  (`plans/closure/external-oracles/002-status.md`, commit `3384a89`);
-  netem stays in M003.
-- Measurement M003 paired/interleaved: closed
-  (`plans/closure/measurement-comparison/003-status.md`, commit `49a4105`).
-- Eggstack M002 (Eggress + Eggchaos): unblocked by M001 closure but has no
-  authored implementation plan yet; Eggress 1.0.10 is present locally while
-  Eggchaos/EggReplay/Eggprobe have no available seam (see sibling facts).
+After C001 closes:
 
-External Oracles M002 will add oha/h2load/iperf3 after the substrate closes. Eggress/Eggchaos, EggReplay/Eggprobe, and Eggsec remain later Eggstack milestones.
+- Eggstack M002 (Eggress + Eggchaos) may proceed to implementation after its own plan is authored;
+- External Oracles M003 remains the later netem milestone;
+- Eggstack M003/M004 remain sequenced behind M002 and security ownership requirements.
 
 ### Gate G — Security profiles
 
@@ -193,8 +183,10 @@ Before marking a plan ready, verify:
 10. machine-readable schema/version effects are explicit;
 11. closure evidence is sufficient to prove more than compilation.
 
-## Next handoffs
+## Next handoff
 
-No dependency-ready implementation plan is currently handed off.
-Eggstack M002 route/stream-fault topology is unblocked but has no authored
-implementation plan yet; External Oracles M003 netem remains future.
+The only dependency-ready implementation handoff is:
+
+`plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md`
+
+Eggstack M002 may be researched/planned in parallel, but no new capability implementation should land until C001 restores a four-lane green current tip and reconciles the accumulated closure qualification.
