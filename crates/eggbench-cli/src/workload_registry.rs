@@ -384,6 +384,172 @@ pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExe
     }
 }
 
+/// Build the production telemetry registry from the resolved plan.
+///
+/// For each telemetry request, the matching collector is constructed from
+/// the plan's external service config and the plan-declared metric
+/// intersection. Requests for unknown sources fail closed when required
+/// and warn-and-skip when optional.
+///
+/// Returns the registry plus CLI-level warnings for degraded optional
+/// telemetry. A required failure returns a human-readable reason before
+/// any managed startup.
+///
+/// # Errors
+/// Returns a reason when required telemetry cannot be constructed.
+pub fn production_telemetry_registry(
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<(eggbench_runner::TelemetryRegistry, Vec<(String, String)>), String> {
+    let mut registry = eggbench_runner::TelemetryRegistry::new();
+    let mut warnings = Vec::new();
+    for request in &resolved.telemetry {
+        match build_telemetry_collector(resolved, request) {
+            Ok(Some(collector)) => {
+                registry
+                    .register(collector)
+                    .map_err(|reason| format!("telemetry registry: {reason}"))?;
+            }
+            Ok(None) => {
+                warnings.push((
+                    "telemetry_disabled".to_owned(),
+                    format!(
+                        "optional telemetry source {} has no usable configuration; its metrics will normalize as missing",
+                        request.source.as_str()
+                    ),
+                ));
+            }
+            Err(reason) => {
+                if request.required {
+                    return Err(reason);
+                }
+                warnings.push(("telemetry_disabled".to_owned(), reason));
+            }
+        }
+    }
+    Ok((registry, warnings))
+}
+
+/// Build one collector for a telemetry request, or `None` when the source
+/// is unknown (optional warn-and-skip handled by the caller).
+#[allow(unused_variables)]
+fn build_telemetry_collector(
+    resolved: &eggbench_core::ResolvedPlan,
+    request: &eggbench_core::TelemetryRequest,
+) -> Result<Option<Box<dyn eggbench_runner::TelemetryCollector>>, String> {
+    #[cfg(feature = "gregg")]
+    {
+        if request.source.as_str() == eggbench_drivers::gregg::GREGG_SOURCE {
+            return Ok(Some(build_gregg_collector(resolved, request)?));
+        }
+    }
+    if request.required {
+        return Err(format!(
+            "no production collector for required telemetry source {}",
+            request.source.as_str()
+        ));
+    }
+    Ok(None)
+}
+
+/// Build the Gregg collector: single external named `gregg` service plus
+/// the plan-declared metric intersection.
+#[cfg(feature = "gregg")]
+fn build_gregg_collector(
+    resolved: &eggbench_core::ResolvedPlan,
+    request: &eggbench_core::TelemetryRequest,
+) -> Result<Box<dyn eggbench_runner::TelemetryCollector>, String> {
+    use eggbench_core::{Lifecycle, ServiceKind};
+
+    let mut endpoints = Vec::new();
+    for service in &resolved.topology {
+        if let ServiceKind::Named { service_type } = &service.kind
+            && service_type.as_str() == eggbench_drivers::gregg::GREGG_SOURCE
+            && service.lifecycle == Lifecycle::External
+        {
+            endpoints.push(service);
+        }
+    }
+    let service = match endpoints.as_slice() {
+        [service] => service,
+        [] => {
+            return Err(
+                "gregg telemetry requested but no external named gregg service declares an endpoint"
+                    .to_owned(),
+            );
+        }
+        _ => {
+            return Err(
+                "gregg telemetry allows exactly one external named gregg service".to_owned(),
+            );
+        }
+    };
+    let endpoint = service
+        .config
+        .get("endpoint")
+        .ok_or_else(|| "gregg service declares no endpoint config".to_owned())?;
+    // Validate loopback policy now so misconfiguration fails before startup.
+    eggbench_drivers::gregg::validate_endpoint(endpoint)
+        .map_err(|reason| format!("gregg {reason}: endpoint violates loopback policy"))?;
+    // Collect the plan-declared intersection: requested host metrics that
+    // the telemetry request fields cover.
+    let mut requested = Vec::new();
+    for metric in &resolved.metrics {
+        let name = metric.name.as_str();
+        if eggbench_drivers::gregg::host_metric_names()
+            .iter()
+            .any(|known| known == name)
+            && request.fields.iter().any(|field| field.as_str() == name)
+        {
+            requested.push(eggbench_drivers::gregg::RequestedHostMetric {
+                name: name.to_owned(),
+                unit: metric.unit.as_str().to_owned(),
+            });
+        }
+    }
+    let collector = eggbench_drivers::gregg::GreggCollector::new(endpoint, requested)
+        .map_err(|reason| format!("gregg collector: {reason}"))?;
+    Ok(Box::new(collector))
+}
+
+/// Validate Gregg endpoint config syntax for `doctor` (no network).
+///
+/// Returns a human-readable reason when the plan declares an external
+/// named `gregg` service whose endpoint violates loopback policy. Live
+/// health/status probing stays in `run` preflight; `doctor` never dials.
+///
+/// Returns `None` when no Gregg service is declared or the feature is off.
+#[must_use]
+pub fn gregg_endpoint_config_error(plan: &eggbench_core::ExperimentPlan) -> Option<String> {
+    #[cfg(feature = "gregg")]
+    {
+        use eggbench_core::{Lifecycle, ServiceKind};
+        for service in &plan.services {
+            if let ServiceKind::Named { service_type } = &service.kind
+                && service_type.as_str() == eggbench_drivers::gregg::GREGG_SOURCE
+                && service.lifecycle == Lifecycle::External
+            {
+                match service.config.get("endpoint") {
+                    None => {
+                        return Some("gregg service declares no endpoint config".to_owned());
+                    }
+                    Some(endpoint) => {
+                        if let Err(reason) = eggbench_drivers::gregg::validate_endpoint(endpoint) {
+                            return Some(format!(
+                                "gregg {reason}: endpoint violates loopback policy"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(feature = "gregg"))]
+    {
+        let _ = plan;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,7 +613,12 @@ mod tests {
         {
             assert!(runtime.has_workload_driver());
             assert_eq!(runtime.inventory().len(), 1);
-            assert_eq!(runtime.driver_descriptors().len(), 2);
+            let mut expected = 2;
+            #[cfg(feature = "gregg")]
+            {
+                expected += 1;
+            }
+            assert_eq!(runtime.driver_descriptors().len(), expected);
         }
     }
 

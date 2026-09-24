@@ -40,6 +40,7 @@ mod service;
 mod session;
 mod spec;
 mod subject;
+mod telemetry;
 
 pub use bundle::{stage_lifecycle_logs, stage_lifecycle_metadata, stage_runtime_topology};
 pub use environment::{EnvironmentError, LocalEnvironmentCollector};
@@ -63,11 +64,18 @@ pub use service::{
     RuntimeBindings, RuntimeTopology, ServiceAdapterRegistry, ServiceOwnership,
     ServiceStartRequest, ServiceTopologyEntry,
 };
+pub use telemetry::{
+    FakeTelemetryCollector, FakeTelemetryHandle, MAX_TELEMETRY_DETAIL_LEN, TelemetryCapability,
+    TelemetryCollector, TelemetryError, TelemetryFuture, TelemetryOutput,
+    TelemetryPreflightContext, TelemetryRegistry, TelemetryTrialContext,
+};
 
 /// Deterministic adapters for runner integration tests and qualification.
 pub mod test_support {
     /// Fake workload with configurable delay, failure, timeout, and drain behavior.
     pub use crate::orchestration::FakeWorkload;
+    /// Fake telemetry collector recording preflight/start/stop/drain calls.
+    pub use crate::telemetry::{FakeTelemetryCollector, FakeTelemetryHandle};
 }
 pub use prepare::{
     BundlePreparation, PrepareError, SubjectSnapshotError, build_subject_snapshot,

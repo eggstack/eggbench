@@ -255,6 +255,15 @@ pub struct RawMetricObservation {
     /// Optional source field/key label.
     #[serde(default)]
     pub source_field: Option<String>,
+    /// Optional producer label override for this observation. When `None`
+    /// the call-level producer applies. Lets telemetry observations carry
+    /// their own producer (for example `gregg`) through a combined
+    /// normalization call without changing the `TrialMetrics` v1 output.
+    #[serde(default)]
+    pub producer: Option<String>,
+    /// Optional producer version override, honored only with `producer`.
+    #[serde(default)]
+    pub producer_version: Option<String>,
     /// Raw artifact names returned by the same invocation.
     #[serde(default)]
     pub raw_artifacts: Vec<String>,
@@ -803,6 +812,32 @@ fn normalize_one_request(
             normalization: NORMALIZATION_METHOD_V1.to_owned(),
             raw_artifacts,
         };
+    // Provenance honoring a per-observation producer override (telemetry
+    // observations through a combined call). An override without a valid
+    // label is a structural error; a version override travels only with its
+    // label and is length-checked by provenance validation.
+    let observation_provenance = |raw: &RawMetricObservation,
+                                  raw_artifacts: Vec<ArtifactPath>|
+     -> Result<MetricProvenance, BundleError> {
+        let (producer, producer_version) = match &raw.producer {
+            None => (producer.clone(), input.producer_version.map(str::to_owned)),
+            Some(label) => (
+                Name::new(label).map_err(|error| {
+                    BundleError::ManifestParse(format!(
+                        "invalid observation producer label: {error}"
+                    ))
+                })?,
+                raw.producer_version.clone(),
+            ),
+        };
+        Ok(MetricProvenance {
+            producer,
+            producer_version,
+            source_field: raw.source_field.clone(),
+            normalization: NORMALIZATION_METHOD_V1.to_owned(),
+            raw_artifacts,
+        })
+    };
 
     let Some(group) = raw else {
         return Ok((
@@ -860,10 +895,17 @@ fn normalize_one_request(
     }
 
     if group.len() != 1 {
-        let provenance = base_provenance(
-            group.first().and_then(|first| first.source_field.clone()),
-            Vec::new(),
-        );
+        // Cross-producer duplicates attribute to the overriding producer
+        // when one is present, independent of input order; the invalid
+        // marking itself is what preserves the collision policy.
+        let overridden = group.iter().find(|raw| raw.producer.is_some());
+        let provenance = match overridden {
+            Some(first) => observation_provenance(first, Vec::new())?,
+            None => base_provenance(
+                group.first().and_then(|first| first.source_field.clone()),
+                Vec::new(),
+            ),
+        };
         return Ok((
             ObservationState::Invalid {
                 reason: InvalidReason::DuplicateObservation,
@@ -881,7 +923,7 @@ fn normalize_one_request(
     let raw = group[0];
     raw.aggregation.validate()?;
     if raw.unit.as_str() != request.unit.as_str() {
-        let provenance = base_provenance(raw.source_field.clone(), Vec::new());
+        let provenance = observation_provenance(raw, Vec::new())?;
         return Ok((
             ObservationState::Invalid {
                 reason: InvalidReason::UnitMismatch,
@@ -896,7 +938,7 @@ fn normalize_one_request(
         ));
     }
     if !raw.value.is_finite() {
-        let provenance = base_provenance(raw.source_field.clone(), Vec::new());
+        let provenance = observation_provenance(raw, Vec::new())?;
         return Ok((
             ObservationState::Invalid {
                 reason: InvalidReason::NonFinite,
@@ -907,7 +949,7 @@ fn normalize_one_request(
         ));
     }
     if is_ratio_metric(request.name.as_str()) && !(0.0..=1.0).contains(&raw.value) {
-        let provenance = base_provenance(raw.source_field.clone(), Vec::new());
+        let provenance = observation_provenance(raw, Vec::new())?;
         return Ok((
             ObservationState::Invalid {
                 reason: InvalidReason::DomainError,
@@ -924,7 +966,7 @@ fn normalize_one_request(
         && let Some(expected) = builtin.aggregation
         && !aggregation_matches(expected, raw.aggregation)
     {
-        let provenance = base_provenance(raw.source_field.clone(), Vec::new());
+        let provenance = observation_provenance(raw, Vec::new())?;
         return Ok((
             ObservationState::Invalid {
                 reason: InvalidReason::AggregationMismatch,
@@ -944,7 +986,7 @@ fn normalize_one_request(
         if let Some(path) = input.artifact_map.get(name) {
             resolved.push(path.clone());
         } else {
-            let provenance = base_provenance(raw.source_field.clone(), Vec::new());
+            let provenance = observation_provenance(raw, Vec::new())?;
             return Ok((
                 ObservationState::Invalid {
                     reason: InvalidReason::MalformedSourceReference,
@@ -955,7 +997,7 @@ fn normalize_one_request(
             ));
         }
     }
-    let provenance = base_provenance(raw.source_field.clone(), resolved);
+    let provenance = observation_provenance(raw, resolved)?;
     Ok((
         ObservationState::Observed { value: raw.value },
         raw.aggregation,
@@ -1100,6 +1142,8 @@ mod tests {
             value: 12_345.0,
             aggregation: Aggregation::Rate,
             source_field: Some("requests_per_second".to_owned()),
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         }];
         let map = BTreeMap::new();
@@ -1127,6 +1171,8 @@ mod tests {
             value: 0.0,
             aggregation: Aggregation::Percentile { basis_points: 9900 },
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         }];
         let map = BTreeMap::new();
@@ -1164,6 +1210,8 @@ mod tests {
             value: f64::NAN,
             aggregation: Aggregation::Percentile { basis_points: 9900 },
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         }];
         let normalized =
@@ -1183,6 +1231,8 @@ mod tests {
             value: 1.0,
             aggregation: Aggregation::Percentile { basis_points: 9900 },
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         }];
         let normalized =
@@ -1207,6 +1257,8 @@ mod tests {
                 value: 1.0,
                 aggregation: Aggregation::Percentile { basis_points: 9900 },
                 source_field: None,
+                producer: None,
+                producer_version: None,
                 raw_artifacts: Vec::new(),
             },
             RawMetricObservation {
@@ -1215,6 +1267,8 @@ mod tests {
                 value: 2.0,
                 aggregation: Aggregation::Percentile { basis_points: 9900 },
                 source_field: None,
+                producer: None,
+                producer_version: None,
                 raw_artifacts: Vec::new(),
             },
         ];
@@ -1236,6 +1290,117 @@ mod tests {
     }
 
     #[test]
+    fn per_observation_producer_override_attributes_telemetry() {
+        let metrics = [request("host_cpu_percent", "percent")];
+        let observations = [RawMetricObservation {
+            name: "host_cpu_percent".to_owned(),
+            unit: "percent".to_owned(),
+            value: 12.5,
+            aggregation: Aggregation::Mean,
+            source_field: Some("v2.cpu.usage_pct".to_owned()),
+            producer: Some("gregg".to_owned()),
+            producer_version: Some("1.0.14".to_owned()),
+            raw_artifacts: Vec::new(),
+        }];
+        let map = BTreeMap::new();
+        let normalized = normalize_trial_metrics(&input(
+            TrialId::new(1).unwrap(),
+            &metrics,
+            &observations,
+            &map,
+        ))
+        .unwrap();
+        let observation = &normalized.observations[0];
+        assert!(matches!(
+            observation.state,
+            ObservationState::Observed { .. }
+        ));
+        assert_eq!(observation.provenance.producer.as_str(), "gregg");
+        assert_eq!(
+            observation.provenance.producer_version.as_deref(),
+            Some("1.0.14")
+        );
+        assert_eq!(
+            observation.provenance.source_field.as_deref(),
+            Some("v2.cpu.usage_pct")
+        );
+    }
+
+    #[test]
+    fn cross_producer_duplicates_stay_invalid() {
+        // A workload observation and a telemetry observation for one
+        // requested metric must not silently select one producer.
+        let metrics = [request("host_cpu_percent", "percent")];
+        let observations = [
+            RawMetricObservation {
+                name: "host_cpu_percent".to_owned(),
+                unit: "percent".to_owned(),
+                value: 1.0,
+                aggregation: Aggregation::Mean,
+                source_field: None,
+                producer: None,
+                producer_version: None,
+                raw_artifacts: Vec::new(),
+            },
+            RawMetricObservation {
+                name: "host_cpu_percent".to_owned(),
+                unit: "percent".to_owned(),
+                value: 2.0,
+                aggregation: Aggregation::Mean,
+                source_field: None,
+                producer: Some("gregg".to_owned()),
+                producer_version: None,
+                raw_artifacts: Vec::new(),
+            },
+        ];
+        let map = BTreeMap::new();
+        let normalized = normalize_trial_metrics(&input(
+            TrialId::new(1).unwrap(),
+            &metrics,
+            &observations,
+            &map,
+        ))
+        .unwrap();
+        assert!(matches!(
+            normalized.observations[0].state,
+            ObservationState::Invalid {
+                reason: InvalidReason::DuplicateObservation,
+                ..
+            }
+        ));
+        // The collision diagnostic attributes to the overriding producer.
+        assert_eq!(
+            normalized.observations[0].provenance.producer.as_str(),
+            "gregg"
+        );
+    }
+
+    #[test]
+    fn invalid_producer_override_is_structural() {
+        let metrics = [request("host_cpu_percent", "percent")];
+        let observations = [RawMetricObservation {
+            name: "host_cpu_percent".to_owned(),
+            unit: "percent".to_owned(),
+            value: 1.0,
+            aggregation: Aggregation::Mean,
+            source_field: None,
+            producer: Some(String::new()),
+            producer_version: None,
+            raw_artifacts: Vec::new(),
+        }];
+        let map = BTreeMap::new();
+        assert!(
+            normalize_trial_metrics(&input(
+                TrialId::new(1).unwrap(),
+                &metrics,
+                &observations,
+                &map,
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn observations_are_sorted_by_name() {
         let metrics = [
             request("throughput-x", "rps"),
@@ -1248,6 +1413,8 @@ mod tests {
                 value: 1.0,
                 aggregation: Aggregation::Direct,
                 source_field: None,
+                producer: None,
+                producer_version: None,
                 raw_artifacts: Vec::new(),
             },
             RawMetricObservation {
@@ -1256,6 +1423,8 @@ mod tests {
                 value: 2.0,
                 aggregation: Aggregation::Direct,
                 source_field: None,
+                producer: None,
+                producer_version: None,
                 raw_artifacts: Vec::new(),
             },
         ];
@@ -1293,6 +1462,8 @@ mod tests {
             value: 5.0,
             aggregation: Aggregation::Percentile { basis_points: 9900 },
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         }];
         let map = BTreeMap::new();
@@ -1325,6 +1496,8 @@ mod tests {
             value: 5.0,
             aggregation: Aggregation::Percentile { basis_points: 9900 },
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: vec!["ghost.bin".to_owned()],
         }];
         let map = BTreeMap::new();

@@ -17,6 +17,7 @@ const TARGETS: &[(&str, &str)] = &[
         "eggserve-primitives",
         "EGGBENCH_EGGSERVE_PRIMITIVES_VERSION",
     ),
+    ("gregg-protocol", "EGGBENCH_GREGG_PROTOCOL_VERSION"),
 ];
 
 fn main() {

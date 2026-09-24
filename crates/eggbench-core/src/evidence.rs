@@ -321,6 +321,8 @@ pub enum TrialExecutionStatus {
 pub enum TrialExecutionFailure {
     /// The workload adapter returned an operational error.
     WorkloadFailed,
+    /// A trial telemetry collector failed outside measured workload timing.
+    TelemetryFailed,
     /// The runner safety timeout expired.
     TimedOut,
     /// The invocation was cancelled.

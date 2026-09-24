@@ -78,6 +78,19 @@ version, ownership kind, adapter provenance, and non-secret bindings from
 retained session state after teardown. See
 [`eggstack-http.md`](../docs/eggstack-http.md).
 
+## Trial-synchronized telemetry collectors (Eggstack M001b)
+
+Workload adapters measure; telemetry collectors observe alongside through
+the object-safe `TelemetryCollector` seam (`telemetry.rs`): `preflight`
+before managed startup, `start_trial` before the measurement timer,
+`stop_trial` after the captured elapsed, `drain` in the cleanup tail.
+Collectors register by source label in a `TelemetryRegistry`; output
+reuses the shared artifact type and feeds the same normalization pipeline
+(per-observation producer overrides attribute telemetry metrics), staged
+under `trials/NNN/telemetry/` with collision checks. Telemetry never
+writes normalized `TrialMetrics` itself. See
+[`gregg-telemetry.md`](../docs/gregg-telemetry.md).
+
 ## Post-start cleanup contract
 
 Every terminal exit from `execute_run` that follows a successful managed

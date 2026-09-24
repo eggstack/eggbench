@@ -657,6 +657,8 @@ fn raw(
         value,
         aggregation,
         source_field: Some(source_field.to_owned()),
+        producer: None,
+        producer_version: None,
         raw_artifacts: raw_artifacts.to_vec(),
     }
 }

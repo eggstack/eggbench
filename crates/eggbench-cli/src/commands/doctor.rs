@@ -6,7 +6,9 @@ use crate::error::CliError;
 use crate::plan_input::load_plan;
 use crate::{
     CommandOptions, InputFormat,
-    workload_registry::{ProductionRuntime, WorkloadRegistry, WorkloadRuntime},
+    workload_registry::{
+        ProductionRuntime, WorkloadRegistry, WorkloadRuntime, gregg_endpoint_config_error,
+    },
 };
 use eggbench_core::{
     DefaultDriverPolicy, DriverCategory, EnvironmentFingerprint, LoadMode, Name, ResolutionOptions,
@@ -19,15 +21,17 @@ use std::path::Path;
 /// Run validate plus driver/capability/environment preflight checks without
 /// starting any managed process.
 ///
-/// Uses the production inventory, so without the `eggstack-http` feature the
-/// command completes truthfully reporting `has_workload_driver=false`.
+/// Resolves against the full production catalog (all driver categories),
+/// so service and telemetry descriptors participate exactly as in `run`.
+/// Without compiled adapters the command completes truthfully reporting
+/// `has_workload_driver=false`.
 pub fn run(
     plan: &Path,
     input_format: Option<InputFormat>,
     _options: CommandOptions,
 ) -> Result<PresentedCommandResult, CliError> {
     let runtime = ProductionRuntime::new();
-    run_with_registry(plan, input_format, &runtime.inventory())
+    run_with_descriptors(plan, input_format, &runtime.driver_descriptors())
 }
 
 /// Test/qualification seam with an explicit driver inventory.
@@ -39,15 +43,23 @@ pub fn run_with_registry(
     input_format: Option<InputFormat>,
     inventory: &[crate::workload_registry::DriverInventoryEntry],
 ) -> Result<PresentedCommandResult, CliError> {
-    let input = load_plan(plan, input_format)?;
-    let plan = input.plan;
-    let platform_label = platform_label();
-    let platform_supported = platform_support();
-
     let descriptors: Vec<_> = inventory
         .iter()
         .map(|entry| entry.descriptor.to_descriptor())
         .collect();
+    run_with_descriptors(plan, input_format, &descriptors)
+}
+
+/// Shared doctor flow over explicit canonical descriptors.
+fn run_with_descriptors(
+    plan: &Path,
+    input_format: Option<InputFormat>,
+    descriptors: &[eggbench_core::DriverDescriptor],
+) -> Result<PresentedCommandResult, CliError> {
+    let input = load_plan(plan, input_format)?;
+    let plan = input.plan;
+    let platform_label = platform_label();
+    let platform_supported = platform_support();
 
     let platform = Name::new(platform_label.clone()).map_err(|error| {
         CliError::Internal(format!(
@@ -72,7 +84,7 @@ pub fn run_with_registry(
     );
     options.required_capabilities = required_capabilities;
 
-    let resolved = eggbench_core::resolve_plan(&plan, &descriptors, &options);
+    let resolved = eggbench_core::resolve_plan(&plan, descriptors, &options);
 
     let environment = match LocalEnvironmentCollector.collect() {
         Ok(env) => Some(env),
@@ -86,22 +98,60 @@ pub fn run_with_registry(
         }
     };
 
-    let drivers: Vec<DriverSummary> = inventory
-        .iter()
-        .map(|entry| DriverSummary {
-            name: entry.descriptor.name.clone(),
-            category: format!("{:?}", entry.descriptor.to_descriptor().category),
-            default: entry.descriptor.default,
-            external_process: entry.descriptor.to_descriptor().external_process,
-            adapter_version: entry.descriptor.adapter_version.clone(),
-            upstream_name: entry.descriptor.upstream_name.clone(),
-            upstream_version: entry.descriptor.upstream_version.clone(),
-            capabilities: entry.descriptor.capabilities.clone(),
-        })
-        .collect();
+    let drivers: Vec<DriverSummary> = {
+        let mut summaries: Vec<DriverSummary> = descriptors
+            .iter()
+            .map(|descriptor| {
+                let mut capabilities: Vec<String> = descriptor
+                    .capabilities
+                    .iter()
+                    .map(|capability| format!("{capability:?}"))
+                    .collect();
+                capabilities.sort();
+                DriverSummary {
+                    name: descriptor.name.as_str().to_owned(),
+                    category: format!("{:?}", descriptor.category),
+                    default: descriptor.default,
+                    external_process: descriptor.external_process,
+                    adapter_version: descriptor.adapter_version.clone(),
+                    upstream_name: descriptor.upstream_name.clone(),
+                    upstream_version: descriptor.upstream_version.clone(),
+                    capabilities,
+                }
+            })
+            .collect();
+        summaries.sort_by(|left, right| left.name.cmp(&right.name));
+        summaries
+    };
 
-    let has_workload_driver = !inventory.is_empty();
+    let has_workload_driver = descriptors
+        .iter()
+        .any(|descriptor| descriptor.category == DriverCategory::Workload);
     let env_fields = environment.as_ref().map_or(Vec::new(), env_field_summaries);
+
+    // Config-syntax validation for declared Gregg endpoints (no network:
+    // live probing stays in `run` preflight).
+    if resolved.is_ok()
+        && let Some(reason) = gregg_endpoint_config_error(&plan)
+    {
+        let failure = CliFailure::new("telemetry_config", reason, ExitCode::CapabilityPreflight);
+        let mut envelope = CliEnvelope::ok(
+            "doctor",
+            CliOutput::Doctor {
+                resolved: false,
+                platform_supported,
+                drivers: drivers.clone(),
+                has_workload_driver,
+                environment_fields: env_fields.clone(),
+            },
+        );
+        envelope.ok = false;
+        envelope.error = Some(failure.to_payload());
+        return Ok(PresentedCommandResult {
+            envelope,
+            exit_code: failure.exit_code,
+        });
+    }
 
     match resolved {
         Ok(_) => Ok(PresentedCommandResult::success(

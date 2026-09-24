@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [features]
 default = []
 eggstack-http = ["eggbench-drivers/eggstack-http"]
+gregg = ["eggbench-drivers/gregg"]
 
 [dependencies]
 eggbench-core = { path = "../eggbench-core" }
@@ -32,6 +33,7 @@ nix = { version = "0.30", features = ["process", "signal"] }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

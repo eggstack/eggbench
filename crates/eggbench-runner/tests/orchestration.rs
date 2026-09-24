@@ -10,8 +10,8 @@ use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
     FailureCategory, InvocationKind, LocalSession, MapSecretProvider, OrchestrationError,
     PhaseEvent, PhaseKind, PlatformAdapter, PlatformSupport, ResetContext, ResetHook,
-    ResetRegistry, RunnerOptions, ServiceAdapterRegistry, UnixPlatform, WorkloadArtifact,
-    execute_run,
+    ResetRegistry, RunnerOptions, ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform,
+    WorkloadArtifact, execute_run,
 };
 use std::{
     collections::BTreeMap,
@@ -209,6 +209,7 @@ async fn schedules_warmup_trials_reset_cooldown_and_finalizes_separate_evidence(
         &resolved,
         &mut workload,
         &resets,
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -310,6 +311,7 @@ async fn later_trial_failure_preserves_earlier_trial_and_still_drains() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -357,6 +359,7 @@ async fn cancellation_during_measurement_records_entered_trial_and_runs_cleanup(
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -393,6 +396,7 @@ async fn cancellation_during_warmup_records_diagnostic_and_skips_trials() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -444,6 +448,7 @@ async fn cancellation_during_teardown_does_not_interrupt_service_cleanup() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -473,6 +478,7 @@ async fn missing_reset_hook_fails_preflight_before_start_or_drain() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -498,6 +504,7 @@ async fn cancellation_before_startup_does_not_fabricate_a_trial() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -526,6 +533,7 @@ async fn warmup_failure_stops_experiment_without_fabricating_a_trial() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -564,6 +572,7 @@ async fn reset_failure_keeps_completed_trial_and_stops_before_next_trial() {
         &resolved,
         &mut workload,
         &resets,
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -602,6 +611,7 @@ async fn cancellation_during_reset_never_enters_next_trial() {
         &resolved,
         &mut workload,
         &resets,
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -632,6 +642,7 @@ async fn cancellation_during_cooldown_prevents_next_trial_and_still_drains() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -662,6 +673,7 @@ async fn cancellation_during_drain_finishes_cleanup_and_marks_run_cancelled() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -687,6 +699,7 @@ async fn unknown_timeout_key_is_rejected_before_startup() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -710,6 +723,7 @@ async fn insufficient_evidence_bounds_fail_preflight_before_startup() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_with_bounds(temp.path(), 8, 512, 4 * 1024),
         &CancellationToken::new(),
     )
@@ -741,6 +755,7 @@ async fn measured_timeout_records_timed_out_trial_and_drains() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -779,6 +794,7 @@ async fn warmup_timeout_stops_before_any_measured_trial() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -814,6 +830,7 @@ async fn reset_timeout_retains_completed_trial_and_stops_next_trial() {
         &resolved,
         &mut workload,
         &resets,
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -839,6 +856,7 @@ async fn drain_failure_changes_only_otherwise_completed_run_to_failed() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -873,6 +891,7 @@ async fn drain_timeout_still_tears_down_and_preserves_trial_evidence() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -931,6 +950,7 @@ async fn unsafe_workload_artifact_name_after_measured_invocation_drains_and_tear
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -980,6 +1000,7 @@ async fn too_many_workload_artifacts_after_measured_invocation_drains_and_tears_
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1024,6 +1045,7 @@ async fn dynamic_workload_byte_overflow_after_preflight_passes_drains_and_tears_
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_with_bounds(temp.path(), 32, 8 * 1024, 32 * 1024),
         &CancellationToken::new(),
     )
@@ -1061,6 +1083,7 @@ async fn warmup_staging_failure_skips_measured_trials_and_still_drains() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1110,6 +1133,7 @@ async fn evidence_error_with_drain_failure_still_tears_down() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1163,6 +1187,7 @@ async fn evidence_error_with_teardown_failure_preserves_primary_cause() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1227,6 +1252,7 @@ async fn failed_evidence_staging_does_not_publish_final_bundle() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1253,6 +1279,7 @@ async fn persisted_phase_vector_equals_returned_phase_vector_on_success() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1313,6 +1340,7 @@ async fn finalization_event_is_terminalized_exactly_once() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1471,6 +1499,7 @@ async fn evidence_staging_failure_after_startup_still_cleans_up_adapter() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -1511,6 +1540,7 @@ async fn adapter_shutdown_failure_does_not_overwrite_workload_failure() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )

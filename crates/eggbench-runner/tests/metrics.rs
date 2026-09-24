@@ -9,7 +9,7 @@ use eggbench_core::{
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
     LocalSession, MapSecretProvider, OrchestrationError, ResetRegistry, RunnerOptions,
-    ServiceAdapterRegistry, UnixPlatform, WorkloadArtifact, execute_run,
+    ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform, WorkloadArtifact, execute_run,
 };
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -114,6 +114,8 @@ fn throughput_observation(value: f64) -> RawMetricObservation {
         value,
         aggregation: Aggregation::Rate,
         source_field: Some("requests_per_second".to_owned()),
+        producer: None,
+        producer_version: None,
         raw_artifacts: Vec::new(),
     }
 }
@@ -125,6 +127,8 @@ fn latency_p99_observation(value: f64) -> RawMetricObservation {
         value,
         aggregation: Aggregation::Percentile { basis_points: 9900 },
         source_field: Some("p99_ms".to_owned()),
+        producer: None,
+        producer_version: None,
         raw_artifacts: Vec::new(),
     }
 }
@@ -158,6 +162,7 @@ async fn measured_trial_stages_metrics_json_with_observed_values() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -216,6 +221,7 @@ async fn warmup_does_not_receive_trial_metrics() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -264,6 +270,7 @@ async fn failed_trial_marks_metrics_missing_but_still_stages() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -305,6 +312,8 @@ async fn semantic_invalid_metric_still_finalizes_bundle() {
         value: 100.0,
         aggregation: Aggregation::Percentile { basis_points: 9900 },
         source_field: None,
+        producer: None,
+        producer_version: None,
         raw_artifacts: Vec::new(),
     }])];
     let outcome = execute_run(
@@ -312,6 +321,7 @@ async fn semantic_invalid_metric_still_finalizes_bundle() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -354,6 +364,8 @@ async fn structural_metric_overflow_uses_evidence_error_cleanup_path() {
             value: 1.0,
             aggregation: Aggregation::Direct,
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         })
         .collect();
@@ -364,6 +376,7 @@ async fn structural_metric_overflow_uses_evidence_error_cleanup_path() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -402,6 +415,8 @@ async fn histogram_reference_resolves_to_same_trial_artifact() {
         value: 9.0,
         aggregation: Aggregation::Percentile { basis_points: 9900 },
         source_field: Some("p99_ms".to_owned()),
+        producer: None,
+        producer_version: None,
         raw_artifacts: vec!["latency.hist".to_owned()],
     }])];
     workload.histograms_by_invocation = vec![Some(vec![RawHistogramInput {
@@ -420,6 +435,7 @@ async fn histogram_reference_resolves_to_same_trial_artifact() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -481,6 +497,7 @@ async fn unknown_histogram_reference_is_dropped_without_claim() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -523,6 +540,8 @@ async fn unrequested_raw_metric_never_becomes_gate_eligible() {
             value: 99.0,
             aggregation: Aggregation::Direct,
             source_field: None,
+            producer: None,
+            producer_version: None,
             raw_artifacts: Vec::new(),
         },
     ])];
@@ -531,6 +550,7 @@ async fn unrequested_raw_metric_never_becomes_gate_eligible() {
         &resolved,
         &mut workload,
         &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
         writer_for(temp.path(), &resolved),
         &CancellationToken::new(),
     )
@@ -587,6 +607,7 @@ async fn trial_is_the_statistical_unit_not_requests() {
             &resolved,
             &mut workload,
             &ResetRegistry::default(),
+            &mut TelemetryRegistry::new(),
             writer_for(temp.path(), &resolved),
             &CancellationToken::new(),
         )

@@ -14,6 +14,7 @@ eggstack-http = [
   "dep:eggserve-server",
   "dep:hdrhistogram",
 ]
+gregg = ["dep:eggfetch-core", "dep:gregg-protocol"]
 
 [dependencies]
 eggbench-core = { path = "../eggbench-core" }
@@ -27,6 +28,7 @@ tokio-util.workspace = true
 eggfetch-core = { version = "0.2", optional = true, default-features = false, features = [
   "standard-http1",
 ] }
+gregg-protocol = { version = "1", optional = true }
 eggserve-primitives = { version = "0.2", optional = true }
 eggserve-server = { version = "0.2", optional = true }
 hdrhistogram = { version = "7", optional = true, default-features = false, features = [
@@ -35,6 +37,7 @@ hdrhistogram = { version = "7", optional = true, default-features = false, featu
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true, features = ["net"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["process", "signal"] }

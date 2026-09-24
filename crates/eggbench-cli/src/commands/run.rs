@@ -19,7 +19,7 @@ use crate::error::{CliError, CliFailure};
 use crate::plan_input::load_plan;
 use crate::workload_registry::{
     BuiltinWorkloadExecutor, ProductionRuntime, QualificationRuntime, WorkloadRuntime,
-    production_service_adapters, production_workload_executor,
+    production_service_adapters, production_telemetry_registry, production_workload_executor,
 };
 use crate::{CommandOptions, InputFormat};
 use eggbench_core::{
@@ -218,15 +218,35 @@ async fn run_impl(
     };
 
     let resets = ResetRegistry::default();
+    // Telemetry collectors construct from the resolved plan before managed
+    // startup: required misconfiguration fails closed here, optional gaps
+    // warn and normalize as missing downstream.
+    let (mut telemetry_registry, telemetry_warnings) =
+        match production_telemetry_registry(&resolved) {
+            Ok(pair) => pair,
+            Err(reason) => {
+                return Ok(PresentedCommandResult::failure(
+                    "run",
+                    &CliFailure::new("telemetry", reason, ExitCode::CapabilityPreflight),
+                ));
+            }
+        };
     let mut session = session;
     let cancel = CancellationToken::new();
     // One OS Ctrl-C signal requests cancellation through the existing M002
     // token; drain/teardown remain authoritative. The listener is aborted and
     // joined after completion so no detached task remains.
     let signal_handle = spawn_signal_forwarder(cancel.clone(), signal);
-    let outcome =
-        eggbench_runner::execute_run(&mut session, &resolved, executor, &resets, writer, &cancel)
-            .await;
+    let outcome = eggbench_runner::execute_run(
+        &mut session,
+        &resolved,
+        executor,
+        &resets,
+        &mut telemetry_registry,
+        writer,
+        &cancel,
+    )
+    .await;
     signal_handle.abort();
     let _ = signal_handle.await;
 
@@ -238,7 +258,11 @@ async fn run_impl(
         }
     };
 
-    Ok(presented_run_outcome(&outcome))
+    let mut presented = presented_run_outcome(&outcome);
+    for (category, detail) in telemetry_warnings {
+        presented.envelope = presented.envelope.with_warning(category, detail);
+    }
+    Ok(presented)
 }
 
 /// Forward one signal future into the M002 cancellation token.

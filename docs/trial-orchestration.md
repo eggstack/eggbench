@@ -7,7 +7,10 @@ adapters and reset hooks are explicit asynchronous seams; M002 includes a
 deterministic `FakeWorkload` for qualification and defines no
 protocol-specific workload or reset behavior. Every `InvocationContext`
 carries the same startup-established runtime-bindings snapshot (read-only);
-see [Eggstack HTTP](eggstack-http.md).
+see [Eggstack HTTP](eggstack-http.md). Trial-synchronized telemetry
+collectors (`TelemetryRegistry`) preflight before startup and open/close a
+window around each measured invocation without entering the measured
+interval; see [Gregg telemetry](gregg-telemetry.md).
 
 ## Phase order
 

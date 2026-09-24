@@ -2,16 +2,20 @@
 
 use crate::DEFAULT_SUBJECT_LOG_LIMIT_BYTES;
 use crate::service::RuntimeBindings;
+use crate::telemetry::{
+    TelemetryError, TelemetryOutput, TelemetryPreflightContext, TelemetryRegistry,
+    TelemetryTrialContext,
+};
 use crate::{
     CleanupFailure, LifecycleOutcome, LocalSession, stage_lifecycle_logs, stage_lifecycle_metadata,
     stage_runtime_topology,
 };
 use eggbench_core::{
     ArtifactPath, ArtifactRole, BundleError, BundleManifest, BundleWriter, ComparisonVerdict,
-    ExecutionStatus, Name, NormalizationInput, RawHistogramInput, RawMetricObservation,
-    ResetPolicy, RunId, SchemaVersion, Sensitivity, TrialDescriptor, TrialExecutionFailure,
-    TrialExecutionResult, TrialExecutionStatus, TrialId, Workload, normalize_trial_metrics,
-    trial_metrics_path,
+    ExecutionStatus, MetricWarning, Name, NormalizationInput, RawHistogramInput,
+    RawMetricObservation, ResetPolicy, RunId, SchemaVersion, Sensitivity, TrialDescriptor,
+    TrialExecutionFailure, TrialExecutionResult, TrialExecutionStatus, TrialId, Workload,
+    normalize_trial_metrics, trial_metrics_path,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -126,6 +130,8 @@ pub enum FailureCategory {
     StartupFailed,
     /// Managed service cleanup failed.
     TeardownFailed,
+    /// Trial telemetry collection failed outside measured workload timing.
+    TelemetryFailed,
 }
 
 /// Object-safe asynchronous workload adapter.
@@ -175,7 +181,156 @@ struct PhaseConfig {
     measurement_timeout: Duration,
     warmup_timeout: Duration,
     drain_timeout: Duration,
+    telemetry_timeout: Duration,
     reset: Option<ResetBinding>,
+}
+
+/// Per-run telemetry disposition established by preflight.
+#[derive(Debug, Default)]
+struct TelemetryPlan {
+    /// Sources whose preflight succeeded; started/stopped around each trial.
+    active: Vec<String>,
+    /// Sources disabled for the run with explicit warning detail.
+    disabled: Vec<DisabledTelemetry>,
+}
+
+/// One telemetry source disabled for the run (optional preflight failure).
+#[derive(Debug, Clone)]
+struct DisabledTelemetry {
+    source: String,
+    reason: String,
+}
+
+/// Per-trial telemetry inputs for evidence staging.
+struct TrialTelemetry<'a> {
+    /// Captured outputs keyed by source, in stop order.
+    outputs: &'a [(String, TelemetryOutput)],
+    /// Explicit warnings (for example disabled-collector notices).
+    warnings: &'a [MetricWarning],
+}
+
+/// Maximum artifacts one collector may stage per measured trial.
+const MAX_TELEMETRY_ARTIFACTS_PER_TRIAL: usize = 8;
+
+/// Open the telemetry window for one measured trial, outside the workload
+/// timer. Returns the sources whose window opened, for matched stop calls.
+/// On any start failure, already-opened windows are stopped best-effort so
+/// no polling task leaks, and the initiating error is returned.
+async fn start_trial_telemetry(
+    telemetry: &mut TelemetryRegistry,
+    plan: &TelemetryPlan,
+    run_id: RunId,
+    trial_id: TrialId,
+    cancel: &CancellationToken,
+    timeout_limit: Duration,
+) -> Result<Vec<String>, TelemetryError> {
+    let mut started = Vec::new();
+    for source in &plan.active {
+        let Some(collector) = telemetry.get_mut(source.as_str()) else {
+            continue;
+        };
+        let context = TelemetryTrialContext {
+            run_id,
+            trial_id,
+            cancellation: cancel.child_token(),
+            timeout: timeout_limit,
+        };
+        let outcome = tokio::select! {
+            () = cancel.cancelled() => Err(TelemetryError::new(
+                "collector_cancelled",
+                "telemetry start cancelled",
+            )),
+            started_outcome = timeout(timeout_limit, collector.start_trial(context)) => {
+                match started_outcome {
+                    Ok(result) => result,
+                    Err(_) => Err(TelemetryError::new(
+                        "polling_timeout",
+                        "telemetry start timed out",
+                    )),
+                }
+            }
+        };
+        match outcome {
+            Ok(()) => started.push(source.clone()),
+            Err(error) => {
+                // Best-effort stop for already-opened windows so no polling
+                // task leaks; outputs are discarded, error is primary.
+                for open in &started {
+                    if let Some(collector) = telemetry.get_mut(open.as_str()) {
+                        let context = TelemetryTrialContext {
+                            run_id,
+                            trial_id,
+                            cancellation: cancel.child_token(),
+                            timeout: timeout_limit,
+                        };
+                        let _ = timeout(timeout_limit, collector.stop_trial(context)).await;
+                    }
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(started)
+}
+
+/// Close the telemetry window after the captured workload elapsed.
+///
+/// Stop is attempted for every started source even when the workload failed
+/// or was cancelled. Failures become cleanup evidence; captured outputs are
+/// returned alongside.
+async fn stop_trial_telemetry(
+    telemetry: &mut TelemetryRegistry,
+    started: &[String],
+    run_id: RunId,
+    trial_id: TrialId,
+    cancel: &CancellationToken,
+    timeout_limit: Duration,
+) -> (Vec<(String, TelemetryOutput)>, Vec<CleanupFailure>) {
+    let mut outputs = Vec::new();
+    let mut failures = Vec::new();
+    for source in started {
+        let Some(collector) = telemetry.get_mut(source.as_str()) else {
+            continue;
+        };
+        let context = TelemetryTrialContext {
+            run_id,
+            trial_id,
+            cancellation: cancel.child_token(),
+            timeout: timeout_limit,
+        };
+        // Stop runs even under cancellation; the collector races internally
+        // and the outer bound keeps teardown authoritative.
+        match timeout(timeout_limit, collector.stop_trial(context)).await {
+            Ok(Ok(output)) => outputs.push((source.clone(), output)),
+            Ok(Err(error)) => {
+                failures.push(CleanupFailure::new(source.clone(), error.to_string()));
+            }
+            Err(_) => {
+                failures.push(CleanupFailure::new(
+                    source.clone(),
+                    "telemetry stop timed out",
+                ));
+            }
+        }
+    }
+    (outputs, failures)
+}
+
+/// Build per-trial warnings for collectors disabled at preflight.
+fn disabled_telemetry_warnings(plan: &TelemetryPlan) -> Vec<MetricWarning> {
+    plan.disabled
+        .iter()
+        .map(|disabled| MetricWarning {
+            category: "telemetry_disabled".to_owned(),
+            detail: format!(
+                "telemetry source {} disabled: {}",
+                disabled.source, disabled.reason
+            )
+            .chars()
+            .take(512)
+            .collect(),
+        })
+        .collect()
 }
 
 /// Explicit registry of reset capabilities.
@@ -382,6 +537,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     resolved: &eggbench_core::ResolvedPlan,
     executor: &mut E,
     resets: &ResetRegistry,
+    telemetry: &mut TelemetryRegistry,
     writer: BundleWriter,
     cancel: &CancellationToken,
 ) -> Result<RunOutcome, OrchestrationError> {
@@ -405,6 +561,16 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     let run_id = writer.run_id();
     let origin = Instant::now();
     let mut state = RunState::new(writer, Vec::with_capacity(phase_bound));
+
+    // ---- Telemetry preflight ----
+    // Before managed startup: validate every requested backend. Required
+    // failures prevent measurement; optional failures disable the collector
+    // for the run with an explicit per-trial warning (never zeroes).
+    let telemetry_plan = if cancel.is_cancelled() {
+        TelemetryPlan::default()
+    } else {
+        preflight_telemetry(telemetry, resolved, run_id, &config, cancel).await?
+    };
 
     // ---- Startup / readiness ----
     if cancel.is_cancelled() {
@@ -576,6 +742,63 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 Some(trial_id),
                 origin,
             );
+            let telemetry_warnings = disabled_telemetry_warnings(&telemetry_plan);
+            let no_telemetry = TrialTelemetry {
+                outputs: &[],
+                warnings: &telemetry_warnings,
+            };
+            // Telemetry opens its window before the workload timer starts.
+            // The trial fails without measurement when start fails; the
+            // timer never started and no workload ran. Already-opened
+            // windows were stopped inside the helper; no cleanup remains.
+            let Ok(started_sources) = start_trial_telemetry(
+                telemetry,
+                &telemetry_plan,
+                run_id,
+                trial_id,
+                cancel,
+                config.telemetry_timeout,
+            )
+            .await
+            else {
+                state.status = ExecutionStatus::Failed;
+                state.primary_failure = Some(FailureCategory::TelemetryFailed);
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    PhaseOutcome::Failed,
+                    Some(FailureCategory::TelemetryFailed),
+                );
+                let result = TrialExecutionResult {
+                    schema_version: TRIAL_RESULT_SCHEMA_VERSION,
+                    trial_id,
+                    measurement_start_offset_ns: nanos(origin.elapsed()),
+                    measurement_elapsed_ns: 0,
+                    terminal_status: TrialExecutionStatus::Failed,
+                    failure_category: Some(TrialExecutionFailure::TelemetryFailed),
+                };
+                match stage_trial(
+                    &mut state.writer,
+                    trial_id,
+                    &result,
+                    WorkloadOutput::default(),
+                    &no_telemetry,
+                    resolved,
+                ) {
+                    Ok((result_path, artifacts)) => {
+                        state.trials.push(TrialDescriptor {
+                            id: trial_id,
+                            result: result_path,
+                            artifacts,
+                        });
+                    }
+                    Err(stage_error) => {
+                        state.staging_error = Some(stage_error);
+                    }
+                }
+                break;
+            };
             match execute_invocation(InvocationRequest {
                 executor,
                 cancel,
@@ -590,45 +813,124 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
             {
                 InvocationResult::Completed(output, elapsed, start_offset_ns) => {
                     state.workload_entered = true;
-                    let result = TrialExecutionResult {
-                        schema_version: TRIAL_RESULT_SCHEMA_VERSION,
+                    // Telemetry closes after the captured elapsed, even on
+                    // later failure paths below.
+                    let (telemetry_outputs, telemetry_cleanup) = stop_trial_telemetry(
+                        telemetry,
+                        &started_sources,
+                        run_id,
                         trial_id,
-                        measurement_start_offset_ns: start_offset_ns,
-                        measurement_elapsed_ns: nanos(elapsed),
-                        terminal_status: TrialExecutionStatus::Completed,
-                        failure_category: None,
-                    };
-                    match stage_trial(&mut state.writer, trial_id, &result, output, resolved) {
-                        Ok((result_path, artifacts)) => {
-                            finish_phase(
-                                &mut state.phases,
-                                index,
-                                origin,
-                                PhaseOutcome::Completed,
-                                None,
-                            );
-                            state.trials.push(TrialDescriptor {
-                                id: trial_id,
-                                result: result_path,
-                                artifacts,
-                            });
+                        cancel,
+                        config.telemetry_timeout,
+                    )
+                    .await;
+                    if telemetry_cleanup.is_empty() {
+                        let trial_telemetry = TrialTelemetry {
+                            outputs: &telemetry_outputs,
+                            warnings: &telemetry_warnings,
+                        };
+                        let result = TrialExecutionResult {
+                            schema_version: TRIAL_RESULT_SCHEMA_VERSION,
+                            trial_id,
+                            measurement_start_offset_ns: start_offset_ns,
+                            measurement_elapsed_ns: nanos(elapsed),
+                            terminal_status: TrialExecutionStatus::Completed,
+                            failure_category: None,
+                        };
+                        match stage_trial(
+                            &mut state.writer,
+                            trial_id,
+                            &result,
+                            output,
+                            &trial_telemetry,
+                            resolved,
+                        ) {
+                            Ok((result_path, artifacts)) => {
+                                finish_phase(
+                                    &mut state.phases,
+                                    index,
+                                    origin,
+                                    PhaseOutcome::Completed,
+                                    None,
+                                );
+                                state.trials.push(TrialDescriptor {
+                                    id: trial_id,
+                                    result: result_path,
+                                    artifacts,
+                                });
+                            }
+                            Err(error) => {
+                                state.staging_error = Some(error);
+                                state.status = ExecutionStatus::Failed;
+                                finish_phase(
+                                    &mut state.phases,
+                                    index,
+                                    origin,
+                                    PhaseOutcome::Failed,
+                                    None,
+                                );
+                                break;
+                            }
                         }
-                        Err(error) => {
-                            state.staging_error = Some(error);
-                            state.status = ExecutionStatus::Failed;
-                            finish_phase(
-                                &mut state.phases,
-                                index,
-                                origin,
-                                PhaseOutcome::Failed,
-                                None,
-                            );
-                            break;
+                    } else {
+                        // Telemetry stop failed after workload success: the
+                        // trial fails with telemetry as primary and the stop
+                        // failures attached as cleanup diagnostics.
+                        state.cleanup_failures.extend(telemetry_cleanup);
+                        state.status = ExecutionStatus::Failed;
+                        state.primary_failure = Some(FailureCategory::TelemetryFailed);
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            PhaseOutcome::Failed,
+                            Some(FailureCategory::TelemetryFailed),
+                        );
+                        let result = TrialExecutionResult {
+                            schema_version: TRIAL_RESULT_SCHEMA_VERSION,
+                            trial_id,
+                            measurement_start_offset_ns: start_offset_ns,
+                            measurement_elapsed_ns: nanos(elapsed),
+                            terminal_status: TrialExecutionStatus::Failed,
+                            failure_category: Some(TrialExecutionFailure::TelemetryFailed),
+                        };
+                        match stage_trial(
+                            &mut state.writer,
+                            trial_id,
+                            &result,
+                            WorkloadOutput::default(),
+                            &no_telemetry,
+                            resolved,
+                        ) {
+                            Ok((result_path, artifacts)) => {
+                                state.trials.push(TrialDescriptor {
+                                    id: trial_id,
+                                    result: result_path,
+                                    artifacts,
+                                });
+                            }
+                            Err(error) => {
+                                state.staging_error = Some(error);
+                            }
                         }
+                        break;
                     }
                 }
                 InvocationResult::Failure(category, elapsed, start_offset_ns) => {
                     state.workload_entered = true;
+                    // Telemetry still closes after workload failure or
+                    // cancellation when its window opened; stop failures
+                    // attach as cleanup without rewriting the primary cause.
+                    let (_, telemetry_cleanup) = stop_trial_telemetry(
+                        telemetry,
+                        &started_sources,
+                        run_id,
+                        trial_id,
+                        cancel,
+                        config.telemetry_timeout,
+                    )
+                    .await;
+                    state.cleanup_failures.extend(telemetry_cleanup);
                     let category = workload_failure(category);
                     state.status = status_for(category);
                     state.primary_failure = Some(category);
@@ -661,6 +963,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                         trial_id,
                         &result,
                         WorkloadOutput::default(),
+                        &no_telemetry,
                         resolved,
                     ) {
                         Ok((result_path, artifacts)) => {
@@ -807,6 +1110,62 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                     Some(FailureCategory::TimedOut),
                 );
             }
+        }
+        if cancel.is_cancelled() && state.status == ExecutionStatus::Completed {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+        }
+    }
+
+    // ---- Telemetry drain ----
+    // Drain every preflight-active collector after the workload drain. A
+    // telemetry drain failure follows the same precedence as workload
+    // drain: it becomes primary only when no earlier failure stands, and
+    // service teardown still runs afterwards.
+    if !telemetry_plan.active.is_empty() {
+        let index = begin_phase(&mut state.phases, PhaseKind::Drain, None, None, origin);
+        let mut telemetry_drain_failed = false;
+        for source in &telemetry_plan.active {
+            let Some(collector) = telemetry.get_mut(source.as_str()) else {
+                continue;
+            };
+            let drain_context = DrainContext {
+                run_id,
+                cancellation: cancel.clone(),
+                timeout: config.drain_timeout,
+            };
+            if timeout(config.drain_timeout, collector.drain(drain_context))
+                .await
+                .is_ok_and(|result| result.is_ok())
+            {
+            } else {
+                telemetry_drain_failed = true;
+                state.cleanup_failures.push(CleanupFailure::new(
+                    source.clone(),
+                    "telemetry drain failed",
+                ));
+            }
+        }
+        if telemetry_drain_failed {
+            if state.status == ExecutionStatus::Completed {
+                state.status = ExecutionStatus::Failed;
+                state.primary_failure = Some(FailureCategory::TelemetryFailed);
+            }
+            finish_phase(
+                &mut state.phases,
+                index,
+                origin,
+                PhaseOutcome::Failed,
+                Some(FailureCategory::TelemetryFailed),
+            );
+        } else {
+            finish_phase(
+                &mut state.phases,
+                index,
+                origin,
+                PhaseOutcome::Completed,
+                None,
+            );
         }
         if cancel.is_cancelled() && state.status == ExecutionStatus::Completed {
             state.status = ExecutionStatus::Cancelled;
@@ -1007,7 +1366,7 @@ fn preflight(
     resolved: &eggbench_core::ResolvedPlan,
     resets: &ResetRegistry,
 ) -> Result<PhaseConfig, OrchestrationError> {
-    let allowed: BTreeSet<&str> = ["measurement", "warmup", "reset", "drain"]
+    let allowed: BTreeSet<&str> = ["measurement", "warmup", "reset", "drain", "telemetry"]
         .into_iter()
         .collect();
     if resolved
@@ -1030,6 +1389,9 @@ fn preflight(
     ))?;
     let warmup = get("warmup").unwrap_or(measurement);
     let drain = get("drain").ok_or(OrchestrationError::Preflight("drain timeout is required"))?;
+    // Telemetry exchanges are bounded but outside workload timing; absent an
+    // explicit key they share the measurement bound.
+    let telemetry_timeout = get("telemetry").unwrap_or(measurement);
     if measurement.is_zero() || warmup.is_zero() || drain.is_zero() {
         return Err(OrchestrationError::Preflight(
             "timeouts must be greater than zero",
@@ -1066,7 +1428,130 @@ fn preflight(
         measurement_timeout: measurement,
         warmup_timeout: warmup,
         drain_timeout: drain,
+        telemetry_timeout,
         reset,
+    })
+}
+
+/// Preflight every telemetry source requested by the resolved plan.
+///
+/// Runs before managed startup. A required source whose collector is
+/// missing or whose preflight fails prevents measurement with a preflight
+/// error. An optional source failure disables the collector for the run;
+/// its requested metrics later normalize as missing with an explicit
+/// warning, never as fabricated zeroes.
+async fn preflight_telemetry(
+    telemetry: &mut TelemetryRegistry,
+    resolved: &eggbench_core::ResolvedPlan,
+    run_id: RunId,
+    config: &PhaseConfig,
+    cancel: &CancellationToken,
+) -> Result<TelemetryPlan, OrchestrationError> {
+    let mut plan = TelemetryPlan::default();
+    for request in &resolved.telemetry {
+        let source = request.source.as_str();
+        let Some(collector) = telemetry.get_mut(source) else {
+            if request.required {
+                return Err(OrchestrationError::Preflight(
+                    "required telemetry collector is not registered",
+                ));
+            }
+            plan.disabled.push(DisabledTelemetry {
+                source: source.to_owned(),
+                reason: "collector not registered".to_owned(),
+            });
+            continue;
+        };
+        let context = TelemetryPreflightContext {
+            run_id,
+            cancellation: cancel.child_token(),
+            timeout: config.telemetry_timeout,
+        };
+        let outcome = tokio::select! {
+            () = cancel.cancelled() => None,
+            probed = timeout(config.telemetry_timeout, collector.preflight(context)) => Some(probed),
+        };
+        // Cancellation races preflight; the startup section reports the
+        // Cancelled outcome. Leave collectors undispositioned.
+        let Some(probed) = outcome else {
+            return Ok(TelemetryPlan::default());
+        };
+        match probed {
+            Ok(Ok(_)) => plan.active.push(source.to_owned()),
+            Ok(Err(error)) => {
+                if request.required {
+                    return Err(OrchestrationError::Preflight(
+                        "required telemetry preflight failed",
+                    ));
+                }
+                plan.disabled.push(DisabledTelemetry {
+                    source: source.to_owned(),
+                    reason: error.to_string(),
+                });
+            }
+            Err(_) => {
+                if request.required {
+                    return Err(OrchestrationError::Preflight(
+                        "required telemetry preflight timed out",
+                    ));
+                }
+                plan.disabled.push(DisabledTelemetry {
+                    source: source.to_owned(),
+                    reason: "telemetry preflight timed out".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(plan)
+}
+
+/// Per-artifact byte estimate for one telemetry artifact (for example the
+/// bounded `gregg.ndjson` trial series).
+const TELEMETRY_ARTIFACT_BYTE_ESTIMATE: u64 = 262_144;
+
+/// Per-trial telemetry artifact slots across all requested sources.
+fn telemetry_artifact_count(
+    measured: usize,
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<usize, OrchestrationError> {
+    measured
+        .checked_mul(resolved.telemetry.len())
+        .and_then(|count| count.checked_mul(MAX_TELEMETRY_ARTIFACTS_PER_TRIAL))
+        .ok_or(OrchestrationError::Preflight(
+            "telemetry artifact count overflow",
+        ))
+}
+
+/// Bounded per-trial telemetry byte estimate across requested sources.
+struct TelemetryByteEstimate {
+    /// Per-artifact floor enforced when telemetry is requested.
+    floor: u64,
+    /// Total bytes per measured trial.
+    per_trial: u64,
+}
+
+fn telemetry_byte_estimate(
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<TelemetryByteEstimate, OrchestrationError> {
+    if resolved.telemetry.is_empty() {
+        return Ok(TelemetryByteEstimate {
+            floor: 0,
+            per_trial: 0,
+        });
+    }
+    let per_trial = u64::try_from(resolved.telemetry.len())
+        .ok()
+        .and_then(|sources| {
+            sources
+                .checked_mul(MAX_TELEMETRY_ARTIFACTS_PER_TRIAL as u64)?
+                .checked_mul(TELEMETRY_ARTIFACT_BYTE_ESTIMATE)
+        })
+        .ok_or(OrchestrationError::Preflight(
+            "telemetry artifact byte bound overflow",
+        ))?;
+    Ok(TelemetryByteEstimate {
+        floor: TELEMETRY_ARTIFACT_BYTE_ESTIMATE,
+        per_trial,
     })
 }
 
@@ -1121,6 +1606,8 @@ fn preflight_evidence_capacity(
         .checked_mul(2)
         .ok_or(OrchestrationError::Preflight("log artifact count overflow"))?;
     // Each measured trial stages `result.json` plus normalized `metrics.json`.
+    // Requested telemetry adds per-trial collector artifacts on top.
+    let telemetry_artifact_count = telemetry_artifact_count(measured, resolved)?;
     let required_count = warmups
         .checked_add(
             measured
@@ -1131,6 +1618,7 @@ fn preflight_evidence_capacity(
         )
         .and_then(|count| count.checked_add(3)) // phase timeline, lifecycle metadata, runtime topology
         .and_then(|count| count.checked_add(log_artifact_count))
+        .and_then(|count| count.checked_add(telemetry_artifact_count))
         .ok_or(OrchestrationError::Preflight(
             "evidence artifact count overflow",
         ))?;
@@ -1151,10 +1639,12 @@ fn preflight_evidence_capacity(
     // Runtime-topology evidence carries one entry per identity plus the
     // startup-established non-secret bindings.
     let topology_bytes = topology_byte_bound(&identities)?;
+    let telemetry_bytes = telemetry_byte_estimate(resolved)?;
     if writer.max_artifact_bytes()
         < phase_bytes
             .max(lifecycle_bytes)
             .max(topology_bytes)
+            .max(telemetry_bytes.floor)
             .max(512)
     {
         return Err(OrchestrationError::Preflight(
@@ -1169,6 +1659,13 @@ fn preflight_evidence_capacity(
         .and_then(|bytes| {
             // `result.json` plus normalized `metrics.json` per measured trial.
             bytes.checked_add(u64::try_from(measured).ok()?.checked_mul(1_024)?)
+        })
+        .and_then(|bytes| {
+            bytes.checked_add(
+                u64::try_from(measured)
+                    .ok()?
+                    .checked_mul(telemetry_bytes.per_trial)?,
+            )
         })
         .ok_or(OrchestrationError::Preflight(
             "runner artifact byte bound overflow",
@@ -1285,6 +1782,7 @@ fn stage_trial(
     id: TrialId,
     result: &TrialExecutionResult,
     output: WorkloadOutput,
+    telemetry: &TrialTelemetry<'_>,
     resolved: &eggbench_core::ResolvedPlan,
 ) -> Result<(ArtifactPath, Vec<ArtifactPath>), BundleError> {
     let base = format!("trials/{:03}", id.get());
@@ -1313,19 +1811,61 @@ fn stage_trial(
     for (name, path) in artifact_names.into_iter().zip(artifacts.iter().cloned()) {
         artifact_map.insert(name, path);
     }
+    // Telemetry artifacts stage under a separate namespace; a safe-name
+    // collision with workload artifacts fails closed rather than silently
+    // shadowing provenance references.
+    let mut telemetry_observations = Vec::new();
+    let mut telemetry_warnings: Vec<MetricWarning> = Vec::new();
+    for (collector_index, (source, toutput)) in telemetry.outputs.iter().enumerate() {
+        if toutput.artifacts.len() > MAX_TELEMETRY_ARTIFACTS_PER_TRIAL {
+            return Err(BundleError::BoundExceeded("telemetry artifact count"));
+        }
+        for (artifact_index, artifact) in toutput.artifacts.iter().enumerate() {
+            validate_artifact_name(&artifact.name)?;
+            // Collector/source labels never enter the path: indices keep
+            // staging deterministic even for adversarial labels.
+            let path = ArtifactPath::new(format!(
+                "{base}/telemetry/{collector_index:02}-{artifact_index:02}-{}",
+                artifact.name,
+            ))?;
+            writer.add_artifact(
+                path.clone(),
+                ArtifactRole::TrialArtifact,
+                artifact.media_type.clone(),
+                Sensitivity::Redacted,
+                artifact.bytes.as_slice(),
+            )?;
+            artifacts.push(path.clone());
+            if artifact_map.insert(artifact.name.clone(), path).is_some() {
+                return Err(BundleError::InvalidManifest(
+                    "telemetry/workload artifact name collision",
+                ));
+            }
+        }
+        let _ = source;
+        telemetry_observations.extend(toutput.metrics.iter().cloned());
+        telemetry_warnings.extend(toutput.warnings.iter().cloned());
+    }
+    telemetry_warnings.extend(telemetry.warnings.iter().cloned());
+    let mut combined = metrics;
+    combined.extend(telemetry_observations);
     let (producer, producer_version) = workload_producer(resolved);
     let input = NormalizationInput {
         trial_id: id,
         metrics: &resolved.metrics,
         terminal_status: result.terminal_status,
-        observations: &metrics,
+        observations: &combined,
         histograms: &histograms,
         error_counts: &error_counts,
         artifact_map: &artifact_map,
         producer: &producer,
         producer_version: producer_version.as_deref(),
     };
-    let normalized = normalize_trial_metrics(&input)?;
+    let mut normalized = normalize_trial_metrics(&input)?;
+    // Telemetry warnings append deterministically after normalization's own
+    // warnings; the bound is re-checked so overflow still fails closed.
+    normalized.warnings.extend(telemetry_warnings);
+    normalized.validate()?;
     let metrics_bytes = normalized.to_json_bytes()?;
     let metrics_path = trial_metrics_path(id)?;
     writer.add_artifact(
@@ -1337,6 +1877,16 @@ fn stage_trial(
     )?;
     artifacts.push(metrics_path);
     Ok((result_path, artifacts))
+}
+
+/// Validate one driver-supplied artifact name: a single safe path component.
+fn validate_artifact_name(name: &str) -> Result<(), BundleError> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(BundleError::InvalidManifest(
+            "unsafe telemetry artifact name",
+        ));
+    }
+    Ok(())
 }
 
 /// Resolve the workload producer label/version from the resolved driver

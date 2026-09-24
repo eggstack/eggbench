@@ -90,6 +90,14 @@ belong to the same trial. Error distributions are bounded `category → count`
 maps with deterministic ordering; they are descriptive evidence, not
 correctness verdicts.
 
+A raw observation may carry a per-observation `producer`/`producer_version`
+override so telemetry observations normalize through a combined call with
+their own attribution (for example `gregg`); without the override the
+call-level producer applies. Duplicate observations for one requested
+metric — from one producer or across producers — still normalize as
+invalid rather than selecting silently. See
+[Gregg telemetry](gregg-telemetry.md).
+
 ## Artifact layout
 
 Each measured trial stages `trials/NNN/metrics.json` with

@@ -424,6 +424,8 @@ fn latency_fake(values: &[f64]) -> eggbench_runner::test_support::FakeWorkload {
                 value: *value,
                 aggregation: eggbench_core::Aggregation::Percentile { basis_points: 9900 },
                 source_field: Some("fake.p99".to_owned()),
+                producer: None,
+                producer_version: None,
                 raw_artifacts: Vec::new(),
             }])
         })
@@ -1038,4 +1040,424 @@ async fn production_run_without_target_binding_fails_at_workload() {
     let body: Value = serde_json::to_value(&presented.envelope).unwrap();
     assert_eq!(body["result"]["primary_failure"], "WorkloadFailed");
     assert!(bundle.exists());
+}
+
+// ---- Gregg M001b end-to-end telemetry (feature-gated) ----
+
+/// Tiny deterministic Gregg-stand-in HTTP server (test-only): serves a
+/// ready health envelope and a fixed valid v2 status payload.
+#[cfg(all(feature = "eggstack-http", feature = "gregg"))]
+mod gregg_fixture {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub struct Server {
+        pub addr: SocketAddr,
+        _task: tokio::task::JoinHandle<()>,
+    }
+
+    pub const STATUS_JSON: &str = r#"{"schema_version":2,"observed_at_unix_ms":1000,"sample_interval_ms":1000,"capabilities":{"cpu_iowait":false,"load_average":false,"swap":false,"memory_commit":false},"system":{"name":"fixture-host","hostname":"fixture-host.local","os_name":"linux","os_version":"6.0","kernel_name":"Linux","kernel_release":"6.0.0","architecture":"x86_64"},"cpu":{"logical_cores":8,"usage_pct":25.0,"iowait_pct":null},"memory":{"used_bytes":8000000000,"total_bytes":16000000000,"usage_pct":50.0}}"#;
+
+    pub fn health_json() -> Vec<u8> {
+        format!("{{\"schema_version\":2,\"state\":\"ready\",\"snapshot\":{STATUS_JSON}}}")
+            .into_bytes()
+    }
+
+    pub async fn spawn() -> Server {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let counter = Arc::new(AtomicUsize::new(0));
+        let task_counter = Arc::clone(&counter);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let counter = Arc::clone(&task_counter);
+                tokio::spawn(async move {
+                    serve_one(stream, &counter).await;
+                });
+            }
+        });
+        let _ = counter;
+        Server { addr, _task: task }
+    }
+
+    async fn serve_one(mut stream: tokio::net::TcpStream, counter: &AtomicUsize) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buffer = vec![0u8; 4096];
+        let mut received = 0usize;
+        let path = loop {
+            let Ok(count) = stream.read(&mut buffer[received..]).await else {
+                return;
+            };
+            if count == 0 {
+                return;
+            }
+            received += count;
+            if let Some(position) = buffer[..received]
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+            {
+                let head = String::from_utf8_lossy(&buffer[..position + 4]).into_owned();
+                break head.lines().next().unwrap_or("").to_owned();
+            }
+            if received >= buffer.len() {
+                return;
+            }
+        };
+        let route = path.split_whitespace().nth(1).unwrap_or("/").to_owned();
+        counter.fetch_add(1, Ordering::SeqCst);
+        let (status, body) = match route.as_str() {
+            "/v2/healthz" => (200, health_json()),
+            "/v2/status" => (200, STATUS_JSON.as_bytes().to_vec()),
+            _ => (404, b"{}".to_vec()),
+        };
+        let head = format!(
+            "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes()).await;
+        let _ = stream.write_all(&body).await;
+    }
+}
+
+/// Full native path with trial-synchronized Gregg telemetry: origin,
+/// Eggfetch workload, and host metrics in one verified bundle.
+#[cfg(all(feature = "eggstack-http", feature = "gregg"))]
+#[tokio::test]
+async fn gregg_telemetry_end_to_end() {
+    use eggbench_core::{ArtifactPath, BundleReader};
+    use std::io::Read;
+
+    let gregg = gregg_fixture::spawn().await;
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["services"] = serde_json::json!([
+        {"name": "origin", "kind": {"kind": "named", "service_type": "eggserve-origin"}, "lifecycle": "managed", "depends_on": [], "config": {"path": "/bench", "body_bytes": "1024", "status": "200"}, "readiness": null, "shutdown": {"grace_ms": 5000, "method": null}, "working_directory": null, "log_limit_bytes": 4096},
+        {"name": "gregg", "kind": {"kind": "named", "service_type": "gregg"}, "lifecycle": "external", "depends_on": [], "config": {"endpoint": format!("http://{}", gregg.addr)}, "readiness": null, "shutdown": null, "working_directory": null, "log_limit_bytes": 0}
+    ]);
+    plan["telemetry"] = serde_json::json!([
+        {"source": "gregg", "fields": ["host_cpu_percent", "host_memory_used_bytes"], "required": true}
+    ]);
+    plan["metrics"] = serde_json::json!([
+        {"name": "throughput", "unit": "rps", "direction": {"kind": "higher_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 1.0}},
+        {"name": "host_cpu_percent", "unit": "percent", "direction": {"kind": "lower_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 90.0}},
+        {"name": "host_memory_used_bytes", "unit": "bytes", "direction": {"kind": "lower_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 1.5e10}}
+    ]);
+    plan["trials"]["timeouts"] = serde_json::json!({"measurement": 30000, "warmup": 30000, "drain": 5000, "telemetry": 10000});
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let bundle = tmp.path().join("run.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(
+        presented.envelope.ok,
+        "run failed: {:?}",
+        presented.envelope
+    );
+    assert_eq!(presented.exit_code, ExitCode::Success);
+
+    let reader = BundleReader::open(&bundle).expect("bundle opens");
+    reader.verify().expect("bundle verifies");
+    for trial in 1..=3 {
+        assert_gregg_trial(&reader, trial);
+    }
+    // Raw series + provenance staged per trial.
+    let paths: Vec<String> = reader
+        .manifest()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.path.to_string())
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "trials/001/telemetry/00-00-gregg.ndjson")
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == "trials/001/telemetry/00-01-gregg-provenance.json")
+    );
+    // Every NDJSON line is the exact fixture payload.
+    let ndjson_path = ArtifactPath::new("trials/001/telemetry/00-00-gregg.ndjson").unwrap();
+    let mut file = reader.open_artifact(&ndjson_path).expect("ndjson opens");
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).expect("ndjson reads");
+    assert!(!bytes.is_empty());
+    for line in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        assert_eq!(line, gregg_fixture::STATUS_JSON.as_bytes());
+    }
+}
+
+/// Assert one Gregg-telemetry trial carries observed host metrics with
+/// Gregg provenance alongside workload metrics.
+#[cfg(all(feature = "eggstack-http", feature = "gregg"))]
+fn assert_gregg_trial(reader: &eggbench_core::BundleReader, trial: u32) {
+    use eggbench_core::TrialId;
+
+    let metrics = reader
+        .trial_metrics(TrialId::new(trial).unwrap())
+        .expect("metrics read")
+        .expect("metrics present");
+    let names: Vec<&str> = metrics
+        .observations
+        .iter()
+        .map(|observation| observation.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["host_cpu_percent", "host_memory_used_bytes", "throughput"]
+    );
+    let observed = |name: &str| {
+        let observation = metrics
+            .observations
+            .iter()
+            .find(|observation| observation.name.as_str() == name)
+            .expect("metric");
+        match observation.state {
+            eggbench_core::ObservationState::Observed { value } => value,
+            _ => panic!("metric {name} is not observed"),
+        }
+    };
+    assert!((observed("host_cpu_percent") - 25.0).abs() < f64::EPSILON);
+    assert!((observed("host_memory_used_bytes") - 8_000_000_000.0).abs() < 1.0);
+    // Gregg provenance on host observations.
+    let cpu = metrics
+        .observations
+        .iter()
+        .find(|observation| observation.name.as_str() == "host_cpu_percent")
+        .expect("cpu");
+    assert_eq!(cpu.provenance.producer.as_str(), "gregg");
+    assert_eq!(
+        cpu.provenance.source_field.as_deref(),
+        Some("v2.cpu.usage_pct")
+    );
+    assert!(
+        cpu.provenance
+            .raw_artifacts
+            .iter()
+            .any(|path| path.to_string().ends_with("00-00-gregg.ndjson"))
+    );
+}
+
+/// Required Gregg telemetry with an unreachable daemon fails before managed
+/// startup: no bundle, exit code 5, stable evidence category.
+#[cfg(all(feature = "eggstack-http", feature = "gregg"))]
+#[tokio::test]
+async fn required_gregg_unavailable_fails_before_startup() {
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["services"] = serde_json::json!([
+        {"name": "origin", "kind": {"kind": "named", "service_type": "eggserve-origin"}, "lifecycle": "managed", "depends_on": [], "config": {"path": "/bench", "body_bytes": "1024", "status": "200"}, "readiness": null, "shutdown": {"grace_ms": 5000, "method": null}, "working_directory": null, "log_limit_bytes": 4096},
+        {"name": "gregg", "kind": {"kind": "named", "service_type": "gregg"}, "lifecycle": "external", "depends_on": [], "config": {"endpoint": "http://127.0.0.1:1"}, "readiness": null, "shutdown": null, "working_directory": null, "log_limit_bytes": 0}
+    ]);
+    plan["telemetry"] = serde_json::json!([
+        {"source": "gregg", "fields": ["host_cpu_percent"], "required": true}
+    ]);
+    plan["trials"]["timeouts"] = serde_json::json!({"measurement": 30000, "warmup": 30000, "drain": 5000, "telemetry": 5000});
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let bundle = tmp.path().join("run.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::EvidenceIo);
+    let failure = presented.envelope.error.as_ref().expect("error");
+    assert_eq!(failure.category, "evidence");
+    assert!(!bundle.exists(), "no bundle on pre-start failure");
+}
+
+/// Optional Gregg telemetry with an unreachable daemon still completes:
+/// envelope warning, host metrics missing (never zero).
+#[cfg(all(feature = "eggstack-http", feature = "gregg"))]
+#[tokio::test]
+async fn optional_gregg_unavailable_warns_and_completes() {
+    use eggbench_core::{BundleReader, TrialId};
+
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["services"] = serde_json::json!([
+        {"name": "origin", "kind": {"kind": "named", "service_type": "eggserve-origin"}, "lifecycle": "managed", "depends_on": [], "config": {"path": "/bench", "body_bytes": "1024", "status": "200"}, "readiness": null, "shutdown": {"grace_ms": 5000, "method": null}, "working_directory": null, "log_limit_bytes": 4096},
+        {"name": "gregg", "kind": {"kind": "named", "service_type": "gregg"}, "lifecycle": "external", "depends_on": [], "config": {"endpoint": "http://127.0.0.1:1"}, "readiness": null, "shutdown": null, "working_directory": null, "log_limit_bytes": 0}
+    ]);
+    plan["telemetry"] = serde_json::json!([
+        {"source": "gregg", "fields": ["host_cpu_percent"], "required": false}
+    ]);
+    plan["metrics"] = serde_json::json!([
+        {"name": "throughput", "unit": "rps", "direction": {"kind": "higher_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 1.0}},
+        {"name": "host_cpu_percent", "unit": "percent", "direction": {"kind": "lower_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 90.0}}
+    ]);
+    plan["trials"]["timeouts"] = serde_json::json!({"measurement": 30000, "warmup": 30000, "drain": 5000, "telemetry": 5000});
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let bundle = tmp.path().join("run.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(
+        presented.envelope.ok,
+        "run failed: {:?}",
+        presented.envelope
+    );
+    assert_eq!(presented.exit_code, ExitCode::Success);
+    let reader = BundleReader::open(&bundle).expect("bundle opens");
+    reader.verify().expect("bundle verifies");
+    let metrics = reader
+        .trial_metrics(TrialId::new(1).unwrap())
+        .expect("metrics read")
+        .expect("metrics present");
+    let cpu = metrics
+        .observations
+        .iter()
+        .find(|observation| observation.name.as_str() == "host_cpu_percent")
+        .expect("cpu");
+    assert!(
+        matches!(cpu.state, eggbench_core::ObservationState::Missing { .. }),
+        "optional gap stays missing"
+    );
+    assert!(
+        metrics
+            .warnings
+            .iter()
+            .any(|warning| warning.category == "telemetry_disabled")
+    );
+}
+
+/// Without the `gregg` feature, required Gregg telemetry fails resolution
+/// explicitly (missing driver, exit code 3).
+#[cfg(not(feature = "gregg"))]
+#[tokio::test]
+async fn gregg_telemetry_without_feature_fails_resolution() {
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["telemetry"] = serde_json::json!([
+        {"source": "gregg", "fields": ["host_cpu_percent"], "required": true}
+    ]);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let bundle = tmp.path().join("run.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    let failure = presented.envelope.error.as_ref().expect("error");
+    assert_eq!(failure.category, "missing_driver");
+    assert!(!bundle.exists());
+}
+
+/// `doctor` reports the Gregg telemetry descriptor with exact versions and
+/// capabilities, and rejects non-loopback endpoints without dialing.
+#[cfg(all(feature = "eggstack-http", feature = "gregg"))]
+#[tokio::test]
+async fn doctor_reports_gregg_descriptor_and_rejects_non_loopback() {
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["services"] = serde_json::json!([
+        {"name": "origin", "kind": {"kind": "named", "service_type": "eggserve-origin"}, "lifecycle": "managed", "depends_on": [], "config": {"path": "/bench", "body_bytes": "1024", "status": "200"}, "readiness": null, "shutdown": {"grace_ms": 5000, "method": null}, "working_directory": null, "log_limit_bytes": 4096},
+        {"name": "gregg", "kind": {"kind": "named", "service_type": "gregg"}, "lifecycle": "external", "depends_on": [], "config": {"endpoint": "http://127.0.0.1:11310"}, "readiness": null, "shutdown": null, "working_directory": null, "log_limit_bytes": 0}
+    ]);
+    plan["telemetry"] = serde_json::json!([
+        {"source": "gregg", "fields": ["host_cpu_percent"], "required": true}
+    ]);
+    plan["metrics"] = serde_json::json!([
+        {"name": "host_cpu_percent", "unit": "percent", "direction": {"kind": "lower_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 90.0}}
+    ]);
+    // Closed-loop workload target must exist for doctor resolution.
+    plan["workload"] = serde_json::json!({"kind": "closed_loop", "target": "origin", "concurrency": 1, "requests": 5, "duration_ms": null});
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let presented = execute(
+        Command::Doctor {
+            plan: plan_path.clone(),
+            input_format: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(
+        presented.envelope.ok,
+        "doctor failed: {:?}",
+        presented.envelope
+    );
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    let drivers = body["result"]["drivers"].as_array().unwrap();
+    let gregg = drivers
+        .iter()
+        .find(|driver| driver["name"] == "gregg")
+        .expect("gregg reported");
+    assert_eq!(gregg["category"], "Telemetry");
+    assert_eq!(gregg["upstream_name"], "gregg-protocol");
+    assert!(
+        gregg["upstream_version"]
+            .as_str()
+            .is_some_and(|version| !version.is_empty())
+    );
+    // Non-loopback endpoint fails doctor with telemetry_config, no dialing.
+    let mut bad =
+        serde_json::from_str::<Value>(&std::fs::read_to_string(&plan_path).expect("read"))
+            .expect("parse");
+    bad["services"][1]["config"]["endpoint"] = Value::from("http://10.0.0.5:11310");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&bad).expect("plan")).expect("write plan");
+    let presented = execute(
+        Command::Doctor {
+            plan: plan_path,
+            input_format: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    let failure = presented.envelope.error.as_ref().expect("error");
+    assert_eq!(failure.category, "telemetry_config");
 }

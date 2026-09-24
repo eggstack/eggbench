@@ -18,7 +18,10 @@ cargo build -p eggbench-cli --features eggstack-http
 ./target/debug/eggbench run crates/eggbench-core/tests/fixtures/eggstack-loopback.json loopback.eggb
 ```
 
-See [Eggstack HTTP](docs/eggstack-http.md). A deterministic fake workload remains injectable in tests and qualification harnesses only. Independent external traffic generators (for example `oha`, `h2load`) belong to External Oracles milestones. The shared external-command substrate (trusted resolution, bounded argv execution, versioned parsers) is documented in [external drivers](docs/external-drivers.md).
+See [Eggstack HTTP](docs/eggstack-http.md). Trial-synchronized host
+telemetry from a loopback Gregg daemon is available behind the `gregg`
+cargo feature (`eggbench-cli/gregg`); see
+[Gregg telemetry](docs/gregg-telemetry.md). A deterministic fake workload remains injectable in tests and qualification harnesses only. Independent external traffic generators (for example `oha`, `h2load`) belong to External Oracles milestones. The shared external-command substrate (trusted resolution, bounded argv execution, versioned parsers) is documented in [external drivers](docs/external-drivers.md).
 
 Measurement M001 normalizes every measured trial into `trials/NNN/metrics.json`: one `observed`/`missing`/`invalid` record per requested metric, with explicit units, direction, aggregation, and provenance. Trial — not request — is the comparison unit. No baseline comparison or verdict is implemented yet.
 
@@ -44,5 +47,6 @@ Deterministic trial-level bootstrap (10,000 resamples, 95% interval), practical 
 - [Comparison policy](docs/comparison.md)
 - [Baselines](docs/baselines.md)
 - [Eggstack HTTP native path](docs/eggstack-http.md)
+- [Gregg host telemetry](docs/gregg-telemetry.md)
 - [Active implementation plans](plans/registry.md)
 

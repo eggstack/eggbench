@@ -93,10 +93,13 @@ Production `eggbench` resolves against the production catalog owned by
 the stable `missing_driver` / `unsupported_workload` category. No service
 process is started and no bundle is published on that path. With the
 feature, the catalog registers the `eggserve-origin` service adapter and
-the `eggfetch-http` workload driver; `doctor` shows exact adapter/sibling
-versions and supported load-mode capabilities, and `run` executes the
-native loopback path. The CLI consumes the drivers catalog rather than
-owning registration.
+the `eggfetch-http` workload driver, plus the `gregg` telemetry driver
+with its own feature; `doctor` shows exact adapter/sibling versions and
+supported load-mode capabilities, and `run` executes the native loopback
+path. The CLI consumes the drivers catalog rather than owning
+registration. `doctor` validates declared Gregg endpoint config syntax
+(loopback policy) without dialing; live health/status probing stays in
+`run` preflight.
 
 A deterministic `fake-load` adapter exists only as explicit test injection
 for qualification harnesses. It is not a production traffic generator, has

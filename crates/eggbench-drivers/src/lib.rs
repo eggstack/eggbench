@@ -15,6 +15,8 @@ mod catalog;
 #[cfg(feature = "eggstack-http")]
 pub mod eggstack;
 pub mod external;
+#[cfg(feature = "gregg")]
+pub mod gregg;
 
 pub use catalog::{DriverCatalog, production_catalog};
 #[cfg(feature = "eggstack-http")]
