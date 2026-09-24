@@ -1837,7 +1837,7 @@ fn paired_assignment(number: u32) -> (TrialArm, u32) {
     } else {
         TrialArm::Baseline
     };
-    (arm, (number + 1) / 2)
+    (arm, number.div_ceil(2))
 }
 
 /// Warmup arm for `ordinal` (1-based) under a paired run: round-robin
@@ -2217,5 +2217,36 @@ impl WorkloadExecutor for FakeWorkload {
                 Ok(())
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod paired_assignment_tests {
+    use super::{TrialArm, paired_assignment};
+
+    #[test]
+    fn pair_identities_follow_the_alternating_ceiling_schedule() {
+        let expected = [
+            (1_u32, TrialArm::Baseline, 1_u32),
+            (2, TrialArm::Candidate, 1),
+            (3, TrialArm::Baseline, 2),
+            (4, TrialArm::Candidate, 2),
+            (5, TrialArm::Baseline, 3),
+            (6, TrialArm::Candidate, 3),
+        ];
+        for (number, arm, pair) in expected {
+            assert_eq!(paired_assignment(number), (arm, pair), "trial {number}");
+        }
+    }
+
+    #[test]
+    fn max_trial_ordinal_computes_without_wrapping() {
+        // The previous `(number + 1) / 2` arithmetic wraps at `u32::MAX` in
+        // release and panics in debug; `div_ceil` must not.
+        assert_eq!(
+            paired_assignment(u32::MAX),
+            (TrialArm::Baseline, u32::MAX.div_ceil(2))
+        );
+        assert_eq!(u32::MAX.div_ceil(2), 2_147_483_648);
     }
 }

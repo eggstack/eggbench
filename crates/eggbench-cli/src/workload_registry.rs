@@ -662,17 +662,10 @@ mod tests {
         let runtime = ProductionRuntime::new();
         // Workload inventory always carries the three external oracles;
         // the native descriptors join with eggstack-http (+gregg).
-        let mut expected_workload = 3;
-        let mut expected_descriptors = 3;
-        #[cfg(feature = "eggstack-http")]
-        {
-            expected_workload += 1;
-            expected_descriptors += 2;
-        }
-        #[cfg(feature = "gregg")]
-        {
-            expected_descriptors += 1;
-        }
+        let expected_workload: usize = 3 + usize::from(cfg!(feature = "eggstack-http"));
+        let expected_descriptors: usize = 3
+            + 2 * usize::from(cfg!(feature = "eggstack-http"))
+            + usize::from(cfg!(feature = "gregg"));
         assert!(runtime.has_workload_driver());
         assert_eq!(runtime.inventory().len(), expected_workload);
         assert_eq!(runtime.driver_descriptors().len(), expected_descriptors);
