@@ -31,6 +31,16 @@ Eggbench owns adapter configuration, lifecycle participation, normalization, and
 
 Versions are planning evidence, not eternal pins. Every implementation plan must re-audit the sibling public surface before adoption.
 
+## 2A. M002 handoff re-audit — 2026-09-24
+
+The M002 implementation handoff re-audited the sibling public surfaces after C002 closure:
+
+- Eggress default branch is workspace 1.0.10 / Rust 1.89; the latest published GitHub release inspected is v1.0.9. The required listener-free TCP route seam already exists in published v1.0.9 through eggress-outbound: OutboundConnector, typed detailed connection errors, OutboundInfo, and native chain execution with no listener.
+- M002 therefore targets eggress-outbound directly rather than eggress-embed. Implementation must pin the newest published compatible 1.0.x after re-audit and must not depend on mutable main solely for unreleased internals.
+- Eggchaos v0.1.0 is now a published qualified release; eggchaos-core is the M002 production seam. Its BidirectionalChaosStream composes over an existing AsyncRead + AsyncWrite stream and owns deterministic directional byte-stream faults.
+- eggchaos-eggfetch is not the M002 composition seam because its ChaosDialer establishes a direct TCP connection itself. Eggbench needs Eggress route establishment first, then eggchaos-core wrapping of the returned logical stream.
+- Eggchaos has newer datagram work on main, but M002 remains explicitly stream-only. UDP/datagram impairment is not pulled into this milestone.
+
 ## 3. Invariants
 
 - No copied sibling protocol implementation.
@@ -134,7 +144,7 @@ Qualification note:
 
 ### M002 — Route and stream-fault topology
 
-Status: ready for plan authoring; implementation unblocked by closed post-M003 hosted qualification corrective C002. Plan-time input for the author: Eggress 1.0.10 is present locally (roadmap §2 cited 1.0.8 — re-audit the seam), while Eggchaos/EggReplay/Eggprobe have no locally available crate, CLI, or HTTP seam as of 2026-09-24.
+Status: ready for handoff. Implementation plan: `plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md`. Planning commit: `8828cdb`. C002 is closed and no dependency gate remains. The plan uses a first-class schema-v3 network-path contract, published listener-free `egress-outbound`, and published `eggchaos-core`; it explicitly rejects paired/network-path and external-oracle/network-path combinations in M002 rather than weakening existing connection/trial semantics.
 
 ### M003 — Replay and diagnostics
 
