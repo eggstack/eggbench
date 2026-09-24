@@ -299,6 +299,24 @@ pub struct TrialExecutionResult {
     pub terminal_status: TrialExecutionStatus,
     /// Redaction-safe failure classification, when the invocation did not complete.
     pub failure_category: Option<TrialExecutionFailure>,
+    /// Paired arm measured by this trial; absent for unpaired trials and
+    /// schema-v1 evidence.
+    #[serde(default)]
+    pub arm: Option<TrialArm>,
+    /// Pair identity within a paired run; absent for unpaired trials and
+    /// schema-v1 evidence.
+    #[serde(default)]
+    pub pair_id: Option<u32>,
+}
+
+/// Paired arm identity for one measured trial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrialArm {
+    /// Control arm (odd trials under the v1 alternating schedule).
+    Baseline,
+    /// Candidate arm under qualification (even trials).
+    Candidate,
 }
 
 /// Terminal execution state for a measured trial.
@@ -329,6 +347,31 @@ pub enum TrialExecutionFailure {
     Cancelled,
 }
 
+/// Paired schedule identifier for M003 v1: strictly alternating arms
+/// starting with baseline (trial 1 = baseline of pair 1).
+pub const PAIRED_SCHEDULE_V1: &str = "alternating-baseline-first";
+
+/// Paired-run record stored in the manifest of a paired bundle.
+///
+/// Present only when the run executed a predeclared paired design; absent
+/// for all unpaired and legacy bundles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedRunRecord {
+    /// Schedule identifier.
+    pub schedule: String,
+    /// Number of pairs executed.
+    pub pairs: u32,
+    /// Baseline arm service name.
+    pub baseline_service: Name,
+    /// Candidate arm service name.
+    pub candidate_service: Name,
+    /// Declared baseline arm subject identity.
+    pub baseline_subject: Subject,
+    /// Declared candidate arm subject identity.
+    pub candidate_subject: Subject,
+}
+
 /// Authoritative immutable manifest for a completed bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleManifest {
@@ -357,6 +400,9 @@ pub struct BundleManifest {
     pub trials: Vec<TrialDescriptor>,
     /// Optional comparison summary.
     pub comparison: Option<ArtifactPath>,
+    /// Optional paired-run record; present only for paired bundles.
+    #[serde(default)]
+    pub paired: Option<PairedRunRecord>,
     /// Optional report.
     pub report: Option<ArtifactPath>,
     /// Driver inventory snapshot.
@@ -435,6 +481,7 @@ impl LegacyManifestV1 {
             environment: self.environment,
             trials: self.trials,
             comparison: self.comparison,
+            paired: None,
             report: self.report,
             drivers: self.drivers,
             limits: self.limits,
@@ -797,6 +844,7 @@ pub struct BundleWriter {
     bounds: ArtifactBounds,
     artifacts: BTreeMap<ArtifactPath, ArtifactRecord>,
     total_bytes: u64,
+    paired_record: Option<PairedRunRecord>,
 }
 
 impl BundleWriter {
@@ -852,7 +900,16 @@ impl BundleWriter {
             bounds,
             artifacts: BTreeMap::new(),
             total_bytes: 0,
+            paired_record: None,
         })
+    }
+
+    /// Record the paired-run manifest record for a paired run.
+    ///
+    /// Must be called before [`BundleWriter::finalize`] when the run
+    /// executed a predeclared paired design; unpaired runs leave it absent.
+    pub fn set_paired_record(&mut self, record: PairedRunRecord) {
+        self.paired_record = Some(record);
     }
 
     /// Staging directory path, for diagnostics and incomplete-state inspection.
@@ -1035,6 +1092,7 @@ impl BundleWriter {
             environment,
             trials,
             comparison,
+            paired: self.paired_record.clone(),
             report,
             drivers,
             limits: self.bounds,
@@ -1560,7 +1618,9 @@ fn sync_directory(_path: &Path) -> Result<(), BundleError> {
 pub fn validate_resolved_plan_bytes(bytes: &[u8]) -> Result<ResolvedPlan, BundleError> {
     let plan: ResolvedPlan = serde_json::from_slice(bytes)
         .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
-    if plan.schema_version.0 != crate::RESOLVED_PLAN_SCHEMA_VERSION.0 {
+    if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_1
+    {
         return Err(BundleError::InvalidManifest(
             "unsupported resolved-plan schema version",
         ));
@@ -1587,6 +1647,41 @@ mod tests {
     }
     fn path(value: &str) -> ArtifactPath {
         ArtifactPath::new(value).unwrap()
+    }
+
+    #[test]
+    fn trial_result_v1_parses_with_defaulted_arm_and_pair() {
+        // Schema-v1 evidence carries no arm/pair tags; it must keep parsing
+        // with both tags absent.
+        let raw = serde_json::json!({
+            "schema_version": 1,
+            "trial_id": 3,
+            "measurement_start_offset_ns": 100,
+            "measurement_elapsed_ns": 200,
+            "terminal_status": "completed",
+            "failure_category": null,
+        });
+        let result: TrialExecutionResult = serde_json::from_value(raw).unwrap();
+        assert_eq!(result.schema_version, SchemaVersion(1));
+        assert_eq!(result.arm, None);
+        assert_eq!(result.pair_id, None);
+    }
+
+    #[test]
+    fn trial_result_v2_round_trips_arm_and_pair() {
+        let result = TrialExecutionResult {
+            schema_version: SchemaVersion(2),
+            trial_id: TrialId::new(2).unwrap(),
+            measurement_start_offset_ns: 100,
+            measurement_elapsed_ns: 200,
+            terminal_status: TrialExecutionStatus::Completed,
+            failure_category: None,
+            arm: Some(TrialArm::Candidate),
+            pair_id: Some(1),
+        };
+        let round: TrialExecutionResult =
+            serde_json::from_slice(&serde_json::to_vec(&result).unwrap()).unwrap();
+        assert_eq!(round, result);
     }
     fn add_required(writer: &mut BundleWriter) {
         writer

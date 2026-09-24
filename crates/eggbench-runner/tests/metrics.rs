@@ -71,6 +71,7 @@ fn plan_with_metrics(metrics: Vec<eggbench_core::MetricRequest>, measured: u32) 
             total_bytes: 4 * 1024 * 1024,
         },
         seed: Some(7),
+        paired: None,
         warnings: Vec::new(),
     }
 }

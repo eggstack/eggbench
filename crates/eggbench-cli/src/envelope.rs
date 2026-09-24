@@ -63,6 +63,9 @@ pub enum CliOutput {
         has_workload_driver: bool,
         /// Detected environment fingerprint summary fields.
         environment_fields: Vec<EnvironmentSummary>,
+        /// Predeclared paired design, when the plan carries one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        paired: Option<DoctorPairedDesign>,
     },
     /// `run` summary with finalized bundle path and execution status.
     Run {
@@ -405,6 +408,20 @@ pub struct DriverSummary {
     /// version stays in `run` preflight and trial evidence.
     #[serde(default)]
     pub binary_present: Option<bool>,
+}
+
+/// Predeclared paired design summary used by `doctor`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoctorPairedDesign {
+    /// Schedule identifier.
+    pub schedule: String,
+    /// Number of pairs (half the measured trial count).
+    pub pairs: u32,
+    /// Baseline arm service name.
+    pub baseline_service: String,
+    /// Candidate arm service name.
+    pub candidate_service: String,
 }
 
 /// Environment fingerprint summary used by `doctor` and `inspect`.

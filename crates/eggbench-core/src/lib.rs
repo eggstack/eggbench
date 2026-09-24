@@ -19,3 +19,5 @@ pub use types::*;
 pub const CORE_SCHEMA_NAMESPACE: &str = "org.eggstack.eggbench.core";
 /// Current experiment-plan schema version.
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+/// Paired-design experiment-plan schema version (adds `paired`).
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);

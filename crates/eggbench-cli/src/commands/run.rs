@@ -157,7 +157,11 @@ pub async fn run_with_qualification(
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
     let runtime = QualificationRuntime::new();
-    let descriptors = runtime.driver_descriptors();
+    let mut descriptors = runtime.driver_descriptors();
+    // Plans that declare services (including paired arm services) require a
+    // Service-category driver at resolution; the fake claims no capabilities
+    // and external-lifecycle services spawn nothing.
+    descriptors.push(QualificationRuntime::service_descriptor());
     let mut executor = QualificationRuntime::workload_executor(fake);
     run_impl(
         plan,

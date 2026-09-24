@@ -3,8 +3,9 @@
 
 use eggbench_core::{
     ArtifactBounds, ArtifactPath, ArtifactRole, BundleError, BundleReader, BundleWriter,
-    DurationMs, ExecutionStatus, Lifecycle, Name, PositiveCount, ResetPolicy, ResolvedPlan, RunId,
-    Sensitivity, Service, ServiceKind, Subject, TrialPolicy, Workload,
+    DurationMs, ExecutionStatus, Lifecycle, Name, PositiveCount, ResetPolicy, ResolvedPairedArm,
+    ResolvedPairedDesign, ResolvedPlan, RunId, Sensitivity, Service, ServiceKind, Subject,
+    TrialArm, TrialExecutionResult, TrialPolicy, Workload,
 };
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
@@ -67,6 +68,7 @@ fn plan() -> ResolvedPlan {
             total_bytes: 4 * 1024 * 1024,
         },
         seed: Some(42),
+        paired: None,
         warnings: Vec::new(),
     }
 }
@@ -233,10 +235,12 @@ async fn schedules_warmup_trials_reset_cooldown_and_finalizes_separate_evidence(
         vec![
             InvocationKind::Warmup { ordinal: 1 },
             InvocationKind::Measured {
-                trial_id: eggbench_core::TrialId::new(1).unwrap()
+                trial_id: eggbench_core::TrialId::new(1).unwrap(),
+                arm: None,
             },
             InvocationKind::Measured {
-                trial_id: eggbench_core::TrialId::new(2).unwrap()
+                trial_id: eggbench_core::TrialId::new(2).unwrap(),
+                arm: None,
             }
         ]
     );
@@ -281,11 +285,14 @@ async fn schedules_warmup_trials_reset_cooldown_and_finalizes_separate_evidence(
         &std::fs::read(result.bundle_path.join("trials/001/result.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(json.schema_version, eggbench_core::SchemaVersion(1));
+    assert_eq!(json.schema_version, eggbench_core::SchemaVersion(2));
     assert_eq!(
         json.terminal_status,
         eggbench_core::TrialExecutionStatus::Completed
     );
+    // Unpaired runs stage schema-v2 results with absent arm/pair tags.
+    assert_eq!(json.arm, None);
+    assert_eq!(json.pair_id, None);
     assert!(json.measurement_elapsed_ns >= 5_000_000);
     let second: eggbench_core::TrialExecutionResult = serde_json::from_slice(
         &std::fs::read(result.bundle_path.join("trials/002/result.json")).unwrap(),
@@ -1557,5 +1564,190 @@ async fn adapter_shutdown_failure_does_not_overwrite_workload_failure() {
     assert_eq!(
         events.lock().await.as_slice(),
         ["start:origin", "stop:origin"]
+    );
+}
+
+fn paired_plan() -> ResolvedPlan {
+    let mut resolved = plan();
+    resolved.trials.measured = PositiveCount::new(4).unwrap();
+    resolved.trials.warmup = 2;
+    resolved.defaults.measured_trials = 4;
+    resolved.defaults.warmup_trials = 2;
+    resolved.subject = Subject::Label {
+        label: name("a-vs-b"),
+    };
+    resolved.paired = Some(ResolvedPairedDesign {
+        baseline: ResolvedPairedArm {
+            service: name("origin-a"),
+            subject: Subject::Label {
+                label: name("variant-a"),
+            },
+        },
+        candidate: ResolvedPairedArm {
+            service: name("origin-b"),
+            subject: Subject::Label {
+                label: name("variant-b"),
+            },
+        },
+        schedule: eggbench_core::PAIRED_SCHEDULE_V1.to_owned(),
+        pairs: 2,
+    });
+    resolved
+}
+
+fn read_trial_result(bundle: &std::path::Path, result: &ArtifactPath) -> TrialExecutionResult {
+    let reader = BundleReader::open(bundle).unwrap();
+    let mut file = reader.open_artifact(result).unwrap();
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn paired_schedule_alternates_arms_targets_and_pair_identities() {
+    let temp = tempfile::tempdir().unwrap();
+    let resolved = paired_plan();
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let outcome = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    // Warmups alternate arms round-robin; measured trials strictly alternate
+    // baseline/candidate with arm tags.
+    assert_eq!(
+        workload.invocations,
+        vec![
+            InvocationKind::Warmup { ordinal: 1 },
+            InvocationKind::Warmup { ordinal: 2 },
+            InvocationKind::Measured {
+                trial_id: eggbench_core::TrialId::new(1).unwrap(),
+                arm: Some(TrialArm::Baseline),
+            },
+            InvocationKind::Measured {
+                trial_id: eggbench_core::TrialId::new(2).unwrap(),
+                arm: Some(TrialArm::Candidate),
+            },
+            InvocationKind::Measured {
+                trial_id: eggbench_core::TrialId::new(3).unwrap(),
+                arm: Some(TrialArm::Baseline),
+            },
+            InvocationKind::Measured {
+                trial_id: eggbench_core::TrialId::new(4).unwrap(),
+                arm: Some(TrialArm::Candidate),
+            },
+        ]
+    );
+    // Every invocation directed load at the scheduled arm's service while the
+    // resolved load shape stayed identical (the fake ignores bindings, so the
+    // recorded target is the proof of per-trial override).
+    assert_eq!(
+        workload.workload_targets.as_slice(),
+        &[
+            "origin-a", "origin-b", "origin-a", "origin-b", "origin-a", "origin-b"
+        ]
+    );
+    // Staged evidence carries arm and pair identities in execution order.
+    let bundle = temp.path().join("out.eggb");
+    let expected = [
+        (Some(TrialArm::Baseline), Some(1)),
+        (Some(TrialArm::Candidate), Some(1)),
+        (Some(TrialArm::Baseline), Some(2)),
+        (Some(TrialArm::Candidate), Some(2)),
+    ];
+    assert_eq!(outcome.manifest.trials.len(), 4);
+    for (descriptor, (arm, pair_id)) in outcome.manifest.trials.iter().zip(expected) {
+        let result = read_trial_result(&bundle, &descriptor.result);
+        assert_eq!(result.arm, arm, "trial {}", descriptor.id.get());
+        assert_eq!(result.pair_id, pair_id, "trial {}", descriptor.id.get());
+        assert_eq!(result.schema_version, eggbench_core::SchemaVersion(2));
+    }
+    // Arm-namespaced seeds differ between the two trials of a pair even
+    // though both derive from the same plan seed, and across pairs too.
+    let seeds = &workload.invocation_seeds;
+    assert_eq!(seeds.len(), 6);
+    let measured: Vec<u64> = seeds[2..].iter().map(|seed| seed.unwrap()).collect();
+    assert_eq!(measured.len(), 4);
+    let unique: std::collections::BTreeSet<u64> = measured.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        4,
+        "every paired trial gets its own seed stream"
+    );
+}
+
+#[tokio::test]
+async fn paired_run_with_odd_measured_count_fails_before_startup() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = paired_plan();
+    resolved.trials.measured = PositiveCount::new(3).unwrap();
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("odd paired trial count must fail preflight");
+    assert!(matches!(error, OrchestrationError::Preflight(_)));
+    assert!(workload.invocations.is_empty());
+}
+
+#[tokio::test]
+async fn paired_odd_warmup_count_alternates_deterministically() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = paired_plan();
+    resolved.trials.measured = PositiveCount::new(2).unwrap();
+    resolved.trials.warmup = 1;
+    resolved.defaults.measured_trials = 2;
+    resolved.defaults.warmup_trials = 1;
+    resolved.paired.as_mut().unwrap().pairs = 1;
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let outcome = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    // The single warmup takes the baseline arm; measured trials alternate.
+    assert_eq!(
+        workload.invocations,
+        vec![
+            InvocationKind::Warmup { ordinal: 1 },
+            InvocationKind::Measured {
+                trial_id: eggbench_core::TrialId::new(1).unwrap(),
+                arm: Some(TrialArm::Baseline),
+            },
+            InvocationKind::Measured {
+                trial_id: eggbench_core::TrialId::new(2).unwrap(),
+                arm: Some(TrialArm::Candidate),
+            },
+        ]
+    );
+    assert_eq!(
+        workload.workload_targets.as_slice(),
+        &["origin-a", "origin-a", "origin-b"]
     );
 }

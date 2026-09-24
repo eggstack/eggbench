@@ -35,6 +35,14 @@ eggbench compare --absolute-only <candidate.eggb>
 
 Deterministic trial-level bootstrap (10,000 resamples, 95% interval), practical thresholds, digest-pinned baseline aliases, and pass/fail/inconclusive/invalid aggregation with additive exit codes 6/7/8. See [comparison](docs/comparison.md) and [baselines](docs/baselines.md).
 
+Measurement M003 runs drift-controlled paired experiments in one bundle and compares arms under policy `eggbench.trial-bootstrap-paired.v1`:
+
+```text
+eggbench compare --paired <bundle.eggb>
+```
+
+Predeclared alternating baseline/candidate schedule, per-trial arm and pair identities, pair-resampling bootstrap, descriptive drift diagnostics, and fail-closed guards against post-hoc pairing. See [paired experiments](docs/paired-experiments.md).
+
 - [Experiment plan schema](docs/experiment-plan.md)
 - [Core architecture](architecture/core.md)
 - [Driver resolution](docs/driver-capabilities.md)

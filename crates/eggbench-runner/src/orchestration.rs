@@ -13,9 +13,9 @@ use crate::{
 use eggbench_core::{
     ArtifactPath, ArtifactRole, BundleError, BundleManifest, BundleWriter, ComparisonVerdict,
     ExecutionStatus, MetricWarning, Name, NormalizationInput, RawHistogramInput,
-    RawMetricObservation, ResetPolicy, RunId, SchemaVersion, Sensitivity, TrialDescriptor,
-    TrialExecutionFailure, TrialExecutionResult, TrialExecutionStatus, TrialId, Workload,
-    normalize_trial_metrics, trial_metrics_path,
+    RawMetricObservation, ResetPolicy, RunId, SchemaVersion, Sensitivity, TrialArm,
+    TrialDescriptor, TrialExecutionFailure, TrialExecutionResult, TrialExecutionStatus, TrialId,
+    Workload, normalize_trial_metrics, trial_metrics_path,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -32,7 +32,9 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_PHASE_EVENTS: usize = 10_000;
 const MAX_WORKLOAD_ARTIFACTS_PER_INVOCATION: usize = 256;
-const TRIAL_RESULT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+const TRIAL_RESULT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+/// Warmup record schema version (warmup records carry no arm/pair tags).
+const WARMUP_RECORD_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
 /// Invocation identity, without comparison or metric semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +49,8 @@ pub enum InvocationKind {
     Measured {
         /// Stable trial identity.
         trial_id: TrialId,
+        /// Paired arm measured by this trial; `None` for unpaired runs.
+        arm: Option<TrialArm>,
     },
 }
 
@@ -653,6 +657,13 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 None,
                 origin,
             );
+            // Paired warmups alternate arms round-robin so each variant is
+            // warm before its first measured trial; they carry no pair id.
+            let workload_override = if resolved.paired.is_some() {
+                Some(effective_workload(resolved, warmup_arm(ordinal)))
+            } else {
+                None
+            };
             match execute_invocation(InvocationRequest {
                 executor,
                 cancel,
@@ -660,6 +671,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 resolved,
                 bindings: session.runtime_bindings(),
                 kind: InvocationKind::Warmup { ordinal },
+                workload_override,
                 limit: config.warmup_timeout,
                 origin,
             })
@@ -735,6 +747,16 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                     break;
                 }
             };
+            // Paired schedule: alternating arms starting with baseline; the
+            // pair identity counts consecutive baseline/candidate trials.
+            let (arm, pair_id) = match &resolved.paired {
+                Some(_) => {
+                    let (arm, pair) = paired_assignment(number);
+                    (Some(arm), Some(pair))
+                }
+                None => (None, None),
+            };
+            let workload_override = arm.map(|arm| effective_workload(resolved, arm));
             let index = begin_phase(
                 &mut state.phases,
                 PhaseKind::MeasuredTrial,
@@ -777,6 +799,8 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                     measurement_elapsed_ns: 0,
                     terminal_status: TrialExecutionStatus::Failed,
                     failure_category: Some(TrialExecutionFailure::TelemetryFailed),
+                    arm,
+                    pair_id,
                 };
                 match stage_trial(
                     &mut state.writer,
@@ -805,7 +829,8 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 run_id,
                 resolved,
                 bindings: session.runtime_bindings(),
-                kind: InvocationKind::Measured { trial_id },
+                kind: InvocationKind::Measured { trial_id, arm },
+                workload_override,
                 limit: config.measurement_timeout,
                 origin,
             })
@@ -836,6 +861,8 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                             measurement_elapsed_ns: nanos(elapsed),
                             terminal_status: TrialExecutionStatus::Completed,
                             failure_category: None,
+                            arm,
+                            pair_id,
                         };
                         match stage_trial(
                             &mut state.writer,
@@ -893,6 +920,8 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                             measurement_elapsed_ns: nanos(elapsed),
                             terminal_status: TrialExecutionStatus::Failed,
                             failure_category: Some(TrialExecutionFailure::TelemetryFailed),
+                            arm,
+                            pair_id,
                         };
                         match stage_trial(
                             &mut state.writer,
@@ -957,6 +986,8 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                             FailureCategory::Cancelled => TrialExecutionFailure::Cancelled,
                             _ => TrialExecutionFailure::WorkloadFailed,
                         }),
+                        arm,
+                        pair_id,
                     };
                     match stage_trial(
                         &mut state.writer,
@@ -1321,6 +1352,10 @@ struct InvocationRequest<'a, E: ?Sized> {
     resolved: &'a eggbench_core::ResolvedPlan,
     bindings: &'a RuntimeBindings,
     kind: InvocationKind,
+    /// Effective workload for this invocation. Paired trials direct load at
+    /// one arm's service while keeping the resolved load shape; `None`
+    /// selects the resolved workload unchanged.
+    workload_override: Option<Workload>,
     limit: Duration,
     origin: Instant,
 }
@@ -1335,6 +1370,7 @@ async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
         resolved,
         bindings,
         kind,
+        workload_override,
         limit,
         origin,
     } = request;
@@ -1342,7 +1378,7 @@ async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
     let context = InvocationContext {
         run_id,
         kind,
-        workload: resolved.workload.clone(),
+        workload: workload_override.unwrap_or_else(|| resolved.workload.clone()),
         seed: resolved.seed.map(|seed| derive_seed(seed, kind)),
         bindings: bindings.clone(),
         cancellation: child.clone(),
@@ -1366,6 +1402,16 @@ fn preflight(
     resolved: &eggbench_core::ResolvedPlan,
     resets: &ResetRegistry,
 ) -> Result<PhaseConfig, OrchestrationError> {
+    // Plan validation already enforces even measured counts for paired runs;
+    // re-check here so hand-built resolved plans fail before managed startup.
+    if resolved.paired.is_some() {
+        let measured = resolved.trials.measured.get();
+        if measured < 2 || !measured.is_multiple_of(2) {
+            return Err(OrchestrationError::Preflight(
+                "paired run requires an even measured trial count of at least 2",
+            ));
+        }
+    }
     let allowed: BTreeSet<&str> = ["measurement", "warmup", "reset", "drain", "telemetry"]
         .into_iter()
         .collect();
@@ -1764,8 +1810,12 @@ fn outcome_for(category: FailureCategory) -> PhaseOutcome {
 fn derive_seed(seed: u64, kind: InvocationKind) -> u64 {
     let namespace = match kind {
         InvocationKind::Warmup { ordinal } => 0x5741_524d_0000_0000_u64 | u64::from(ordinal),
-        InvocationKind::Measured { trial_id } => {
-            0x5452_4941_0000_0000_u64 | u64::from(trial_id.get())
+        InvocationKind::Measured { trial_id, arm } => {
+            let arm_bit = match arm {
+                Some(TrialArm::Candidate) => 0x0000_0001_0000_0000_u64,
+                Some(TrialArm::Baseline) | None => 0,
+            };
+            0x5452_4941_0000_0000_u64 | arm_bit | u64::from(trial_id.get())
         }
     };
     mix64(seed ^ namespace)
@@ -1775,6 +1825,45 @@ fn mix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+/// Paired arm and pair identity for measured trial `number` (1-based) under
+/// the v1 alternating schedule: odd trials measure baseline, even trials
+/// measure candidate; pair identities count consecutive baseline/candidate
+/// trials starting at one.
+fn paired_assignment(number: u32) -> (TrialArm, u32) {
+    let arm = if number.is_multiple_of(2) {
+        TrialArm::Candidate
+    } else {
+        TrialArm::Baseline
+    };
+    (arm, (number + 1) / 2)
+}
+
+/// Warmup arm for `ordinal` (1-based) under a paired run: round-robin
+/// starting with baseline. Warmups carry no pair identity.
+fn warmup_arm(ordinal: u32) -> TrialArm {
+    if ordinal.is_multiple_of(2) {
+        TrialArm::Candidate
+    } else {
+        TrialArm::Baseline
+    }
+}
+
+/// Effective workload for one invocation of a paired run: the resolved load
+/// shape directed at the arm's service. Unpaired runs use the resolved
+/// workload unchanged.
+fn effective_workload(resolved: &eggbench_core::ResolvedPlan, arm: TrialArm) -> Workload {
+    match &resolved.paired {
+        Some(design) => {
+            let service = match arm {
+                TrialArm::Baseline => &design.baseline.service,
+                TrialArm::Candidate => &design.candidate.service,
+            };
+            resolved.workload.with_target(service.clone())
+        }
+        None => resolved.workload.clone(),
+    }
 }
 
 fn stage_trial(
@@ -1919,7 +2008,7 @@ fn stage_warmup(
         failure_category: Option<FailureCategory>,
     }
     let record = WarmupRecord {
-        schema_version: TRIAL_RESULT_SCHEMA_VERSION,
+        schema_version: WARMUP_RECORD_SCHEMA_VERSION,
         ordinal,
         elapsed_ns: nanos(elapsed),
         status: if failure.is_some() {
@@ -2039,6 +2128,10 @@ pub struct FakeWorkload {
     invocation_count: u32,
     /// Invocation kinds in execution order.
     pub invocations: Vec<InvocationKind>,
+    /// Effective workload target per invocation, in execution order.
+    pub workload_targets: Vec<String>,
+    /// Derived invocation seed per invocation, in execution order.
+    pub invocation_seeds: Vec<Option<u64>>,
     /// Whether drain was entered.
     pub drained: bool,
 }
@@ -2056,6 +2149,8 @@ impl Default for FakeWorkload {
             error_counts_by_invocation: Vec::new(),
             invocation_count: 0,
             invocations: Vec::new(),
+            workload_targets: Vec::new(),
+            invocation_seeds: Vec::new(),
             drained: false,
         }
     }
@@ -2068,6 +2163,9 @@ impl WorkloadExecutor for FakeWorkload {
         Box::pin(async move {
             self.invocation_count += 1;
             self.invocations.push(context.kind);
+            self.workload_targets
+                .push(context.workload.target().as_str().to_owned());
+            self.invocation_seeds.push(context.seed);
             if self.pending_on == Some(self.invocation_count) {
                 context.cancellation.cancelled().await;
                 return Err(FailureCategory::Cancelled);

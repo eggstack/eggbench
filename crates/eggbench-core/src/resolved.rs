@@ -1,14 +1,16 @@
 //! Driver capability contracts and deterministic plan resolution.
 use crate::{
-    EnvironmentPolicy, ExperimentPlan, LoadMode, Name, PlanError, SchemaVersion, ServiceKind,
-    Subject, Workload,
+    EnvironmentPolicy, ExperimentPlan, LoadMode, Name, PAIRED_SCHEDULE_V1, PairedArm, PlanError,
+    SchemaVersion, ServiceKind, Subject, Workload,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-/// Current resolved-plan schema version.
-pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+/// Current resolved-plan schema version (v2 adds `paired`).
+pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+/// Previous resolved-plan schema version, still accepted on read.
+pub const RESOLVED_PLAN_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
 
 /// Independent adapter category; categories do not share a universal driver trait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -189,8 +191,46 @@ pub struct ResolvedPlan {
     pub artifact_bounds: crate::ArtifactBounds,
     /// Deterministic seed.
     pub seed: Option<u64>,
+    /// Resolved paired design; present only for paired plans.
+    #[serde(default)]
+    pub paired: Option<ResolvedPairedDesign>,
     /// Non-fatal resolution diagnostics.
     pub warnings: Vec<ResolutionWarning>,
+}
+
+/// Resolved paired baseline/candidate design.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedPairedDesign {
+    /// Resolved control arm.
+    pub baseline: ResolvedPairedArm,
+    /// Resolved candidate arm.
+    pub candidate: ResolvedPairedArm,
+    /// Schedule identifier (`alternating-baseline-first` in v1).
+    pub schedule: String,
+    /// Number of pairs (half the measured trial count).
+    pub pairs: u32,
+}
+
+/// One resolved paired arm.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedPairedArm {
+    /// Service receiving load on this arm's trials.
+    pub service: Name,
+    /// Declared subject identity for this arm's provenance.
+    pub subject: Subject,
+}
+
+impl ResolvedPairedArm {
+    /// Resolve one predeclared arm (arms carry no driver selection of their
+    /// own; compatibility is proven against the shared workload driver).
+    fn resolve(arm: &PairedArm) -> Self {
+        Self {
+            service: arm.service.clone(),
+            subject: arm.subject.clone(),
+        }
+    }
 }
 
 /// Defaults frozen when the plan was resolved.
@@ -387,24 +427,40 @@ pub fn resolve_plan(
         }
     }
 
-    if let Some(target_service) = plan
-        .services
-        .iter()
-        .find(|s| &s.name == workload_target(&plan.workload))
-        && let Some(workload_driver) = drivers.get(&DriverCategory::Workload)
-    {
-        let service_type = match &target_service.kind {
-            ServiceKind::Command { .. } => "command".to_owned(),
-            ServiceKind::Named { service_type } => service_type.to_string(),
-        };
-        let compatible = &workload_driver.descriptor.compatible_service_types;
-        if !compatible.is_empty() && !compatible.iter().any(|name| name.as_str() == service_type) {
-            return Err(ResolveError::IncompatibleService {
-                driver: workload_driver.descriptor.name.clone(),
-                service_type,
-            });
+    if let Some(workload_driver) = drivers.get(&DriverCategory::Workload) {
+        // The plan target is checked always; paired arm services are checked
+        // when a paired design is present so a driver that can only drive one
+        // variant fails closed at resolution, never mid-run.
+        let mut services_to_check = vec![workload_target(&plan.workload)];
+        if let Some(design) = &plan.paired {
+            services_to_check.push(&design.baseline.service);
+            services_to_check.push(&design.candidate.service);
+        }
+        for service_name in services_to_check {
+            if let Some(target_service) = plan.services.iter().find(|s| &s.name == service_name) {
+                let service_type = match &target_service.kind {
+                    ServiceKind::Command { .. } => "command".to_owned(),
+                    ServiceKind::Named { service_type } => service_type.to_string(),
+                };
+                let compatible = &workload_driver.descriptor.compatible_service_types;
+                if !compatible.is_empty()
+                    && !compatible.iter().any(|name| name.as_str() == service_type)
+                {
+                    return Err(ResolveError::IncompatibleService {
+                        driver: workload_driver.descriptor.name.clone(),
+                        service_type,
+                    });
+                }
+            }
         }
     }
+
+    let paired = plan.paired.as_ref().map(|design| ResolvedPairedDesign {
+        baseline: ResolvedPairedArm::resolve(&design.baseline),
+        candidate: ResolvedPairedArm::resolve(&design.candidate),
+        schedule: PAIRED_SCHEDULE_V1.to_owned(),
+        pairs: plan.trials.measured.get() / 2,
+    });
 
     Ok(ResolvedPlan {
         schema_version: RESOLVED_PLAN_SCHEMA_VERSION,
@@ -425,6 +481,7 @@ pub fn resolve_plan(
         metrics: plan.metrics.clone(),
         artifact_bounds: plan.bounds,
         seed: plan.seed,
+        paired,
         warnings,
     })
 }
@@ -589,7 +646,7 @@ mod tests {
             resolve_plan(&plan(), &[workload], &selected)
                 .unwrap()
                 .schema_version,
-            SchemaVersion(1)
+            RESOLVED_PLAN_SCHEMA_VERSION
         );
     }
 
@@ -735,5 +792,103 @@ mod tests {
                 .as_deref(),
             Some("/opt/tools/loadgen")
         );
+    }
+
+    fn paired_plan() -> ExperimentPlan {
+        use crate::{PositiveCount, Service, ServiceKind};
+        let mut plan = self::plan();
+        plan.schema_version = crate::EXPERIMENT_PLAN_SCHEMA_VERSION_2;
+        plan.subject = Subject::Label {
+            label: name("a-vs-b"),
+        };
+        let service = |service_name: &str, service_type: &str| Service {
+            name: name(service_name),
+            kind: ServiceKind::Named {
+                service_type: name(service_type),
+            },
+            lifecycle: crate::Lifecycle::External,
+            depends_on: Vec::new(),
+            config: std::collections::BTreeMap::new(),
+            readiness: None,
+            shutdown: None,
+            working_directory: None,
+            log_limit_bytes: 4096,
+        };
+        plan.services = vec![service("origin-a", "http"), service("origin-b", "http")];
+        plan.workload = Workload::FiniteCount {
+            target: name("origin-a"),
+            requests: PositiveCount::new(100).unwrap(),
+            concurrency: PositiveCount::new(5).unwrap(),
+        };
+        plan.trials.measured = PositiveCount::new(4).unwrap();
+        plan.paired = Some(crate::PairedDesign {
+            baseline: PairedArm {
+                service: name("origin-a"),
+                subject: Subject::Label {
+                    label: name("variant-a"),
+                },
+            },
+            candidate: PairedArm {
+                service: name("origin-b"),
+                subject: Subject::Label {
+                    label: name("variant-b"),
+                },
+            },
+        });
+        plan
+    }
+
+    #[test]
+    fn paired_resolution_records_schedule_pairs_and_source_version() {
+        let mut workload = driver("fake-load", DriverCategory::Workload);
+        workload.default = true;
+        let mut service = driver("fake-service", DriverCategory::Service);
+        service.default = true;
+        let resolved = resolve_plan(&paired_plan(), &[workload, service], &options()).unwrap();
+        assert_eq!(resolved.schema_version, RESOLVED_PLAN_SCHEMA_VERSION);
+        assert_eq!(
+            resolved.source_plan_schema_version,
+            crate::EXPERIMENT_PLAN_SCHEMA_VERSION_2
+        );
+        let design = resolved.paired.expect("resolved paired design");
+        assert_eq!(design.schedule, crate::PAIRED_SCHEDULE_V1);
+        assert_eq!(design.pairs, 2);
+        assert_eq!(design.baseline.service.as_str(), "origin-a");
+        assert_eq!(design.candidate.service.as_str(), "origin-b");
+    }
+
+    #[test]
+    fn paired_resolution_fails_closed_when_driver_cannot_drive_one_arm() {
+        let mut workload = driver("http-only-load", DriverCategory::Workload);
+        workload.default = true;
+        workload.compatible_service_types.insert(name("http"));
+        let mut service = driver("fake-service", DriverCategory::Service);
+        service.default = true;
+        // Both arms are http services: compatible.
+        resolve_plan(
+            &paired_plan(),
+            &[workload.clone(), service.clone()],
+            &options(),
+        )
+        .unwrap();
+        // Retype the candidate arm: resolution must fail before any trial.
+        let mut plan = paired_plan();
+        plan.services[1] = crate::Service {
+            name: name("origin-b"),
+            kind: crate::ServiceKind::Named {
+                service_type: name("other"),
+            },
+            lifecycle: crate::Lifecycle::External,
+            depends_on: Vec::new(),
+            config: std::collections::BTreeMap::new(),
+            readiness: None,
+            shutdown: None,
+            working_directory: None,
+            log_limit_bytes: 4096,
+        };
+        assert!(matches!(
+            resolve_plan(&plan, &[workload, service], &options()),
+            Err(ResolveError::IncompatibleService { .. })
+        ));
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, Name, PositiveCount, RateMilliRps,
-    SchemaVersion, SecretRef,
+    BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
+    Name, PositiveCount, RateMilliRps, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,6 +33,9 @@ pub struct ExperimentPlan {
     pub environment_policy: EnvironmentPolicy,
     /// Optional deterministic random seed.
     pub seed: Option<u64>,
+    /// Optional paired baseline/candidate design (schema v2 only).
+    #[serde(default)]
+    pub paired: Option<PairedDesign>,
     /// Upper bounds for later evidence creation.
     pub bounds: ArtifactBounds,
 }
@@ -314,6 +317,30 @@ pub enum Gate {
     },
 }
 
+/// Paired baseline/candidate experiment design (plan schema v2).
+///
+/// Both arms are services that stay live for the whole run; the runner
+/// alternates which service receives load. Arm subjects are provenance
+/// declarations only: the runner never launches or digests them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedDesign {
+    /// Control arm; also the nominal plan workload target (see validation).
+    pub baseline: PairedArm,
+    /// Candidate arm under qualification.
+    pub candidate: PairedArm,
+}
+
+/// One arm of a paired design.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedArm {
+    /// Declared service that receives load on this arm's trials.
+    pub service: Name,
+    /// Declared subject identity for this arm's provenance.
+    pub subject: Subject,
+}
+
 /// Testbed comparison policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -414,7 +441,9 @@ impl ExperimentPlan {
     /// Returns an unsupported-version or categorized semantic validation error.
     #[allow(clippy::too_many_lines)] // Keep the complete invariant gate in one reviewable pass.
     pub fn validate(&self) -> Result<(), PlanError> {
-        if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION {
+        if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_2
+        {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
         if let Subject::ManagedCommand { argv, .. } = &self.subject
@@ -498,6 +527,7 @@ impl ExperimentPlan {
         }
         ensure_acyclic(&self.services)?;
         validate_workload(&self.workload)?;
+        validate_paired(self, &services)?;
         if self.trials.warmup > 1_000 {
             return invalid("invalid_bound", "warmup count exceeds 1000");
         }
@@ -568,6 +598,66 @@ impl ExperimentPlan {
     }
 }
 
+impl Workload {
+    /// Destination service or external target of this workload.
+    #[must_use]
+    pub fn target(&self) -> &Name {
+        workload_target(self)
+    }
+    /// Clone this workload with the destination service replaced.
+    ///
+    /// The runner uses this to direct one trial at a paired arm's service
+    /// while keeping the load shape identical across arms.
+    #[must_use]
+    pub fn with_target(&self, target: Name) -> Self {
+        match self {
+            Self::ClosedLoop {
+                concurrency,
+                requests,
+                duration_ms,
+                ..
+            } => Self::ClosedLoop {
+                target,
+                concurrency: *concurrency,
+                requests: *requests,
+                duration_ms: *duration_ms,
+            },
+            Self::OpenLoop {
+                rate_milli_rps,
+                requests,
+                duration_ms,
+                ..
+            } => Self::OpenLoop {
+                target,
+                rate_milli_rps: *rate_milli_rps,
+                requests: *requests,
+                duration_ms: *duration_ms,
+            },
+            Self::FiniteCount {
+                requests,
+                concurrency,
+                ..
+            } => Self::FiniteCount {
+                target,
+                requests: *requests,
+                concurrency: *concurrency,
+            },
+            Self::TimeBounded {
+                duration_ms,
+                mode,
+                concurrency,
+                rate_milli_rps,
+                ..
+            } => Self::TimeBounded {
+                target,
+                duration_ms: *duration_ms,
+                mode: *mode,
+                concurrency: *concurrency,
+                rate_milli_rps: *rate_milli_rps,
+            },
+        }
+    }
+}
 fn workload_target(workload: &Workload) -> &Name {
     match workload {
         Workload::ClosedLoop { target, .. }
@@ -611,6 +701,65 @@ fn validate_workload(w: &Workload) -> Result<(), PlanError> {
         },
         Workload::FiniteCount { .. } => Ok(()),
     }
+}
+fn validate_paired(
+    plan: &ExperimentPlan,
+    services: &BTreeMap<Name, &Service>,
+) -> Result<(), PlanError> {
+    let Some(paired) = &plan.paired else {
+        return Ok(());
+    };
+    if plan.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_2 {
+        return Err(PlanError::UnsupportedVersion(plan.schema_version.0));
+    }
+    if !matches!(plan.subject, Subject::Label { .. }) {
+        return invalid(
+            "contradictory_configuration",
+            "paired experiments require a label subject naming the comparison",
+        );
+    }
+    let measured = plan.trials.measured.get();
+    if measured < 2 || !measured.is_multiple_of(2) {
+        return invalid(
+            "invalid_bound",
+            "paired experiments require an even measured trial count of at least 2",
+        );
+    }
+    for (arm_name, arm) in [
+        ("baseline", &paired.baseline),
+        ("candidate", &paired.candidate),
+    ] {
+        if !services.contains_key(&arm.service) {
+            return invalid(
+                "missing_reference",
+                format!(
+                    "paired {arm_name} arm references unknown service {}",
+                    arm.service
+                ),
+            );
+        }
+        if matches!(arm.subject, Subject::ManagedCommand { .. }) {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "paired {arm_name} arm subject must be a label or external identity, not a managed command"
+                ),
+            );
+        }
+    }
+    if paired.baseline.service == paired.candidate.service {
+        return invalid(
+            "contradictory_configuration",
+            "paired arms must target distinct services",
+        );
+    }
+    if workload_target(&plan.workload) != &paired.baseline.service {
+        return invalid(
+            "contradictory_configuration",
+            "paired plan workload target must equal the baseline arm service",
+        );
+    }
+    Ok(())
 }
 fn ensure_acyclic(services: &[Service]) -> Result<(), PlanError> {
     fn visit(
@@ -772,5 +921,183 @@ mod tests {
         assert!(DurationMs::new(0).is_err());
         assert!(RateMilliRps::new(0).is_err());
         assert!(PositiveCount::new(0).is_err());
+    }
+
+    fn paired_value() -> serde_json::Value {
+        let mut value: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        value["schema_version"] = 2.into();
+        value["subject"] = serde_json::json!({"kind": "label", "label": "a-vs-b"});
+        let service = |name: &str| {
+            serde_json::json!({
+                "name": name,
+                "kind": {"kind": "named", "service_type": "http"},
+                "lifecycle": "external",
+                "depends_on": [],
+                "config": {},
+                "readiness": null,
+                "shutdown": null,
+                "working_directory": null,
+                "log_limit_bytes": 4096,
+            })
+        };
+        value["services"] = serde_json::json!([service("origin-a"), service("origin-b")]);
+        value["workload"] = serde_json::json!({
+            "kind": "finite_count", "target": "origin-a",
+            "requests": 100, "concurrency": 5,
+        });
+        value["trials"]["measured"] = 4.into();
+        value["paired"] = serde_json::json!({
+            "baseline": {
+                "service": "origin-a",
+                "subject": {"kind": "label", "label": "variant-a"},
+            },
+            "candidate": {
+                "service": "origin-b",
+                "subject": {"kind": "external", "target": "origin-b",
+                            "revision": "rev-b", "digest": null},
+            },
+        });
+        value
+    }
+
+    fn paired_plan() -> ExperimentPlan {
+        ExperimentPlan::from_json(&paired_value().to_string()).unwrap()
+    }
+
+    #[test]
+    fn paired_v2_round_trip_preserves_design() {
+        let plan = paired_plan();
+        assert_eq!(plan.schema_version.0, 2);
+        let design = plan.paired.as_ref().expect("paired design");
+        assert_eq!(design.baseline.service.as_str(), "origin-a");
+        assert_eq!(design.candidate.service.as_str(), "origin-b");
+        let round = ExperimentPlan::from_json(&plan.to_json().unwrap()).unwrap();
+        assert_eq!(plan, round);
+        assert_eq!(round.schema_version.0, 2);
+        let toml = ExperimentPlan::from_toml(&plan.to_toml().unwrap()).unwrap();
+        assert_eq!(plan, toml);
+    }
+
+    #[test]
+    fn v1_plan_with_paired_design_fails_closed_at_validation() {
+        // `paired` is a known field, so a schema-v1 plan carrying it parses
+        // and then fails closed at the version guard (never silently
+        // accepted as unpaired).
+        let mut value: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        value["paired"] = paired_value()["paired"].clone();
+        assert!(matches!(
+            ExperimentPlan::from_json(&value.to_string()),
+            Err(PlanError::UnsupportedVersion(1))
+        ));
+    }
+
+    #[test]
+    fn paired_design_requires_schema_v2() {
+        let mut plan = paired_plan();
+        plan.schema_version = crate::EXPERIMENT_PLAN_SCHEMA_VERSION;
+        assert!(matches!(
+            plan.validate(),
+            Err(PlanError::UnsupportedVersion(1))
+        ));
+    }
+
+    #[test]
+    fn paired_design_validation_matrix_fails_closed() {
+        // Non-label top-level subject.
+        let mut value = paired_value();
+        value["subject"] = serde_json::json!({"kind": "external", "target": "api", "revision": null, "digest": null});
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "contradictory_configuration"
+        );
+        // Odd measured trial count.
+        let mut value = paired_value();
+        value["trials"]["measured"] = 3.into();
+        assert_eq!(
+            error_category(
+                ExperimentPlan::from_json(&value.to_string()).and_then(|plan| {
+                    plan.validate()?;
+                    Ok(())
+                })
+            ),
+            "invalid_bound"
+        );
+        // Unknown arm service.
+        let mut value = paired_value();
+        value["paired"]["candidate"]["service"] = "absent".into();
+        assert_eq!(
+            error_category(
+                ExperimentPlan::from_json(&value.to_string()).and_then(|plan| {
+                    plan.validate()?;
+                    Ok(())
+                })
+            ),
+            "missing_reference"
+        );
+        // Identical arm services.
+        let mut value = paired_value();
+        value["paired"]["candidate"]["service"] = "origin-a".into();
+        assert_eq!(
+            error_category(
+                ExperimentPlan::from_json(&value.to_string()).and_then(|plan| {
+                    plan.validate()?;
+                    Ok(())
+                })
+            ),
+            "contradictory_configuration"
+        );
+        // Managed-command arm subject.
+        let mut value = paired_value();
+        value["paired"]["baseline"]["subject"] = serde_json::json!({
+            "kind": "managed_command", "argv": ["/bin/true"],
+            "environment": {}, "revision": null, "digest": null,
+        });
+        assert_eq!(
+            error_category(
+                ExperimentPlan::from_json(&value.to_string()).and_then(|plan| {
+                    plan.validate()?;
+                    Ok(())
+                })
+            ),
+            "unsupported_option"
+        );
+        // Workload target must equal the baseline arm service.
+        let mut value = paired_value();
+        value["workload"]["target"] = "origin-b".into();
+        assert_eq!(
+            error_category(
+                ExperimentPlan::from_json(&value.to_string()).and_then(|plan| {
+                    plan.validate()?;
+                    Ok(())
+                })
+            ),
+            "contradictory_configuration"
+        );
+    }
+
+    #[test]
+    fn with_target_replaces_destination_only() {
+        let plan = paired_plan();
+        let retargeted = plan.workload.with_target(Name::new("origin-b").unwrap());
+        assert_eq!(retargeted.target().as_str(), "origin-b");
+        assert_eq!(plan.workload.target().as_str(), "origin-a");
+        match (&plan.workload, &retargeted) {
+            (
+                Workload::FiniteCount {
+                    requests: left_requests,
+                    concurrency: left_concurrency,
+                    ..
+                },
+                Workload::FiniteCount {
+                    requests,
+                    concurrency,
+                    ..
+                },
+            ) => {
+                assert_eq!(requests, left_requests);
+                assert_eq!(concurrency, left_concurrency);
+            }
+            _ => panic!("expected finite-count workloads"),
+        }
     }
 }

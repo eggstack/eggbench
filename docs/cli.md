@@ -20,6 +20,7 @@ eggbench inspect <bundle>    Open, verify, and summarize a finalized bundle.
 eggbench compare <baseline.eggb> <candidate.eggb>
 eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb>
 eggbench compare --absolute-only <candidate.eggb>
+eggbench compare --paired <bundle.eggb>
 ```
 
 `compare` never modifies either bundle. It emits the standalone versioned
@@ -28,6 +29,10 @@ with `--seed <u64>` available for explicit seeding. Aggregate `Fail`,
 `Inconclusive`, and `Invalid` retain the compare result alongside a stable
 error and exit 6, 7, or 8; passing, descriptive-only, and no-verdict
 comparisons exit 0. See [comparison](comparison.md) and
+[paired experiments](paired-experiments.md). `compare --paired` compares the
+two arms of one paired bundle under policy v2; unpaired comparison of a
+paired bundle is invalid with a stable reason. `doctor` reports a plan's
+predeclared paired design (schedule, pairs, arm services) in its payload.
 [baselines](baselines.md).
 
 `validate`, `doctor`, and `run` accept `<plan>` as a path to a `.toml` or

@@ -75,6 +75,7 @@ fn base_resolved() -> ResolvedPlan {
             total_bytes: 64 * 1024 * 1024,
         },
         seed: None,
+        paired: None,
         warnings: Vec::new(),
     }
 }

@@ -8,7 +8,7 @@
 use crate::{LocalEnvironmentCollector, SubjectSnapshot};
 use eggbench_core::{
     ArtifactBounds, ArtifactPath, ArtifactRole, BundleError, BundleWriter, EnvironmentFingerprint,
-    ResolvedPlan, RunId, Sensitivity,
+    PairedRunRecord, ResolvedPlan, RunId, Sensitivity, Subject,
 };
 use std::path::Path;
 
@@ -104,6 +104,44 @@ pub fn prepare_bundle(preparation: &BundlePreparation<'_>) -> Result<BundleWrite
         Sensitivity::Public,
         subject_bytes.as_slice(),
     )?;
+
+    // Paired runs stage one declared-only snapshot per arm and record the
+    // design in the manifest. Arm subjects are provenance declarations: the
+    // runner never launches or digests them, and managed-command arms fail
+    // closed here as well as at plan validation.
+    if let Some(design) = &preparation.resolved_plan.paired {
+        for (arm_name, arm) in [
+            ("baseline", &design.baseline),
+            ("candidate", &design.candidate),
+        ] {
+            if matches!(arm.subject, Subject::ManagedCommand { .. }) {
+                return Err(BundleError::InvalidManifest(
+                    "paired arm subject must be a label or external identity",
+                ));
+            }
+            let snapshot = SubjectSnapshot::build(&arm.subject, None)?;
+            snapshot.validate()?;
+            let arm_path =
+                ArtifactPath::new(format!("subject-arm-{arm_name}.json")).map_err(|error| {
+                    BundleError::ManifestParse(format!("arm subject path rejected: {error}"))
+                })?;
+            writer.add_artifact(
+                arm_path,
+                ArtifactRole::Subject,
+                "application/json".to_owned(),
+                Sensitivity::Public,
+                snapshot.to_json_bytes()?.as_slice(),
+            )?;
+        }
+        writer.set_paired_record(PairedRunRecord {
+            schedule: design.schedule.clone(),
+            pairs: design.pairs,
+            baseline_service: design.baseline.service.clone(),
+            candidate_service: design.candidate.service.clone(),
+            baseline_subject: design.baseline.subject.clone(),
+            candidate_subject: design.candidate.subject.clone(),
+        });
+    }
 
     Ok(writer)
 }
@@ -246,6 +284,7 @@ mod tests {
             metrics: Vec::new(),
             artifact_bounds: bounds(),
             seed: None,
+            paired: None,
             warnings: Vec::new(),
         }
     }

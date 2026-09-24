@@ -72,6 +72,7 @@ fn plan_with_telemetry(
             total_bytes: 32 * 1024 * 1024,
         },
         seed: Some(7),
+        paired: None,
         warnings: Vec::new(),
     }
 }

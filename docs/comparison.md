@@ -1,9 +1,11 @@
-# Comparison policy v1
+# Comparison policies
 
-`eggbench.trial-bootstrap.v1` compares two immutable `.eggb` bundles without
-mutating either. The candidate bundle is authoritative for metric requests,
-gates, and environment policy; the baseline supplies historical observations
-and provenance.
+## Policy v1: unpaired (`eggbench.trial-bootstrap.v1`)
+
+Policy v1 compares two immutable `.eggb` bundles without mutating either.
+The candidate bundle is authoritative for metric requests, gates, and
+environment policy; the baseline supplies historical observations and
+provenance.
 
 ## Statistical unit
 
@@ -86,3 +88,11 @@ relative values are invalid, never silently reinterpreted.
 Aggregate over gated primary metrics only: any `Invalid` beats any `Fail`
 beats any `Inconclusive`; all-pass yields `Pass`; no gate-eligible primary
 verdict yields no aggregate. Diagnostics never affect the aggregate.
+
+## Policy v2: paired (`eggbench.trial-bootstrap-paired.v1`)
+
+`eggbench compare --paired <bundle.eggb>` compares the two arms of one
+paired bundle; see [`paired-experiments.md`](paired-experiments.md) for the
+methodology. Pairs are the resampling unit, absolute gates are invalid over
+paired evidence, and unpaired comparison of a paired bundle is invalid with
+a stable reason. Receipts use schema v2 (v1 receipts are unchanged).

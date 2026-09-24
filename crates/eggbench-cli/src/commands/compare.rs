@@ -1,32 +1,45 @@
-//! `eggbench compare` command: offline comparison of two immutable bundles.
+//! `eggbench compare` command: offline comparison of immutable bundles.
 //!
-//! The command never modifies either `.eggb` directory. It emits the
+//! The command never modifies any `.eggb` directory. It emits the
 //! standalone versioned comparison receipt as machine JSON (stdout or
 //! `--output <comparison.json>`) and a human summary on stderr. Exit codes
 //! are additive: 6 comparison fail, 7 comparison inconclusive, 8 comparison
 //! invalid; descriptive/no-verdict comparisons exit 0; evidence I/O retains
-//! code 5.
+//! code 5. `--paired` compares the two arms of one paired bundle under
+//! policy v2 instead of two bundles under policy v1.
 
 use crate::envelope::{CliOutput, PathBufPayload, PresentedCommandResult};
 use crate::error::CliError;
 use eggbench_core::{
     BaselineReference, BaselineSide, ComparisonInput, ComparisonOptions, ComparisonReceipt,
-    ComparisonRequest, compare, load_baseline_alias, load_baseline_bundle, load_candidate_bundle,
+    ComparisonRequest, compare, compare_paired, load_baseline_alias, load_baseline_bundle,
+    load_candidate_bundle,
 };
 use std::path::{Path, PathBuf};
 
-/// Compare two bundles, an alias plus a candidate, or a candidate alone.
+/// Compare two bundles, an alias plus a candidate, a candidate alone, or one
+/// paired bundle's arms.
 ///
-/// Exactly one baseline mode applies: `baseline` path, `alias` file, or
-/// `absolute_only` candidate-only comparison.
+/// Exactly one mode applies: `baseline` path, `alias` file,
+/// `absolute_only` candidate-only comparison, or `paired` single-bundle
+/// paired comparison.
 pub fn run(
     baseline: Option<&Path>,
     candidate: &Path,
     alias: Option<&Path>,
     absolute_only: bool,
+    paired: bool,
     output: Option<&Path>,
     seed: Option<u64>,
 ) -> Result<PresentedCommandResult, CliError> {
+    if paired {
+        if absolute_only || baseline.is_some() || alias.is_some() {
+            return Err(CliError::Internal(
+                "--paired cannot be combined with a baseline, alias, or --absolute-only".to_owned(),
+            ));
+        }
+        return run_paired(candidate, output, seed);
+    }
     if absolute_only && (baseline.is_some() || alias.is_some()) {
         return Err(CliError::Internal(
             "--absolute-only cannot be combined with a baseline or alias".to_owned(),
@@ -64,9 +77,29 @@ pub fn run(
     };
     let receipt = compare(&request, &ComparisonOptions { seed });
 
+    present_receipt(&receipt, output)
+}
+
+/// Compare the baseline and candidate arms of one paired bundle.
+fn run_paired(
+    bundle: &Path,
+    output: Option<&Path>,
+    seed: Option<u64>,
+) -> Result<PresentedCommandResult, CliError> {
+    let input = load_candidate_bundle(bundle).map_err(map_comparison_error)?;
+    let receipt = compare_paired(bundle, &input, &ComparisonOptions { seed });
+    present_receipt(&receipt, output)
+}
+
+/// Emit the receipt payload and map the aggregate verdict to the locked
+/// exit-code matrix. Shared by unpaired and paired comparison.
+fn present_receipt(
+    receipt: &ComparisonReceipt,
+    output: Option<&Path>,
+) -> Result<PresentedCommandResult, CliError> {
     let receipt_path = match output {
         Some(path) => {
-            write_receipt(path, &receipt)?;
+            write_receipt(path, receipt)?;
             Some(
                 PathBufPayload::from_path(path)
                     .unwrap_or_else(|| PathBufPayload::from_string(path.display().to_string())),

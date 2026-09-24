@@ -79,6 +79,9 @@ pub enum Command {
         alias: Option<PathBuf>,
         /// Candidate-only absolute-gate comparison without a baseline.
         absolute_only: bool,
+        /// Paired comparison of one paired bundle's arms under policy v2;
+        /// mutually exclusive with `baseline`, `alias`, and `absolute_only`.
+        paired: bool,
         /// Optional receipt output file.
         output: Option<PathBuf>,
         /// Explicit deterministic seed.
@@ -155,6 +158,7 @@ pub async fn execute(command: Command, options: CommandOptions) -> PresentedComm
             candidate,
             alias,
             absolute_only,
+            paired,
             output,
             seed,
         } => commands::compare::run(
@@ -162,6 +166,7 @@ pub async fn execute(command: Command, options: CommandOptions) -> PresentedComm
             &candidate,
             alias.as_deref(),
             absolute_only,
+            paired,
             output.as_deref(),
             seed,
         ),

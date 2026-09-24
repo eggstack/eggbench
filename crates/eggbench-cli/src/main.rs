@@ -83,6 +83,9 @@ enum CliCommand {
         /// Candidate-only absolute-gate comparison without a baseline.
         #[arg(long)]
         absolute_only: bool,
+        /// Paired comparison of one paired bundle's arms under policy v2.
+        #[arg(long)]
+        paired: bool,
         /// Write the versioned comparison receipt JSON to this file.
         #[arg(long)]
         output: Option<PathBuf>,
@@ -165,18 +168,19 @@ fn build_command(command: CliCommand) -> Result<Command, String> {
             candidate,
             alias,
             absolute_only,
+            paired,
             output,
             seed,
         } => {
             // One positional pair covers `<baseline> <candidate>`; single
-            // positional covers `--alias <file> <candidate>` and
-            // `--absolute-only <candidate>`.
+            // positional covers `--alias <file> <candidate>`,
+            // `--absolute-only <candidate>`, and `--paired <bundle>`.
             let (baseline_path, candidate_path) = match (baseline, candidate) {
                 (Some(left), Some(right)) => (Some(left), right),
-                (Some(only), None) if absolute_only || alias.is_some() => (None, only),
+                (Some(only), None) if absolute_only || alias.is_some() || paired => (None, only),
                 _ => {
                     return Err(
-                        "provide <baseline> <candidate>, --alias <file> <candidate>, or --absolute-only <candidate>"
+                        "provide <baseline> <candidate>, --alias <file> <candidate>, --absolute-only <candidate>, or --paired <bundle>"
                             .to_owned(),
                     );
                 }
@@ -186,6 +190,7 @@ fn build_command(command: CliCommand) -> Result<Command, String> {
                 candidate: candidate_path,
                 alias,
                 absolute_only,
+                paired,
                 output,
                 seed,
             })

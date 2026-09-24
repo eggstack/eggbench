@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source_plan_schema_version": 1,
   "experiment": "smoke",
   "subject": {"kind": "external", "target": "api", "revision": null, "digest": null},
@@ -34,5 +34,6 @@
   "metrics": [{"name": "latency_p99", "unit": "ms", "direction": {"kind": "lower_is_better"}, "intent": "primary", "gate": {"kind": "absolute", "value": 500.0}}],
   "artifact_bounds": {"artifact_count": 256, "artifact_bytes": 16777216, "total_bytes": 268435456},
   "seed": 42,
+  "paired": null,
   "warnings": []
 }

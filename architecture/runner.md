@@ -22,6 +22,18 @@ records execution status and leaves the comparison verdict absent. This is
 execution infrastructure plus normalized metric evidence, not a
 performance-comparison capability.
 
+## M003 paired schedule
+
+A paired resolved plan executes its measured trials under the
+`alternating-baseline-first` schedule: odd trials measure the baseline arm
+service, even trials the candidate arm service, pair `(n+1)/2`. Warmups
+alternate arms round-robin without pair identities. Both arm services stay
+up for the whole run; per-trial arm switching is a workload-target
+override (`Workload::with_target`), so executors need no per-arm code.
+`InvocationKind::Measured` carries the arm, per-trial seeds are
+arm-namespaced, and staged trial results (schema v2) record `arm` and
+`pair_id`. See [paired experiments](../docs/paired-experiments.md).
+
 ## M001 trial normalization
 
 `WorkloadOutput` carries protocol-neutral raw observations, histogram

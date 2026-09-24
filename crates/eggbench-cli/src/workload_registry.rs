@@ -186,6 +186,29 @@ impl QualificationRuntime {
         }
     }
 
+    /// Deterministic fake service-lifecycle descriptor for qualification.
+    ///
+    /// Plans that declare services require a Service-category driver at
+    /// resolution. External-lifecycle services spawn nothing, so the fake
+    /// claims no capabilities and performs no lifecycle work; managed
+    /// services still go through the real session machinery.
+    #[must_use]
+    pub fn service_descriptor() -> eggbench_core::DriverDescriptor {
+        eggbench_core::DriverDescriptor {
+            name: Name::new("fake-service".to_owned()).expect("static descriptor name"),
+            adapter_version: env!("CARGO_PKG_VERSION").to_owned(),
+            upstream_name: "fake-service".to_owned(),
+            upstream_version: None,
+            category: DriverCategory::Service,
+            capabilities: std::collections::BTreeSet::new(),
+            supported_platforms: std::collections::BTreeSet::new(),
+            machine_output_schema: None,
+            external_process: false,
+            default: true,
+            compatible_service_types: std::collections::BTreeSet::new(),
+        }
+    }
+
     /// Build the qualification executor wrapping the given fake workload.
     #[must_use]
     pub fn workload_executor(inner: FakeWorkload) -> BuiltinWorkloadExecutor {

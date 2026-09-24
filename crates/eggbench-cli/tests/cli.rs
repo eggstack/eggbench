@@ -472,6 +472,7 @@ async fn compare_clear_regression_fails_with_code_six() {
             candidate: candidate.clone(),
             alias: None,
             absolute_only: false,
+            paired: false,
             output: None,
             seed: None,
         },
@@ -511,6 +512,7 @@ async fn compare_non_regression_passes_with_code_zero() {
             candidate,
             alias: None,
             absolute_only: false,
+            paired: false,
             output: None,
             seed: Some(42),
         },
@@ -544,6 +546,7 @@ async fn compare_threshold_crossing_is_inconclusive_with_code_seven() {
             candidate,
             alias: None,
             absolute_only: false,
+            paired: false,
             output: None,
             seed: None,
         },
@@ -572,6 +575,7 @@ async fn compare_insufficient_trials_is_invalid_with_code_eight() {
             candidate,
             alias: None,
             absolute_only: false,
+            paired: false,
             output: None,
             seed: None,
         },
@@ -609,6 +613,7 @@ async fn compare_absolute_only_needs_no_baseline() {
             candidate,
             alias: None,
             absolute_only: true,
+            paired: false,
             output: Some(receipt_path.clone()),
             seed: None,
         },
@@ -643,6 +648,7 @@ async fn compare_alias_resolves_and_digest_mismatch_fails() {
             candidate: candidate.clone(),
             alias: None,
             absolute_only: false,
+            paired: false,
             output: None,
             seed: Some(7),
         },
@@ -674,6 +680,7 @@ async fn compare_alias_resolves_and_digest_mismatch_fails() {
             candidate: candidate.clone(),
             alias: Some(alias_path),
             absolute_only: false,
+            paired: false,
             output: None,
             seed: Some(7),
         },
@@ -712,6 +719,7 @@ async fn compare_alias_resolves_and_digest_mismatch_fails() {
             candidate,
             alias: Some(bad_alias),
             absolute_only: false,
+            paired: false,
             output: None,
             seed: None,
         },
@@ -733,6 +741,7 @@ async fn compare_missing_bundle_exits_five() {
             candidate,
             alias: None,
             absolute_only: false,
+            paired: false,
             output: None,
             seed: None,
         },
@@ -1647,4 +1656,240 @@ async fn doctor_reports_oracle_binary_presence() {
             assert_eq!(entry["binary_present"], Value::Null);
         }
     }
+}
+
+fn write_paired_plan(dir: &std::path::Path) -> PathBuf {
+    let raw = std::fs::read_to_string(fixture_dir().join("minimal.json")).expect("read");
+    let mut value: Value = serde_json::from_str(&raw).expect("parse");
+    value["schema_version"] = serde_json::json!(2);
+    value["subject"] = serde_json::json!({"kind": "label", "label": "a-vs-b"});
+    let service = |name: &str| {
+        serde_json::json!({
+            "name": name,
+            "kind": {"kind": "named", "service_type": "http"},
+            "lifecycle": "external",
+            "depends_on": [],
+            "config": {},
+            "readiness": null,
+            "shutdown": null,
+            "working_directory": null,
+            "log_limit_bytes": 4096,
+        })
+    };
+    value["services"] = serde_json::json!([service("origin-a"), service("origin-b")]);
+    value["workload"] = serde_json::json!({
+        "kind": "finite_count", "target": "origin-a",
+        "requests": 100, "concurrency": 5,
+    });
+    value["trials"]["measured"] = serde_json::json!(12);
+    value["trials"]["warmup"] = serde_json::json!(0);
+    value["trials"]["timeouts"] = serde_json::json!({"measurement": 5000, "drain": 5000});
+    value["metrics"] = serde_json::json!([{
+        "name": "latency_p99",
+        "unit": "ms",
+        "direction": {"kind": "lower_is_better"},
+        "intent": "primary",
+        "gate": {"kind": "statistical_relative", "allowance": 500, "min_trials": 1},
+    }]);
+    value["paired"] = serde_json::json!({
+        "baseline": {
+            "service": "origin-a",
+            "subject": {"kind": "label", "label": "variant-a"},
+        },
+        "candidate": {
+            "service": "origin-b",
+            "subject": {"kind": "label", "label": "variant-b"},
+        },
+    });
+    let path = dir.join("paired.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&value).expect("serialize"),
+    )
+    .expect("write");
+    path
+}
+
+/// Invocation-order values: even positions feed baseline trials, odd
+/// positions feed candidate trials under the alternating schedule.
+fn alternating_values(baseline: f64, candidate: f64, pairs: usize) -> Vec<f64> {
+    let mut values = Vec::with_capacity(2 * pairs);
+    for _ in 0..pairs {
+        values.push(baseline);
+        values.push(candidate);
+    }
+    values
+}
+
+async fn paired_bundle(plan: &std::path::Path, bundle: &std::path::Path, values: &[f64]) {
+    let presented = eggbench_cli::commands_run_with_qualification(
+        plan,
+        None,
+        bundle,
+        CommandOptions::human(),
+        latency_fake(values),
+        std::future::pending(),
+    )
+    .await
+    .expect("paired qualification run");
+    assert!(presented.envelope.ok, "{:?}", presented.envelope.error);
+    assert_eq!(presented.exit_code, ExitCode::Success);
+    let manifest: Value = serde_json::from_slice(&manifest_bytes(bundle)).expect("manifest json");
+    assert_eq!(manifest["paired"]["schedule"], "alternating-baseline-first");
+    assert_eq!(manifest["paired"]["pairs"], 6);
+    assert_eq!(manifest["paired"]["baseline_service"], "origin-a");
+    assert_eq!(manifest["paired"]["candidate_service"], "origin-b");
+    assert!(bundle.join("subject-arm-baseline.json").is_file());
+    assert!(bundle.join("subject-arm-candidate.json").is_file());
+}
+
+#[tokio::test]
+async fn paired_compare_clear_regression_fails_with_code_six() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_paired_plan(tmp.path());
+    let bundle = tmp.path().join("paired.eggb");
+    paired_bundle(&plan, &bundle, &alternating_values(100.0, 130.0, 6)).await;
+    let before = manifest_bytes(&bundle);
+
+    let presented = execute(
+        Command::Compare {
+            baseline: None,
+            candidate: bundle.clone(),
+            alias: None,
+            absolute_only: false,
+            paired: true,
+            output: None,
+            seed: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::ComparisonFail);
+    assert_eq!(presented.exit_code.code(), 6);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["kind"], "compare");
+    assert_eq!(body["result"]["aggregate_verdict"], "fail");
+    assert_eq!(
+        body["result"]["receipt"]["policy_id"],
+        "eggbench.trial-bootstrap-paired.v1"
+    );
+    assert_eq!(body["result"]["receipt"]["schema_version"], 2);
+    assert_eq!(
+        body["result"]["receipt"]["paired"]["schedule"],
+        "alternating-baseline-first"
+    );
+    assert_eq!(body["result"]["receipt"]["paired"]["pairs_declared"], 6);
+    assert_eq!(
+        body["result"]["receipt"]["paired"]["metrics"][0]["pairs_complete"],
+        serde_json::json!([1, 2, 3, 4, 5, 6])
+    );
+
+    // The source bundle was not modified.
+    assert_eq!(manifest_bytes(&bundle), before);
+}
+
+#[tokio::test]
+async fn paired_compare_non_regression_passes_with_code_zero() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_paired_plan(tmp.path());
+    let bundle = tmp.path().join("paired.eggb");
+    paired_bundle(&plan, &bundle, &alternating_values(100.0, 100.0, 6)).await;
+
+    let presented = execute(
+        Command::Compare {
+            baseline: None,
+            candidate: bundle,
+            alias: None,
+            absolute_only: false,
+            paired: true,
+            output: None,
+            seed: Some(42),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(presented.envelope.ok, "{:?}", presented.envelope.error);
+    assert_eq!(presented.exit_code, ExitCode::Success);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["aggregate_verdict"], "pass");
+    assert_eq!(body["result"]["comparability_match"], true);
+}
+
+#[tokio::test]
+async fn unpaired_compare_of_paired_bundle_is_invalid_with_code_eight() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_paired_plan(tmp.path());
+    let bundle = tmp.path().join("paired.eggb");
+    paired_bundle(&plan, &bundle, &alternating_values(100.0, 130.0, 6)).await;
+
+    let presented = execute(
+        Command::Compare {
+            baseline: Some(bundle.clone()),
+            candidate: bundle,
+            alias: None,
+            absolute_only: false,
+            paired: false,
+            output: None,
+            seed: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::ComparisonInvalid);
+    assert_eq!(presented.exit_code.code(), 8);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["aggregate_verdict"], "invalid");
+    assert_eq!(
+        body["result"]["receipt"]["metrics"][0]["reason"],
+        "paired_evidence_requires_paired_comparison"
+    );
+}
+
+#[tokio::test]
+async fn compare_paired_rejects_baseline_combination_as_usage() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_paired_plan(tmp.path());
+    let bundle = tmp.path().join("paired.eggb");
+    paired_bundle(&plan, &bundle, &alternating_values(100.0, 100.0, 6)).await;
+
+    let presented = execute(
+        Command::Compare {
+            baseline: Some(bundle.clone()),
+            candidate: bundle,
+            alias: None,
+            absolute_only: false,
+            paired: true,
+            output: None,
+            seed: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::Internal);
+}
+
+#[tokio::test]
+async fn doctor_reports_paired_design() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_paired_plan(tmp.path());
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(
+        body["result"]["paired"]["schedule"],
+        "alternating-baseline-first"
+    );
+    assert_eq!(body["result"]["paired"]["pairs"], 6);
+    assert_eq!(body["result"]["paired"]["baseline_service"], "origin-a");
+    assert_eq!(body["result"]["paired"]["candidate_service"], "origin-b");
 }

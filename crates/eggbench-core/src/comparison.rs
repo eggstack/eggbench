@@ -28,20 +28,28 @@
 use crate::{
     ArtifactRole, BundleError, BundleReader, DriverCategory, EnvironmentFieldClass,
     EnvironmentFingerprint, EnvironmentPolicy, Gate, MetricDirection, MetricIntent, MetricRequest,
-    Name, ObservationState, ResolvedPlan, RunId, SchemaVersion, Subject, TrialExecutionResult,
-    TrialExecutionStatus, TrialId, TrialMetrics, Workload, validate_resolved_plan_bytes,
+    Name, ObservationState, ResolvedPlan, RunId, SchemaVersion, Subject, TrialArm,
+    TrialExecutionResult, TrialExecutionStatus, TrialId, TrialMetrics, Workload,
+    validate_resolved_plan_bytes,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-/// Schema version of the standalone [`ComparisonReceipt`].
-pub const COMPARISON_RECEIPT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+/// Schema version of the standalone [`ComparisonReceipt`] (v2 adds `paired`).
+pub const COMPARISON_RECEIPT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+/// Previous receipt schema version, still accepted on read.
+pub const COMPARISON_RECEIPT_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
 
 /// Immutable comparison-policy identifier for trial-level bootstrap v1.
 pub const COMPARISON_POLICY_V1: &str = "eggbench.trial-bootstrap.v1";
+
+/// Immutable comparison-policy identifier for paired trial-level bootstrap
+/// v1: pairs are the resampling unit; per-pair oriented log-differences are
+/// resampled with replacement under the same percentile-interval rules as v1.
+pub const COMPARISON_POLICY_V2: &str = "eggbench.trial-bootstrap-paired.v1";
 
 /// Schema version of the human-managed baseline alias file.
 pub const BASELINE_ALIAS_SCHEMA_VERSION: u32 = 1;
@@ -61,6 +69,9 @@ pub const RECOMMENDED_OBSERVATIONS_PER_SIDE: usize = 7;
 
 /// Statistical method label recorded in receipts.
 pub const STATISTICAL_METHOD_V1: &str = "unpaired-trial-bootstrap-percentile-95";
+
+/// Statistical method label recorded in paired receipts.
+pub const STATISTICAL_METHOD_V2: &str = "paired-trial-bootstrap-percentile-95";
 
 /// Normalization method label expected from trial evidence (informational).
 const MAX_RECEIPT_METRICS: usize = 256;
@@ -319,7 +330,7 @@ pub struct ComparisonWarning {
     pub detail: String,
 }
 
-/// Standalone immutable-by-content comparison receipt, schema v1.
+/// Standalone immutable-by-content comparison receipt, schema v2.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComparisonReceipt {
@@ -348,9 +359,107 @@ pub struct ComparisonReceipt {
     /// Conservative aggregate over gated primary metrics, when any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggregate_verdict: Option<AggregateVerdict>,
+    /// Paired-design evidence, present only for paired comparisons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired: Option<PairedComparisonSection>,
     /// Bounded diagnostics.
     #[serde(default)]
     pub warnings: Vec<ComparisonWarning>,
+}
+
+/// Paired-design evidence for one paired comparison (receipt schema v2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedComparisonSection {
+    /// Schedule identifier from the paired manifest record.
+    pub schedule: String,
+    /// Pairs declared by the run (half the measured trial count).
+    pub pairs_declared: u32,
+    /// Baseline arm service name.
+    pub baseline_service: Name,
+    /// Candidate arm service name.
+    pub candidate_service: Name,
+    /// Declared baseline arm subject identity.
+    pub baseline_subject: Subject,
+    /// Declared candidate arm subject identity.
+    pub candidate_subject: Subject,
+    /// Per-metric paired evidence in metric-name order.
+    pub metrics: Vec<PairedMetricRecord>,
+    /// Statistical method label for paired gating.
+    pub statistical_method: String,
+    /// Final bootstrap resample count for paired gating.
+    pub resamples: usize,
+    /// Base seed for paired gating.
+    pub base_seed: u64,
+}
+
+/// Per-metric paired evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedMetricRecord {
+    /// Metric name.
+    pub name: Name,
+    /// Complete pair identities, in execution order.
+    pub pairs_complete: Vec<u32>,
+    /// Excluded pairs with stable reasons; pairs are never split.
+    pub pairs_excluded: Vec<ExcludedPair>,
+    /// Per-pair oriented effects (`ratio - 1`) in execution order.
+    pub pair_effects: Vec<PairedEffect>,
+    /// Descriptive drift diagnostics; never gates.
+    pub drift: DriftDiagnostics,
+    /// Effective per-metric seed, when paired statistical gating ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_seed: Option<u64>,
+}
+
+/// One excluded pair with a stable reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExcludedPair {
+    /// Pair identity.
+    pub pair_id: u32,
+    /// Stable `snake_case` reason.
+    pub reason: String,
+}
+
+/// One pair's oriented effect in degradation space.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedEffect {
+    /// Pair identity.
+    pub pair_id: u32,
+    /// Oriented effect as a fraction (0.03 = 3% worse for the candidate).
+    pub effect: f64,
+}
+
+/// Descriptive drift diagnostics over pair effects in execution order.
+///
+/// Drift evidence never changes a gate verdict; it only helps interpret one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriftDiagnostics {
+    /// Mean pair effect over the first half of pairs, when computable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_half_mean: Option<f64>,
+    /// Mean pair effect over the second half of pairs, when computable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second_half_mean: Option<f64>,
+    /// Sign of `second_half_mean - first_half_mean`, or `insufficient`.
+    pub trend: DriftTrend,
+}
+
+/// Drift trend vocabulary (descriptive only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriftTrend {
+    /// Second-half mean exceeds the first-half mean.
+    Up,
+    /// Second-half mean is below the first-half mean.
+    Down,
+    /// Half means are exactly equal.
+    Flat,
+    /// Fewer than two complete pairs; no trend is claimed.
+    Insufficient,
 }
 
 /// Comparison options.
@@ -372,6 +481,17 @@ pub struct ComparisonInput {
     pub environment: EnvironmentFingerprint,
     /// Measured-trial evidence in manifest order.
     pub trials: Vec<InputTrial>,
+    /// Paired-run summary, present only for paired bundles.
+    pub paired: Option<PairedRunSummary>,
+}
+
+/// Paired-run summary carried from the bundle manifest.
+#[derive(Debug, Clone)]
+pub struct PairedRunSummary {
+    /// Schedule identifier.
+    pub schedule: String,
+    /// Pairs declared by the run.
+    pub pairs: u32,
 }
 
 /// One trial's comparison evidence.
@@ -381,6 +501,10 @@ pub struct InputTrial {
     pub id: TrialId,
     /// Terminal execution state.
     pub terminal: TrialExecutionStatus,
+    /// Paired arm, when the trial carries pair identity.
+    pub arm: Option<TrialArm>,
+    /// Pair identity, when the trial carries pair identity.
+    pub pair_id: Option<u32>,
     /// Normalized metrics, when the trial staged them.
     pub metrics: Option<TrialMetrics>,
 }
@@ -436,14 +560,21 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         trials.push(InputTrial {
             id: descriptor.id,
             terminal: result.terminal_status,
+            arm: result.arm,
+            pair_id: result.pair_id,
             metrics,
         });
     }
+    let paired = manifest.paired.as_ref().map(|record| PairedRunSummary {
+        schedule: record.schedule.clone(),
+        pairs: record.pairs,
+    });
     Ok(ComparisonInput {
         identity,
         resolved,
         environment,
         trials,
+        paired,
     })
 }
 
@@ -599,6 +730,15 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
     for metric in &candidate.resolved.metrics {
         metric_names.insert(&metric.name);
     }
+    // Unpaired inference over paired evidence would silently mix arms or
+    // invent pairing, so every metric fails closed with a stable reason.
+    // Only new paired bundles are affected; all v1 bundles compare as before.
+    if candidate.paired.is_some() {
+        warnings.push(ComparisonWarning {
+            category: "paired_bundle_requires_paired_comparison".to_owned(),
+            detail: "candidate bundle contains paired trials; use paired comparison".to_owned(),
+        });
+    }
     let mut metrics = Vec::with_capacity(metric_names.len().min(MAX_RECEIPT_METRICS));
     for name in metric_names {
         let request_metric = candidate
@@ -607,6 +747,13 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
             .iter()
             .find(|metric| &metric.name == name)
             .expect("metric name from candidate plan");
+        if candidate.paired.is_some() {
+            metrics.push(paired_rejection_record(request_metric));
+            if metrics.len() >= MAX_RECEIPT_METRICS {
+                break;
+            }
+            continue;
+        }
         let effective_seed = derive_metric_seed(base_seed, name.as_str());
         metrics.push(evaluate_metric(
             request_metric,
@@ -623,7 +770,7 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
     }
     let aggregate_verdict = aggregate(&metrics);
     ComparisonReceipt {
-        schema_version: COMPARISON_RECEIPT_SCHEMA_VERSION,
+        schema_version: COMPARISON_RECEIPT_SCHEMA_VERSION_1,
         policy_id: COMPARISON_POLICY_V1.to_owned(),
         created_by_version: env!("CARGO_PKG_VERSION").to_owned(),
         candidate_identity: candidate.identity.clone(),
@@ -637,12 +784,588 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
         base_seed,
         metrics,
         aggregate_verdict,
+        paired: None,
         warnings,
     }
 }
 
-// ---- Comparability ----
+/// Fail-closed record for unpaired comparison of a paired bundle.
+fn paired_rejection_record(request: &MetricRequest) -> MetricComparison {
+    MetricComparison {
+        name: request.name.clone(),
+        unit: request.unit.clone(),
+        direction: request.direction.clone(),
+        intent: request.intent,
+        gate: request.gate.clone(),
+        candidate_included: Vec::new(),
+        candidate_excluded: Vec::new(),
+        baseline_included: Vec::new(),
+        baseline_excluded: Vec::new(),
+        candidate_estimate: None,
+        baseline_estimate: None,
+        degradation: None,
+        confidence_low: None,
+        confidence_high: None,
+        threshold: request.gate.as_ref().and_then(allowance_fraction),
+        statistical_method: None,
+        resamples: None,
+        effective_seed: None,
+        disposition: Some(GateDisposition::Invalid),
+        reason: Some("paired_evidence_requires_paired_comparison".to_owned()),
+    }
+}
 
+// ---- Paired comparison (policy v2) ----
+
+/// One complete pair: both arms measured and observed for one metric.
+struct CompletePair {
+    pair_id: u32,
+    candidate_trial: u32,
+    baseline_trial: u32,
+    candidate_value: f64,
+    baseline_value: f64,
+}
+
+/// Pair join outcome for one metric.
+struct PairSelection {
+    complete: Vec<CompletePair>,
+    excluded_pairs: Vec<ExcludedPair>,
+    candidate_included: Vec<u32>,
+    candidate_excluded: Vec<ExcludedTrial>,
+    baseline_included: Vec<u32>,
+    baseline_excluded: Vec<ExcludedTrial>,
+}
+
+/// Compare the two arms of one paired bundle under policy v2.
+///
+/// The single bundle supplies both sides: candidate-arm trials against
+/// baseline-arm trials, joined by runner-assigned pair identities. Never
+/// modifies the bundle. Deterministic for fixed input, policy, and seed.
+///
+/// Inputs without a paired design yield all-Invalid metrics with a stable
+/// reason; the caller maps the aggregate to the locked exit codes exactly
+/// as for v1.
+///
+/// # Panics
+/// Panics only on the internal invariant that every metric name collected
+/// from the plan resolves back to its request; this indicates a programming
+/// defect, never input data.
+#[allow(clippy::too_many_lines)] // One auditable paired policy pass, as for v1.
+#[must_use]
+pub fn compare_paired(
+    bundle_path: &Path,
+    input: &ComparisonInput,
+    options: &ComparisonOptions,
+) -> ComparisonReceipt {
+    let base_seed = match options.seed {
+        Some(seed) => seed,
+        None => derive_paired_base_seed(input),
+    };
+    // Same bundle on both sides: testbed, workload, driver, and topology
+    // match by construction. Arm subject identities are expected to differ
+    // and are recorded as provenance in the paired section, never as
+    // comparability mismatches.
+    let comparability = evaluate_comparability(input, input);
+    let mut warnings = Vec::new();
+    for field in &comparability.testbed {
+        if field.outcome == FieldOutcome::WarningMismatch {
+            warnings.push(ComparisonWarning {
+                category: "environment_warning_mismatch".to_owned(),
+                detail: format!(
+                    "warning-only environment field {} differs (candidate {:?} vs baseline {:?})",
+                    field.field, field.candidate, field.baseline
+                ),
+            });
+        }
+    }
+    let design = input
+        .paired
+        .as_ref()
+        .and_then(|_| input.resolved.paired.clone());
+    if input.paired.is_none() {
+        warnings.push(ComparisonWarning {
+            category: "paired_design_absent".to_owned(),
+            detail: "bundle carries no paired-run record".to_owned(),
+        });
+    } else if design.is_none() {
+        warnings.push(ComparisonWarning {
+            category: "paired_design_absent_from_resolved_plan".to_owned(),
+            detail: "paired manifest record has no resolved paired design".to_owned(),
+        });
+    }
+    let mut metric_names: BTreeSet<&Name> = BTreeSet::new();
+    for metric in &input.resolved.metrics {
+        metric_names.insert(&metric.name);
+    }
+    let mut metrics = Vec::with_capacity(metric_names.len().min(MAX_RECEIPT_METRICS));
+    let mut paired_metrics = Vec::with_capacity(metric_names.len().min(MAX_RECEIPT_METRICS));
+    for name in metric_names {
+        let request_metric = input
+            .resolved
+            .metrics
+            .iter()
+            .find(|metric| &metric.name == name)
+            .expect("metric name from candidate plan");
+        let effective_seed = derive_metric_seed(base_seed, name.as_str());
+        let (record, paired_record) = match &design {
+            Some(_) => evaluate_paired_metric(request_metric, input, effective_seed, &mut warnings),
+            None => (
+                invalid_paired_record(
+                    request_metric,
+                    if input.paired.is_none() {
+                        "paired_design_absent"
+                    } else {
+                        "paired_design_absent_from_resolved_plan"
+                    },
+                ),
+                None,
+            ),
+        };
+        metrics.push(record);
+        if let Some(paired_record) = paired_record {
+            paired_metrics.push(paired_record);
+        }
+        if metrics.len() >= MAX_RECEIPT_METRICS {
+            break;
+        }
+    }
+    let aggregate_verdict = aggregate(&metrics);
+    let paired = input.paired.as_ref().and_then(|summary| {
+        let design = input.resolved.paired.as_ref()?;
+        Some(PairedComparisonSection {
+            schedule: summary.schedule.clone(),
+            pairs_declared: summary.pairs,
+            baseline_service: design.baseline.service.clone(),
+            candidate_service: design.candidate.service.clone(),
+            baseline_subject: design.baseline.subject.clone(),
+            candidate_subject: design.candidate.subject.clone(),
+            metrics: paired_metrics,
+            statistical_method: STATISTICAL_METHOD_V2.to_owned(),
+            resamples: BOOTSTRAP_RESAMPLES,
+            base_seed,
+        })
+    });
+    ComparisonReceipt {
+        schema_version: COMPARISON_RECEIPT_SCHEMA_VERSION,
+        policy_id: COMPARISON_POLICY_V2.to_owned(),
+        created_by_version: env!("CARGO_PKG_VERSION").to_owned(),
+        candidate_identity: input.identity.clone(),
+        baseline_reference: Some(BaselineReference::Bundle {
+            identity: input.identity.clone(),
+            path: bundle_path.display().to_string(),
+        }),
+        baseline_identity: Some(input.identity.clone()),
+        environment_policy: input.resolved.environment_policy,
+        comparability,
+        base_seed,
+        metrics,
+        aggregate_verdict,
+        paired,
+        warnings,
+    }
+}
+
+/// Fail-closed paired record when the design itself is absent.
+fn invalid_paired_record(request: &MetricRequest, reason: &str) -> MetricComparison {
+    let mut record = paired_rejection_record(request);
+    record.threshold = request.gate.as_ref().and_then(allowance_fraction);
+    record.reason = Some(reason.to_owned());
+    record
+}
+
+/// Evaluate one metric over complete pairs.
+#[allow(clippy::too_many_lines)] // Sequential paired-gate preconditions stay auditable.
+fn evaluate_paired_metric(
+    request: &MetricRequest,
+    input: &ComparisonInput,
+    effective_seed: u64,
+    warnings: &mut Vec<ComparisonWarning>,
+) -> (MetricComparison, Option<PairedMetricRecord>) {
+    let selection = select_pairs(input, &request.name);
+    let threshold = request.gate.as_ref().and_then(allowance_fraction);
+    let mut record = MetricComparison {
+        name: request.name.clone(),
+        unit: request.unit.clone(),
+        direction: request.direction.clone(),
+        intent: request.intent,
+        gate: request.gate.clone(),
+        candidate_included: selection.candidate_included.clone(),
+        candidate_excluded: selection.candidate_excluded.clone(),
+        baseline_included: selection.baseline_included.clone(),
+        baseline_excluded: selection.baseline_excluded.clone(),
+        candidate_estimate: arithmetic_mean(
+            &selection
+                .complete
+                .iter()
+                .map(|pair| pair.candidate_value)
+                .collect::<Vec<_>>(),
+        ),
+        baseline_estimate: geometric_mean(
+            &selection
+                .complete
+                .iter()
+                .map(|pair| pair.baseline_value)
+                .collect::<Vec<_>>(),
+        ),
+        degradation: None,
+        confidence_low: None,
+        confidence_high: None,
+        threshold,
+        statistical_method: None,
+        resamples: None,
+        effective_seed: None,
+        disposition: None,
+        reason: None,
+    };
+    // Per-pair oriented effects are descriptive evidence for any directed
+    // metric with domain-valid complete pairs; gates consume them below.
+    let directed = matches!(
+        request.direction,
+        MetricDirection::HigherIsBetter | MetricDirection::LowerIsBetter
+    );
+    let domain_valid = directed && complete_pairs_domain_valid(&selection.complete);
+    let mut pair_effects = Vec::new();
+    if domain_valid {
+        for pair in &selection.complete {
+            let difference = oriented_log_difference(
+                pair.candidate_value,
+                pair.baseline_value,
+                &request.direction,
+            );
+            let effect = difference.exp() - 1.0;
+            if effect.is_finite() {
+                pair_effects.push(PairedEffect {
+                    pair_id: pair.pair_id,
+                    effect,
+                });
+            }
+        }
+    }
+    let drift = drift_diagnostics(&pair_effects);
+    let paired_record = PairedMetricRecord {
+        name: request.name.clone(),
+        pairs_complete: selection.complete.iter().map(|pair| pair.pair_id).collect(),
+        pairs_excluded: selection.excluded_pairs.clone(),
+        pair_effects,
+        drift,
+        effective_seed: None,
+    };
+    let finish =
+        |record: MetricComparison, mut paired_record: PairedMetricRecord, seed: Option<u64>| {
+            paired_record.effective_seed = seed;
+            (record, Some(paired_record))
+        };
+    let Some(gate) = &request.gate else {
+        // Ungated metrics are descriptive by construction.
+        return finish(record, paired_record, None);
+    };
+    if request.intent != MetricIntent::Primary {
+        // Plan validation forbids gated diagnostics; stay fail-closed anyway.
+        record.disposition = Some(GateDisposition::Invalid);
+        record.reason = Some("diagnostic_metric_cannot_gate".to_owned());
+        return finish(record, paired_record, None);
+    }
+    // Absolute gates over paired evidence would silently mix variants.
+    if matches!(gate, Gate::Absolute { .. }) {
+        record.disposition = Some(GateDisposition::Invalid);
+        record.reason = Some("absolute_gate_unsupported_for_paired_evidence".to_owned());
+        return finish(record, paired_record, None);
+    }
+    if let Err(reason) = check_metric_semantics(request, input) {
+        record.disposition = Some(GateDisposition::Invalid);
+        record.reason = Some(reason);
+        return finish(record, paired_record, None);
+    }
+    if !directed {
+        record.disposition = Some(GateDisposition::Invalid);
+        record.reason = Some("unsupported_direction_for_relative_gate".to_owned());
+        return finish(record, paired_record, None);
+    }
+    if !domain_valid {
+        record.disposition = Some(GateDisposition::Invalid);
+        record.reason = Some("nonpositive_relative_value".to_owned());
+        return finish(record, paired_record, None);
+    }
+    let differences: Vec<f64> = selection
+        .complete
+        .iter()
+        .map(|pair| {
+            oriented_log_difference(
+                pair.candidate_value,
+                pair.baseline_value,
+                &request.direction,
+            )
+        })
+        .collect();
+    let mean_difference = arithmetic_mean(&differences).expect("complete pairs are non-empty");
+    record.degradation = Some(mean_difference.exp() - 1.0);
+    match gate {
+        Gate::RelativeRegression { .. } => {
+            let threshold = record.threshold.expect("relative gate has threshold");
+            let degradation = record
+                .degradation
+                .expect("domain-valid pairs yield degradation");
+            if !degradation.is_finite() {
+                record.disposition = Some(GateDisposition::Invalid);
+                record.reason = Some("nonfinite_paired_effect".to_owned());
+                return finish(record, paired_record, None);
+            }
+            record.disposition = Some(if degradation <= threshold {
+                GateDisposition::Pass
+            } else {
+                GateDisposition::Fail
+            });
+            finish(record, paired_record, None)
+        }
+        Gate::StatisticalRelative { min_trials, .. } => {
+            let required = min_observations(min_trials.get());
+            if selection.complete.len() < required {
+                record.disposition = Some(GateDisposition::Invalid);
+                record.reason = Some("insufficient_pairs".to_owned());
+                return finish(record, paired_record, None);
+            }
+            if selection.complete.len() < RECOMMENDED_OBSERVATIONS_PER_SIDE {
+                warnings.push(ComparisonWarning {
+                    category: "below_recommended_pair_count".to_owned(),
+                    detail: format!(
+                        "metric {} has {} complete pairs; 7+ recommended",
+                        request.name,
+                        selection.complete.len(),
+                    ),
+                });
+            }
+            let threshold = record.threshold.expect("statistical gate has threshold");
+            let (low, high) =
+                paired_bootstrap_interval(&differences, BOOTSTRAP_RESAMPLES, effective_seed);
+            if !low.is_finite() || !high.is_finite() {
+                record.disposition = Some(GateDisposition::Invalid);
+                record.reason = Some("nonfinite_paired_effect".to_owned());
+                return finish(record, paired_record, None);
+            }
+            record.confidence_low = Some(low);
+            record.confidence_high = Some(high);
+            record.statistical_method = Some(STATISTICAL_METHOD_V2.to_owned());
+            record.resamples = Some(BOOTSTRAP_RESAMPLES);
+            record.effective_seed = Some(effective_seed);
+            record.disposition = Some(if low > threshold {
+                GateDisposition::Fail
+            } else if high <= threshold {
+                GateDisposition::Pass
+            } else {
+                GateDisposition::Inconclusive
+            });
+            finish(record, paired_record, Some(effective_seed))
+        }
+        Gate::Absolute { .. } => {
+            // Handled above; unreachable here.
+            record.disposition = Some(GateDisposition::Invalid);
+            record.reason = Some("absolute_gate_unsupported_for_paired_evidence".to_owned());
+            finish(record, paired_record, None)
+        }
+    }
+}
+
+/// Join arm-classified trials into complete pairs.
+///
+/// One trial contributes at most one scalar per arm. Trials without usable
+/// pair identity are excluded on both sides; pairs with only one arm present
+/// are excluded whole — pairs are never split and nothing is imputed.
+#[allow(clippy::too_many_lines)] // Per-trial classification mirrors select_trials.
+fn select_pairs(input: &ComparisonInput, metric: &Name) -> PairSelection {
+    let mut candidate_values: BTreeMap<u32, (u32, f64)> = BTreeMap::new();
+    let mut baseline_values: BTreeMap<u32, (u32, f64)> = BTreeMap::new();
+    let mut candidate_excluded = Vec::new();
+    let mut baseline_excluded = Vec::new();
+    let mut seen: BTreeMap<(TrialArm, u32), u32> = BTreeMap::new();
+    for trial in &input.trials {
+        let trial_number = trial.id.get();
+        let (Some(arm), Some(pair_id)) = (trial.arm, trial.pair_id) else {
+            let exclusion = ExcludedTrial {
+                trial_id: trial_number,
+                reason: "trial_missing_pair_identity".to_owned(),
+            };
+            candidate_excluded.push(exclusion.clone());
+            baseline_excluded.push(exclusion);
+            continue;
+        };
+        if seen.insert((arm, pair_id), trial_number).is_some() {
+            let exclusion = ExcludedTrial {
+                trial_id: trial_number,
+                reason: "duplicate_pair_identity".to_owned(),
+            };
+            match arm {
+                TrialArm::Baseline => baseline_excluded.push(exclusion),
+                TrialArm::Candidate => candidate_excluded.push(exclusion),
+            }
+            continue;
+        }
+        let exclusion_for = |reason: String| ExcludedTrial {
+            trial_id: trial_number,
+            reason,
+        };
+        let Some(metrics) = &trial.metrics else {
+            let exclusion = exclusion_for("no_normalized_metrics".to_owned());
+            match arm {
+                TrialArm::Baseline => baseline_excluded.push(exclusion),
+                TrialArm::Candidate => candidate_excluded.push(exclusion),
+            }
+            continue;
+        };
+        let Some(observation) = metrics
+            .observations
+            .iter()
+            .find(|observation| &observation.name == metric)
+        else {
+            let exclusion = exclusion_for("metric_not_requested".to_owned());
+            match arm {
+                TrialArm::Baseline => baseline_excluded.push(exclusion),
+                TrialArm::Candidate => candidate_excluded.push(exclusion),
+            }
+            continue;
+        };
+        if trial.terminal != TrialExecutionStatus::Completed {
+            let exclusion = exclusion_for("trial_not_completed".to_owned());
+            match arm {
+                TrialArm::Baseline => baseline_excluded.push(exclusion),
+                TrialArm::Candidate => candidate_excluded.push(exclusion),
+            }
+            continue;
+        }
+        let value = match &observation.state {
+            ObservationState::Observed { value } => *value,
+            ObservationState::Missing { reason } => {
+                let exclusion = exclusion_for(missing_reason_str(*reason));
+                match arm {
+                    TrialArm::Baseline => baseline_excluded.push(exclusion),
+                    TrialArm::Candidate => candidate_excluded.push(exclusion),
+                }
+                continue;
+            }
+            ObservationState::Invalid { reason, .. } => {
+                let exclusion = exclusion_for(invalid_reason_str(*reason));
+                match arm {
+                    TrialArm::Baseline => baseline_excluded.push(exclusion),
+                    TrialArm::Candidate => candidate_excluded.push(exclusion),
+                }
+                continue;
+            }
+        };
+        match arm {
+            TrialArm::Baseline => {
+                baseline_values.insert(pair_id, (trial_number, value));
+            }
+            TrialArm::Candidate => {
+                candidate_values.insert(pair_id, (trial_number, value));
+            }
+        }
+    }
+    let mut pair_ids: BTreeSet<u32> = BTreeSet::new();
+    pair_ids.extend(candidate_values.keys().copied());
+    pair_ids.extend(baseline_values.keys().copied());
+    let mut complete = Vec::new();
+    let mut excluded_pairs = Vec::new();
+    for pair_id in pair_ids {
+        match (
+            candidate_values.get(&pair_id),
+            baseline_values.get(&pair_id),
+        ) {
+            (Some((candidate_trial, candidate_value)), Some((baseline_trial, baseline_value))) => {
+                complete.push(CompletePair {
+                    pair_id,
+                    candidate_trial: *candidate_trial,
+                    baseline_trial: *baseline_trial,
+                    candidate_value: *candidate_value,
+                    baseline_value: *baseline_value,
+                });
+            }
+            _ => excluded_pairs.push(ExcludedPair {
+                pair_id,
+                reason: "pair_incomplete".to_owned(),
+            }),
+        }
+    }
+    // Included trial lists follow pair execution order, never manifest order.
+    let candidate_included = complete.iter().map(|pair| pair.candidate_trial).collect();
+    let baseline_included = complete.iter().map(|pair| pair.baseline_trial).collect();
+    PairSelection {
+        complete,
+        excluded_pairs,
+        candidate_included,
+        candidate_excluded,
+        baseline_included,
+        baseline_excluded,
+    }
+}
+
+/// True when every complete pair carries finite strictly positive values on
+/// both arms (the domain precondition for relative gates).
+fn complete_pairs_domain_valid(pairs: &[CompletePair]) -> bool {
+    !pairs.is_empty()
+        && pairs.iter().all(|pair| {
+            pair.candidate_value.is_finite()
+                && pair.baseline_value.is_finite()
+                && pair.candidate_value > 0.0
+                && pair.baseline_value > 0.0
+        })
+}
+
+/// Oriented log-difference for one pair: positive means the candidate is
+/// worse than the baseline under the declared direction.
+fn oriented_log_difference(candidate: f64, baseline: f64, direction: &MetricDirection) -> f64 {
+    match direction {
+        MetricDirection::LowerIsBetter => candidate.ln() - baseline.ln(),
+        MetricDirection::HigherIsBetter => baseline.ln() - candidate.ln(),
+        MetricDirection::TargetRange { .. } | MetricDirection::Informational => 0.0,
+    }
+}
+
+/// Descriptive drift diagnostics over pair effects in execution order.
+///
+/// Halves split at `len / 2`; for odd counts the second half holds one more
+/// pair. The trend is the exact sign of the half-mean difference.
+fn drift_diagnostics(effects: &[PairedEffect]) -> DriftDiagnostics {
+    if effects.len() < 2 {
+        return DriftDiagnostics {
+            first_half_mean: None,
+            second_half_mean: None,
+            trend: DriftTrend::Insufficient,
+        };
+    }
+    let half = effects.len() / 2;
+    let first: Vec<f64> = effects[..half].iter().map(|entry| entry.effect).collect();
+    let second: Vec<f64> = effects[half..].iter().map(|entry| entry.effect).collect();
+    let first_half_mean = arithmetic_mean(&first);
+    let second_half_mean = arithmetic_mean(&second);
+    let trend = match (first_half_mean, second_half_mean) {
+        (Some(first), Some(second)) => {
+            if second > first {
+                DriftTrend::Up
+            } else if second < first {
+                DriftTrend::Down
+            } else {
+                DriftTrend::Flat
+            }
+        }
+        _ => DriftTrend::Insufficient,
+    };
+    DriftDiagnostics {
+        first_half_mean,
+        second_half_mean,
+        trend,
+    }
+}
+
+/// Derive a deterministic paired base seed from the single bundle identity
+/// and the paired policy identifier.
+fn derive_paired_base_seed(input: &ComparisonInput) -> u64 {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(input.identity.manifest_sha256.as_bytes());
+    bytes.extend_from_slice(b"|");
+    bytes.extend_from_slice(COMPARISON_POLICY_V2.as_bytes());
+    fnv1a64(&bytes)
+}
+
+// ---- Comparability ----
 /// Evaluate typed comparability between candidate and baseline inputs.
 fn evaluate_comparability(
     candidate: &ComparisonInput,
@@ -1305,7 +2028,16 @@ fn min_observations(plan_min_trials: u32) -> usize {
 /// Quantile indexing is exact and documented using integer arithmetic: for
 /// `n` sorted resamples, the lower bound is index `(25 * n) / 1000` and the
 /// upper bound is index `((975 * n + 999) / 1000) - 1`, clamped into range.
-/// For `n = 10_000` these are indices 250 and 9749.
+/// For `n = 10_000` these are indices 250 and 9749. Shared by both policies.
+fn percentile_interval(mut effects: Vec<f64>) -> (f64, f64) {
+    effects.sort_by(f64::total_cmp);
+    let count = effects.len();
+    let low_index = (25_usize.saturating_mul(count) / 1000).min(count - 1);
+    let high_index = (975_usize.saturating_mul(count).saturating_add(999) / 1000)
+        .saturating_sub(1)
+        .min(count - 1);
+    (effects[low_index], effects[high_index])
+}
 fn bootstrap_interval(
     candidate: &[f64],
     baseline: &[f64],
@@ -1329,13 +2061,24 @@ fn bootstrap_interval(
         };
         effects.push(log_effect.exp() - 1.0);
     }
-    effects.sort_by(f64::total_cmp);
-    let count = effects.len();
-    let low_index = (25_usize.saturating_mul(count) / 1000).min(count - 1);
-    let high_index = (975_usize.saturating_mul(count).saturating_add(999) / 1000)
-        .saturating_sub(1)
-        .min(count - 1);
-    (effects[low_index], effects[high_index])
+    percentile_interval(effects)
+}
+
+/// Deterministic 95% percentile bootstrap interval over paired oriented
+/// degradation.
+///
+/// Paired only: each resample draws `differences.len()` oriented
+/// log-differences with replacement, takes their mean, and transforms to
+/// degradation space. Quantile extraction is identical to policy v1.
+fn paired_bootstrap_interval(differences: &[f64], resamples: usize, seed: u64) -> (f64, f64) {
+    debug_assert!(!differences.is_empty());
+    let mut rng = SplitMix64::new(seed);
+    let mut effects = Vec::with_capacity(resamples);
+    for _ in 0..resamples {
+        let mean = resampled_mean_log(differences, &mut rng);
+        effects.push(mean.exp() - 1.0);
+    }
+    percentile_interval(effects)
 }
 
 /// Mean of resampled log values. Trial counts are bounded (see
@@ -1549,12 +2292,20 @@ mod tests {
     }
 
     fn trial_metrics_for(id: u32, pairs: &[(&str, &str, f64)]) -> TrialMetrics {
+        trial_metrics_for_directed(id, pairs, &MetricDirection::LowerIsBetter)
+    }
+
+    fn trial_metrics_for_directed(
+        id: u32,
+        pairs: &[(&str, &str, f64)],
+        direction: &MetricDirection,
+    ) -> TrialMetrics {
         let observations = pairs
             .iter()
             .map(|(name, unit, value)| NormalizedObservation {
                 name: metric_name(name),
                 unit: metric_name(unit),
-                direction: MetricDirection::LowerIsBetter,
+                direction: direction.clone(),
                 intent: MetricIntent::Primary,
                 aggregation: Aggregation::Direct,
                 state: ObservationState::Observed { value: *value },
@@ -1638,6 +2389,7 @@ mod tests {
                 total_bytes: 4096,
             },
             seed: None,
+            paired: None,
             warnings: Vec::new(),
         }
     }
@@ -1690,6 +2442,8 @@ mod tests {
                 InputTrial {
                     id: TrialId::new(id).unwrap(),
                     terminal: TrialExecutionStatus::Completed,
+                    arm: None,
+                    pair_id: None,
                     metrics: Some(trial_metrics_for(id, &[("latency_p99", "ms", *value)])),
                 }
             })
@@ -1705,6 +2459,7 @@ mod tests {
             resolved: resolved_with(vec![metric], policy),
             environment,
             trials,
+            paired: None,
         }
     }
 
@@ -2286,6 +3041,525 @@ mod tests {
             "absolute-only",
         ] {
             let receipt = golden_receipt(kind);
+            let actual = serde_json::to_string_pretty(&receipt).unwrap() + "\n";
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("golden")
+                .join(format!("comparison-{kind}.json"));
+            if std::env::var("EGGBENCH_UPDATE_GOLDEN").is_ok() {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &actual).unwrap();
+                continue;
+            }
+            let expected = std::fs::read_to_string(&path)
+                .unwrap_or_else(|_| panic!("missing golden {}", path.display()));
+            assert_eq!(actual, expected, "golden mismatch for {kind}");
+        }
+    }
+
+    // ---- Paired comparison (policy v2) tests ----
+
+    fn throughput_request(gate: Gate) -> MetricRequest {
+        MetricRequest {
+            name: metric_name("throughput"),
+            unit: metric_name("rps"),
+            direction: MetricDirection::HigherIsBetter,
+            intent: MetricIntent::Primary,
+            gate: Some(gate),
+        }
+    }
+
+    /// Build a paired input: per pair, trial `2i-1` measures baseline and
+    /// trial `2i` measures candidate under the v1 alternating schedule.
+    fn paired_input(
+        sha: &str,
+        metric: MetricRequest,
+        metric_unit: &str,
+        direction: &MetricDirection,
+        pairs: &[(f64, f64)],
+    ) -> ComparisonInput {
+        let mut trials = Vec::new();
+        for (index, (baseline_value, candidate_value)) in pairs.iter().enumerate() {
+            let pair_id = u32::try_from(index + 1).unwrap();
+            let baseline_trial = 2 * pair_id - 1;
+            let candidate_trial = 2 * pair_id;
+            trials.push(InputTrial {
+                id: TrialId::new(baseline_trial).unwrap(),
+                terminal: TrialExecutionStatus::Completed,
+                arm: Some(TrialArm::Baseline),
+                pair_id: Some(pair_id),
+                metrics: Some(trial_metrics_for_directed(
+                    baseline_trial,
+                    &[(metric.name.as_str(), metric_unit, *baseline_value)],
+                    direction,
+                )),
+            });
+            trials.push(InputTrial {
+                id: TrialId::new(candidate_trial).unwrap(),
+                terminal: TrialExecutionStatus::Completed,
+                arm: Some(TrialArm::Candidate),
+                pair_id: Some(pair_id),
+                metrics: Some(trial_metrics_for_directed(
+                    candidate_trial,
+                    &[(metric.name.as_str(), metric_unit, *candidate_value)],
+                    direction,
+                )),
+            });
+        }
+        let pair_count = u32::try_from(pairs.len()).unwrap();
+        let mut resolved = resolved_with(vec![metric], EnvironmentPolicy::StrictSameTestbed);
+        resolved.paired = Some(crate::ResolvedPairedDesign {
+            baseline: crate::ResolvedPairedArm {
+                service: metric_name("origin-a"),
+                subject: Subject::Label {
+                    label: metric_name("variant-a"),
+                },
+            },
+            candidate: crate::ResolvedPairedArm {
+                service: metric_name("origin-b"),
+                subject: Subject::Label {
+                    label: metric_name("variant-b"),
+                },
+            },
+            schedule: crate::PAIRED_SCHEDULE_V1.to_owned(),
+            pairs: pair_count,
+        });
+        ComparisonInput {
+            identity: BundleIdentity {
+                manifest_schema_version: SchemaVersion(2),
+                run_id: RunId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+                manifest_sha256: sha.to_owned(),
+                subject_revision: None,
+                subject_digest: None,
+            },
+            resolved,
+            environment: standard_environment(),
+            trials,
+            paired: Some(PairedRunSummary {
+                schedule: crate::PAIRED_SCHEDULE_V1.to_owned(),
+                pairs: pair_count,
+            }),
+        }
+    }
+
+    fn paired_latency_input(pairs: &[(f64, f64)]) -> (ComparisonInput, MetricRequest) {
+        let metric = latency_request(statistical_gate(500));
+        let input = paired_input(
+            &"cc".repeat(32),
+            metric.clone(),
+            "ms",
+            &MetricDirection::LowerIsBetter,
+            pairs,
+        );
+        (input, metric)
+    }
+
+    fn compare_paired_test(input: &ComparisonInput) -> ComparisonReceipt {
+        compare_paired(
+            std::path::Path::new("paired.eggb"),
+            input,
+            &ComparisonOptions::default(),
+        )
+    }
+
+    #[test]
+    fn paired_clear_regression_fails() {
+        let (input, _) = paired_latency_input(&[(100.0, 130.0); 6]);
+        let receipt = compare_paired_test(&input);
+        assert_eq!(receipt.policy_id, COMPARISON_POLICY_V2);
+        assert_eq!(receipt.schema_version, COMPARISON_RECEIPT_SCHEMA_VERSION);
+        assert_eq!(
+            receipt.candidate_identity,
+            receipt.baseline_identity.unwrap()
+        );
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Fail));
+        assert_eq!(record.candidate_included, vec![2, 4, 6, 8, 10, 12]);
+        assert_eq!(record.baseline_included, vec![1, 3, 5, 7, 9, 11]);
+        assert!(record.candidate_excluded.is_empty());
+        assert!(record.baseline_excluded.is_empty());
+        assert_eq!(
+            record.statistical_method.as_deref(),
+            Some(STATISTICAL_METHOD_V2)
+        );
+        assert_eq!(record.resamples, Some(BOOTSTRAP_RESAMPLES));
+        assert!(record.effective_seed.is_some());
+        let degradation = record.degradation.expect("degradation");
+        assert!(
+            (degradation - 0.30).abs() < 1e-9,
+            "degradation {degradation}"
+        );
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Fail));
+        let paired = receipt.paired.expect("paired section");
+        assert_eq!(paired.schedule, crate::PAIRED_SCHEDULE_V1);
+        assert_eq!(paired.pairs_declared, 6);
+        assert_eq!(paired.baseline_service.as_str(), "origin-a");
+        assert_eq!(paired.candidate_service.as_str(), "origin-b");
+        assert_eq!(paired.metrics.len(), 1);
+        assert_eq!(paired.metrics[0].pairs_complete, vec![1, 2, 3, 4, 5, 6]);
+        assert!(paired.metrics[0].pairs_excluded.is_empty());
+        assert_eq!(paired.metrics[0].pair_effects.len(), 6);
+        // Constant effects: identical half means, flat trend.
+        assert_eq!(paired.metrics[0].drift.trend, DriftTrend::Flat);
+        assert!(
+            receipt
+                .warnings
+                .iter()
+                .any(|w| w.category == "below_recommended_pair_count")
+        );
+    }
+
+    #[test]
+    fn paired_non_regression_passes() {
+        let (input, _) = paired_latency_input(&[(100.0, 100.0); 6]);
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Pass));
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Pass));
+        let paired = receipt.paired.expect("paired section");
+        assert_eq!(paired.metrics[0].drift.trend, DriftTrend::Flat);
+    }
+
+    #[test]
+    fn paired_higher_is_better_regression_fails() {
+        let metric = throughput_request(statistical_gate(500));
+        let input = paired_input(
+            &"dd".repeat(32),
+            metric,
+            "rps",
+            &MetricDirection::HigherIsBetter,
+            &[(200.0, 150.0); 6],
+        );
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "throughput")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Fail));
+        let degradation = record.degradation.expect("degradation");
+        assert!(
+            degradation > 0.30 && degradation < 0.34,
+            "degradation {degradation}"
+        );
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Fail));
+    }
+
+    #[test]
+    fn paired_threshold_crossing_is_inconclusive() {
+        let (input, _) = paired_latency_input(&[
+            (100.0, 110.0),
+            (100.0, 110.0),
+            (100.0, 110.0),
+            (100.0, 90.0),
+            (100.0, 90.0),
+            (100.0, 90.0),
+        ]);
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Inconclusive));
+        assert_eq!(
+            receipt.aggregate_verdict,
+            Some(AggregateVerdict::Inconclusive)
+        );
+    }
+
+    #[test]
+    fn paired_insufficient_pairs_are_invalid() {
+        let (input, _) = paired_latency_input(&[(100.0, 130.0); 2]);
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Invalid));
+        assert_eq!(record.reason.as_deref(), Some("insufficient_pairs"));
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Invalid));
+    }
+
+    #[test]
+    fn paired_split_pairs_are_excluded_never_imputed() {
+        let (mut input, _) = paired_latency_input(&[(100.0, 130.0); 6]);
+        // Drop the candidate observation of pair 3: the pair must vanish
+        // whole while the other five still gate.
+        input.trials[5].metrics = None;
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.candidate_included, vec![2, 4, 8, 10, 12]);
+        assert_eq!(record.baseline_included, vec![1, 3, 7, 9, 11]);
+        assert!(
+            record.candidate_excluded.iter().any(
+                |excluded| excluded.trial_id == 6 && excluded.reason == "no_normalized_metrics"
+            )
+        );
+        let paired = receipt.paired.expect("paired section");
+        assert_eq!(paired.metrics[0].pairs_complete, vec![1, 2, 4, 5, 6]);
+        assert_eq!(paired.metrics[0].pairs_excluded.len(), 1);
+        assert_eq!(paired.metrics[0].pairs_excluded[0].pair_id, 3);
+        assert_eq!(
+            paired.metrics[0].pairs_excluded[0].reason,
+            "pair_incomplete"
+        );
+        // Five complete pairs still satisfy the minimum: the gate evaluates.
+        assert_eq!(record.disposition, Some(GateDisposition::Fail));
+    }
+
+    #[test]
+    fn paired_untagged_trials_are_excluded_on_both_sides() {
+        let (mut input, _) = paired_latency_input(&[(100.0, 130.0); 6]);
+        input.trials.push(InputTrial {
+            id: TrialId::new(13).unwrap(),
+            terminal: TrialExecutionStatus::Completed,
+            arm: None,
+            pair_id: None,
+            metrics: Some(trial_metrics_for(13, &[("latency_p99", "ms", 100.0)])),
+        });
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        for excluded in [&record.candidate_excluded, &record.baseline_excluded] {
+            assert!(
+                excluded
+                    .iter()
+                    .any(|entry| entry.trial_id == 13
+                        && entry.reason == "trial_missing_pair_identity"),
+                "untagged trial must be excluded"
+            );
+        }
+        assert_eq!(record.disposition, Some(GateDisposition::Fail));
+    }
+
+    #[test]
+    fn paired_absolute_gate_is_invalid() {
+        let metric = latency_request(Gate::Absolute { value: 500.0 });
+        let input = paired_input(
+            &"ee".repeat(32),
+            metric,
+            "ms",
+            &MetricDirection::LowerIsBetter,
+            &[(100.0, 100.0); 6],
+        );
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Invalid));
+        assert_eq!(
+            record.reason.as_deref(),
+            Some("absolute_gate_unsupported_for_paired_evidence")
+        );
+    }
+
+    #[test]
+    fn paired_nonpositive_values_are_invalid() {
+        let (mut input, _) = paired_latency_input(&[(100.0, 130.0); 6]);
+        input.trials[0].metrics = Some(trial_metrics_for(1, &[("latency_p99", "ms", 0.0)]));
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Invalid));
+        assert_eq!(record.reason.as_deref(), Some("nonpositive_relative_value"));
+    }
+
+    #[test]
+    fn unpaired_compare_of_paired_bundle_is_invalid() {
+        let (input, _) = paired_latency_input(&[(100.0, 130.0); 6]);
+        let reference = BaselineReference::Bundle {
+            identity: input.identity.clone(),
+            path: "paired.eggb".to_owned(),
+        };
+        let request = ComparisonRequest {
+            candidate: &input,
+            baseline: Some(BaselineSide {
+                reference,
+                input: &input,
+            }),
+        };
+        let receipt = compare(&request, &ComparisonOptions::default());
+        assert_eq!(receipt.policy_id, COMPARISON_POLICY_V1);
+        for record in &receipt.metrics {
+            assert_eq!(record.disposition, Some(GateDisposition::Invalid));
+            assert_eq!(
+                record.reason.as_deref(),
+                Some("paired_evidence_requires_paired_comparison")
+            );
+        }
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Invalid));
+        assert!(
+            receipt
+                .warnings
+                .iter()
+                .any(|w| w.category == "paired_bundle_requires_paired_comparison")
+        );
+    }
+
+    #[test]
+    fn paired_comparison_without_design_is_invalid() {
+        let metric = latency_request(statistical_gate(500));
+        let input = input_with_values(
+            &"ff".repeat(32),
+            metric,
+            EnvironmentPolicy::StrictSameTestbed,
+            &[100.0; 6],
+            standard_environment(),
+        );
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Invalid));
+        assert_eq!(record.reason.as_deref(), Some("paired_design_absent"));
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Invalid));
+        assert!(receipt.paired.is_none());
+    }
+
+    #[test]
+    fn paired_drift_trend_sign_is_correct_and_never_gates() {
+        // Monotone candidate worsening under a wide allowance: the gate
+        // passes while drift points up, proving drift never gates.
+        let (input, _) = paired_latency_input(&[
+            (100.0, 100.0),
+            (100.0, 101.0),
+            (100.0, 102.0),
+            (100.0, 103.0),
+            (100.0, 104.0),
+            (100.0, 105.0),
+        ]);
+        let mut wide = input;
+        wide.resolved.metrics[0].gate = Some(statistical_gate(5000));
+        let receipt = compare_paired_test(&wide);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Pass));
+        let paired = receipt.paired.expect("paired section");
+        let drift = &paired.metrics[0].drift;
+        assert_eq!(drift.trend, DriftTrend::Up);
+        let first = drift.first_half_mean.expect("first half");
+        let second = drift.second_half_mean.expect("second half");
+        assert!(second > first, "second {second} first {first}");
+        assert_eq!(paired.metrics[0].pair_effects.len(), 6);
+        let effects: Vec<f64> = paired.metrics[0]
+            .pair_effects
+            .iter()
+            .map(|entry| entry.effect)
+            .collect();
+        let mut ordered = effects.clone();
+        ordered.sort_by(f64::total_cmp);
+        assert_eq!(effects, ordered, "effects follow execution order");
+    }
+
+    #[test]
+    fn paired_comparison_is_deterministic_with_stable_seeds() {
+        let (input, _) = paired_latency_input(&[
+            (100.0, 112.0),
+            (100.0, 108.0),
+            (100.0, 115.0),
+            (100.0, 109.0),
+            (100.0, 111.0),
+            (100.0, 113.0),
+        ]);
+        let first = compare_paired_test(&input);
+        let second = compare_paired_test(&input);
+        assert_eq!(first, second);
+        let record = first
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        let first_seed = record.effective_seed.expect("seed");
+        let explicit = compare_paired(
+            std::path::Path::new("paired.eggb"),
+            &input,
+            &ComparisonOptions { seed: Some(7) },
+        );
+        assert_eq!(explicit.base_seed, 7);
+        assert_ne!(first.base_seed, explicit.base_seed);
+        let explicit_record = explicit
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_ne!(explicit_record.effective_seed, Some(first_seed));
+    }
+
+    #[test]
+    fn paired_relative_regression_gate_uses_complete_pairs_only() {
+        let metric = latency_request(relative_gate(1000));
+        let mut input = paired_input(
+            &"ab".repeat(32),
+            metric,
+            "ms",
+            &MetricDirection::LowerIsBetter,
+            &[(100.0, 105.0); 4],
+        );
+        // One incomplete pair must not move the point estimate: the
+        // remaining three pairs hold 5% degradation under a 10% allowance.
+        input.trials[7].metrics = None;
+        let receipt = compare_paired_test(&input);
+        let record = receipt
+            .metrics
+            .iter()
+            .find(|m| m.name.as_str() == "latency_p99")
+            .unwrap();
+        assert_eq!(record.disposition, Some(GateDisposition::Pass));
+        let degradation = record.degradation.expect("degradation");
+        assert!(
+            (degradation - 0.05).abs() < 1e-9,
+            "degradation {degradation}"
+        );
+    }
+
+    fn paired_golden_receipt(kind: &str) -> ComparisonReceipt {
+        let (input, _) = match kind {
+            "paired-pass" => paired_latency_input(&[(100.0, 101.0); 6]),
+            "paired-fail" => paired_latency_input(&[(100.0, 130.0); 6]),
+            "paired-inconclusive" => paired_latency_input(&[
+                (100.0, 110.0),
+                (100.0, 110.0),
+                (100.0, 110.0),
+                (100.0, 90.0),
+                (100.0, 90.0),
+                (100.0, 90.0),
+            ]),
+            _ => panic!("unknown paired golden kind {kind}"),
+        };
+        compare_paired_test(&input)
+    }
+
+    #[test]
+    fn paired_golden_receipts_are_stable() {
+        for kind in ["paired-pass", "paired-fail", "paired-inconclusive"] {
+            let receipt = paired_golden_receipt(kind);
             let actual = serde_json::to_string_pretty(&receipt).unwrap() + "\n";
             let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("tests")

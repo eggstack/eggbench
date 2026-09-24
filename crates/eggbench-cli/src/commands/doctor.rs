@@ -1,6 +1,8 @@
 //! `eggbench doctor <plan>` command.
 
-use crate::envelope::{CliEnvelope, CliOutput, DriverSummary, EnvironmentSummary, ExitCode};
+use crate::envelope::{
+    CliEnvelope, CliOutput, DoctorPairedDesign, DriverSummary, EnvironmentSummary, ExitCode,
+};
 use crate::envelope::{CliFailure, PresentedCommandResult};
 use crate::error::CliError;
 use crate::plan_input::load_plan;
@@ -173,6 +175,7 @@ fn run_with_descriptors(
         .iter()
         .any(|descriptor| descriptor.category == DriverCategory::Workload);
     let env_fields = environment.as_ref().map_or(Vec::new(), env_field_summaries);
+    let paired = doctor_paired_design(&plan);
 
     // Config-syntax validation for declared Gregg endpoints (no network:
     // live probing stays in `run` preflight).
@@ -188,6 +191,7 @@ fn run_with_descriptors(
                 drivers: drivers.clone(),
                 has_workload_driver,
                 environment_fields: env_fields.clone(),
+                paired: paired.clone(),
             },
         );
         envelope.ok = false;
@@ -207,6 +211,7 @@ fn run_with_descriptors(
                 drivers,
                 has_workload_driver,
                 environment_fields: env_fields,
+                paired,
             },
         )),
         Err(error) => Ok(envelope_for_resolution_error(
@@ -215,8 +220,23 @@ fn run_with_descriptors(
             drivers,
             has_workload_driver,
             env_fields,
+            paired,
         )),
     }
+}
+
+/// Predeclared paired design summary from the parsed plan.
+///
+/// Reported from the declaration (not the resolution outcome) so the design
+/// stays visible even when resolution fails for an unrelated reason.
+fn doctor_paired_design(plan: &eggbench_core::ExperimentPlan) -> Option<DoctorPairedDesign> {
+    let design = plan.paired.as_ref()?;
+    Some(DoctorPairedDesign {
+        schedule: eggbench_core::PAIRED_SCHEDULE_V1.to_owned(),
+        pairs: plan.trials.measured.get() / 2,
+        baseline_service: design.baseline.service.as_str().to_owned(),
+        candidate_service: design.candidate.service.as_str().to_owned(),
+    })
 }
 
 fn envelope_for_resolution_error(
@@ -225,6 +245,7 @@ fn envelope_for_resolution_error(
     drivers: Vec<DriverSummary>,
     has_workload_driver: bool,
     environment_fields: Vec<EnvironmentSummary>,
+    paired: Option<DoctorPairedDesign>,
 ) -> PresentedCommandResult {
     let failure = cli_failure_from_resolve(error);
     // Retain the doctor payload (including has_workload_driver) alongside the
@@ -237,6 +258,7 @@ fn envelope_for_resolution_error(
             drivers,
             has_workload_driver,
             environment_fields,
+            paired,
         },
     );
     envelope.ok = false;

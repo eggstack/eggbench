@@ -8,5 +8,7 @@ Services have stable names and managed/external lifecycle intent. Dependencies m
 
 Secret material must be injected by reference (for example, an environment variable name or secret-manager reference). It does not belong in a plan snapshot. Artifact bounds set maximum count, per-artifact bytes, and total bytes for later evidence writing.
 
+Schema v2 adds the optional predeclared `paired` baseline/candidate design: a label subject naming the comparison, two arm services (both live for the run), an even measured trial count, and the plan workload target equal to the baseline arm service. See [paired experiments](paired-experiments.md).
+
 See [`minimal.json`](../crates/eggbench-core/tests/fixtures/minimal.json) and [`multi-service-open-loop.json`](../crates/eggbench-core/tests/fixtures/multi-service-open-loop.json) for representative plans.
 
