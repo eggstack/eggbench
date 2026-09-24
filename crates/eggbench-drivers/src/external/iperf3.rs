@@ -14,7 +14,7 @@ use super::artifact::artifact_candidates;
 use super::command::{ExternalCommandOutcome, ExternalCommandSpec, run_command};
 use super::common::{
     DEFAULT_IPERF3_PORT, authority_host_port, check_min_version, driver_env, failure_category,
-    finite_non_negative, probe_failure_category, target_http_url,
+    finite_non_negative, metric_u64_as_f64, probe_failure_category, target_http_url,
 };
 use super::error::{DriverError, ErrorCategory};
 use super::parser::{ExternalOutputParser, ParsedExternalOutput};
@@ -43,6 +43,12 @@ const IPERF3_TOOL: &str = "iperf3";
 pub const IPERF3_PARSER_ID: &str = "iperf3-json/v1";
 /// Minimum supported iperf3 release (`-J` output).
 const IPERF3_MIN_VERSION: (u64, u64, u64) = (3, 1, 0);
+/// Exact rounded value produced by `u64::MAX as f64` (2^64).
+///
+/// The pre-C002 parser compared `v > u64::MAX as f64` with the same `>`
+/// operator; this named constant preserves that boundary bit-for-bit
+/// without reintroducing a lossy cast at the comparison site.
+const U64_MAX_AS_F64: f64 = 18_446_744_073_709_551_616.0;
 /// Stdout retention cap.
 const STDOUT_LIMIT: u64 = 4 * 1024 * 1024;
 /// Stderr retention cap.
@@ -120,9 +126,9 @@ impl Iperf3Workload {
         if self.version.is_none() {
             let probed = Self::probe(&self.executable, cancel)
                 .await
-                .map_err(|error| probe_failure_category(error, cancel))?;
+                .map_err(|error| probe_failure_category(&error, cancel))?;
             check_min_version(IPERF3_TOOL, &probed.version, IPERF3_MIN_VERSION)
-                .map_err(|error| probe_failure_category(error, cancel))?;
+                .map_err(|error| probe_failure_category(&error, cancel))?;
             self.version = Some(probed.version);
         }
         Ok(())
@@ -134,7 +140,7 @@ impl std::fmt::Debug for Iperf3Workload {
         f.debug_struct("Iperf3Workload")
             .field("driver", &IPERF3_DRIVER_NAME)
             .field("version", &self.version)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -147,7 +153,8 @@ impl WorkloadExecutor for Iperf3Workload {
             self.ensure_probed(&context.cancellation).await?;
             let target = workload_target_name(&context.workload);
             let url = target_http_url(&context, target)?;
-            let argv = iperf3_argv(&context.workload, &url).map_err(failure_category)?;
+            let argv =
+                iperf3_argv(&context.workload, &url).map_err(|error| failure_category(&error))?;
             let spec = ExternalCommandSpec {
                 executable: self.executable.clone(),
                 args: argv,
@@ -160,8 +167,8 @@ impl WorkloadExecutor for Iperf3Workload {
             };
             let outcome = run_command(&spec, &context.cancellation)
                 .await
-                .map_err(failure_category)?;
-            let report = parse_iperf3_report(&outcome).map_err(failure_category)?;
+                .map_err(|error| failure_category(&error))?;
+            let report = parse_iperf3_report(&outcome).map_err(|error| failure_category(&error))?;
             Ok(iperf3_output(&outcome, &report))
         })
     }
@@ -206,7 +213,10 @@ fn iperf3_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverEr
             if requests.is_some() {
                 return Err(unsupported("request counts have no byte-stream mapping"));
             }
-            (duration.map(|d| d.get()), Some(concurrency.get()))
+            (
+                duration.map(eggbench_core::DurationMs::get),
+                Some(concurrency.get()),
+            )
         }
         Workload::TimeBounded {
             duration_ms: duration,
@@ -214,7 +224,10 @@ fn iperf3_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverEr
             concurrency,
             ..
         } => match mode {
-            LoadMode::ClosedLoop => (Some(duration.get()), concurrency.map(|c| c.get())),
+            LoadMode::ClosedLoop => (
+                Some(duration.get()),
+                concurrency.map(eggbench_core::PositiveCount::get),
+            ),
             LoadMode::OpenLoop => {
                 return Err(unsupported("OpenLoop rate has no TCP throughput mapping"));
             }
@@ -246,7 +259,7 @@ fn iperf3_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverEr
 
 /// Ceil milliseconds to whole `-t` seconds (minimum one).
 fn duration_secs(duration_ms: u64) -> String {
-    ((duration_ms + 999) / 1000).max(1).to_string()
+    duration_ms.div_ceil(1000).max(1).to_string()
 }
 
 /// Validated iperf3 `-J` transfer summary.
@@ -334,7 +347,7 @@ fn parse_iperf3_report(outcome: &ExternalCommandOutcome) -> Result<Iperf3Report,
             .ok_or_else(|| parse_failed(format!("missing {field}.bytes")))
             .and_then(|v| finite_non_negative(v, field).map_err(parse_failed))
             .and_then(|v| {
-                if v > u64::MAX as f64 {
+                if v > U64_MAX_AS_F64 {
                     Err(parse_failed(format!("{field}.bytes out of range")))
                 } else {
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -348,7 +361,7 @@ fn parse_iperf3_report(outcome: &ExternalCommandOutcome) -> Result<Iperf3Report,
             finite_non_negative(v, "retransmits")
                 .map_err(&parse_failed)
                 .and_then(|v| {
-                    if v > u64::MAX as f64 {
+                    if v > U64_MAX_AS_F64 {
                         Err(parse_failed("retransmits out of range".to_owned()))
                     } else {
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -369,7 +382,7 @@ fn parse_iperf3_report(outcome: &ExternalCommandOutcome) -> Result<Iperf3Report,
 fn iperf3_output(outcome: &ExternalCommandOutcome, report: &Iperf3Report) -> WorkloadOutput {
     let artifacts = artifact_candidates(outcome, Some(IPERF3_PARSER_ID));
     let raw = ["stdout.raw".to_owned()];
-    let count = |value: u64| value as f64;
+    let count = metric_u64_as_f64;
     let mut metrics = vec![
         observation(
             "bits_per_sec_sent",
@@ -514,8 +527,8 @@ mod tests {
     #[test]
     fn valid_report_maps_transfer_metrics() {
         let report = parse_iperf3_report(&outcome_with_stdout(&valid_iperf3_json())).unwrap();
-        assert_eq!(report.sent_bps, 4000.0);
-        assert_eq!(report.received_bps, 3960.0);
+        assert_eq!(report.sent_bps.to_bits(), 4000.0_f64.to_bits());
+        assert_eq!(report.received_bps.to_bits(), 3960.0_f64.to_bits());
         assert_eq!(report.retransmits, Some(3));
         let output = iperf3_output(&outcome_with_stdout(&valid_iperf3_json()), &report);
         let names: Vec<&str> = output.metrics.iter().map(|m| m.name.as_str()).collect();
@@ -584,5 +597,115 @@ mod tests {
             concurrency: PositiveCount::new(1).unwrap(),
         };
         assert!(iperf3_argv(&count, "http://127.0.0.1:5201/").is_err());
+    }
+
+    #[test]
+    fn duration_secs_ceiling_matches_pre_c002_mapping() {
+        // Pre-C002 `((ms + 999) / 1000).max(1)` authority over the accepted
+        // duration domain; `div_ceil` additionally avoids the `ms + 999`
+        // overflow near `u64::MAX`.
+        for (ms, expected) in [
+            (0_u64, "1"),
+            (1, "1"),
+            (999, "1"),
+            (1000, "1"),
+            (1001, "2"),
+            (1500, "2"),
+            (2500, "3"),
+            (2501, "3"),
+        ] {
+            assert_eq!(duration_secs(ms), expected, "ms={ms}");
+        }
+        assert_eq!(duration_secs(u64::MAX), ((u64::MAX / 1000) + 1).to_string());
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    #[test]
+    fn u64_max_constant_matches_historical_cast() {
+        assert_eq!(
+            U64_MAX_AS_F64.to_bits(),
+            (u64::MAX as f64).to_bits(),
+            "upper-bound constant must preserve the pre-C002 rounded comparison"
+        );
+    }
+
+    #[test]
+    fn byte_counter_boundary_parity() {
+        // 0.0 and ordinary integer values are accepted.
+        let mut json = serde_json::from_slice::<serde_json::Value>(&valid_iperf3_json()).unwrap();
+        json["end"]["sum_sent"]["bytes"] = serde_json::json!(0.0);
+        assert!(
+            parse_iperf3_report(&outcome_with_stdout(
+                serde_json::to_string(&json).unwrap().as_bytes()
+            ))
+            .is_ok()
+        );
+        // Non-integral positive values keep the historical truncation.
+        let mut truncated =
+            serde_json::from_slice::<serde_json::Value>(&valid_iperf3_json()).unwrap();
+        truncated["end"]["sum_sent"]["bytes"] = serde_json::json!(1000.9);
+        let report = parse_iperf3_report(&outcome_with_stdout(
+            serde_json::to_string(&truncated).unwrap().as_bytes(),
+        ))
+        .unwrap();
+        assert_eq!(report.sent_bytes, 1000);
+        // The rounded upper bound is accepted; the next representable
+        // value above it is rejected.
+        let mut at_bound =
+            serde_json::from_slice::<serde_json::Value>(&valid_iperf3_json()).unwrap();
+        at_bound["end"]["sum_sent"]["bytes"] = serde_json::json!(U64_MAX_AS_F64);
+        assert!(
+            parse_iperf3_report(&outcome_with_stdout(
+                serde_json::to_string(&at_bound).unwrap().as_bytes()
+            ))
+            .is_ok()
+        );
+        let above = f64::from_bits(U64_MAX_AS_F64.to_bits() + 1);
+        assert!(above > U64_MAX_AS_F64);
+        let mut over = serde_json::from_slice::<serde_json::Value>(&valid_iperf3_json()).unwrap();
+        over["end"]["sum_sent"]["bytes"] = serde_json::json!(above);
+        assert!(
+            parse_iperf3_report(&outcome_with_stdout(
+                serde_json::to_string(&over).unwrap().as_bytes()
+            ))
+            .is_err()
+        );
+        // Negative, NaN, and infinite counters are rejected.
+        for bad in [
+            serde_json::json!(-1.0),
+            serde_json::json!(f64::NAN),
+            serde_json::json!(f64::INFINITY),
+        ] {
+            let mut invalid =
+                serde_json::from_slice::<serde_json::Value>(&valid_iperf3_json()).unwrap();
+            invalid["end"]["sum_sent"]["bytes"] = bad;
+            assert!(
+                parse_iperf3_report(&outcome_with_stdout(
+                    serde_json::to_string(&invalid).unwrap().as_bytes()
+                ))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn debug_redacts_executable_identity() {
+        use std::path::PathBuf;
+        let workload = Iperf3Workload {
+            executable: ResolvedExecutable {
+                logical_tool: IPERF3_TOOL.to_owned(),
+                selected_path: PathBuf::from("/tmp/iperf3"),
+                canonical_path: PathBuf::from("/tmp/iperf3"),
+                sha256_hex: "ab".repeat(32),
+                file_size: 1,
+                executable_class: "test".to_owned(),
+            },
+            version: Some("3.16".to_owned()),
+        };
+        let rendered = format!("{workload:?}");
+        assert!(rendered.contains(IPERF3_DRIVER_NAME));
+        assert!(rendered.contains("3.16"));
+        assert!(!rendered.contains("/tmp/iperf3"));
+        assert!(!rendered.contains(&"ab".repeat(32)));
     }
 }

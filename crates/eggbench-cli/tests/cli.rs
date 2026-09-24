@@ -1507,7 +1507,7 @@ fn tool_present(binary: &str) -> bool {
 }
 
 /// Oracles M002: explicit `--workload-driver oha` reaches the oha adapter
-/// end to end on loopback with the EggServe origin as target. Every
+/// end to end on loopback with the `EggServe` origin as target. Every
 /// measured trial retains the raw tool JSON plus the status diagnostic,
 /// and normalized metrics carry observed throughput/latency/error values.
 #[cfg(feature = "eggstack-http")]

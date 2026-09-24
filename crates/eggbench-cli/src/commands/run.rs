@@ -45,18 +45,18 @@ use tokio_util::sync::CancellationToken;
 /// `missing_driver` when no catalog driver matches.
 fn parse_workload_driver(
     workload_driver: Option<&str>,
-) -> Result<Option<Name>, PresentedCommandResult> {
+) -> Result<Option<Name>, Box<PresentedCommandResult>> {
     workload_driver
         .map(|name| {
             Name::new(name).map_err(|_| {
-                PresentedCommandResult::failure(
+                Box::new(PresentedCommandResult::failure(
                     "run",
                     &CliFailure::new(
                         "usage",
                         format!("invalid --workload-driver name {name:?}"),
                         ExitCode::ParseValidation,
                     ),
-                )
+                ))
             })
         })
         .transpose()
@@ -80,7 +80,7 @@ pub async fn run(
 ) -> Result<PresentedCommandResult, CliError> {
     let driver_selection = match parse_workload_driver(workload_driver) {
         Ok(selection) => selection,
-        Err(presented) => return Ok(presented),
+        Err(presented) => return Ok(*presented),
     };
     let runtime = ProductionRuntime::new();
     let descriptors = runtime.driver_descriptors();
@@ -131,9 +131,11 @@ pub async fn run(
     }
 
     run_impl(
-        plan,
-        input_format,
-        bundle,
+        RunPlan {
+            plan,
+            input_format,
+            bundle,
+        },
         &descriptors,
         &mut *executor,
         production_service_adapters(),
@@ -164,9 +166,11 @@ pub async fn run_with_qualification(
     descriptors.push(QualificationRuntime::service_descriptor());
     let mut executor = QualificationRuntime::workload_executor(fake);
     run_impl(
-        plan,
-        input_format,
-        bundle,
+        RunPlan {
+            plan,
+            input_format,
+            bundle,
+        },
         &descriptors,
         &mut executor,
         ServiceAdapterRegistry::new(),
@@ -176,20 +180,25 @@ pub async fn run_with_qualification(
     .await
 }
 
-async fn run_impl(
-    plan: &Path,
+/// Plan-input triple shared by production and qualification run paths.
+struct RunPlan<'a> {
+    plan: &'a Path,
     input_format: Option<InputFormat>,
-    bundle: &Path,
+    bundle: &'a Path,
+}
+
+async fn run_impl(
+    input: RunPlan<'_>,
     descriptors: &[DriverDescriptor],
     executor: &mut dyn WorkloadExecutor,
     service_adapters: ServiceAdapterRegistry,
     workload_driver: Option<&Name>,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
-    let input = load_plan(plan, input_format)?;
-    let plan = input.plan;
-    let plan_bytes = input.bytes;
-    let plan_media_type = match input.format {
+    let loaded = load_plan(input.plan, input.input_format)?;
+    let plan = loaded.plan;
+    let plan_bytes = loaded.bytes;
+    let plan_media_type = match loaded.format {
         InputFormat::Toml => "application/toml",
         InputFormat::Json => "application/json",
     };
@@ -256,7 +265,7 @@ async fn run_impl(
     };
 
     let writer = match prepare_bundle(&BundlePreparation {
-        destination: bundle,
+        destination: input.bundle,
         run_id: eggbench_core::RunId::new(),
         source_plan_bytes: &plan_bytes,
         source_plan_media_type: plan_media_type,

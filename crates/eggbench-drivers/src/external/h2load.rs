@@ -11,8 +11,8 @@
 use super::artifact::artifact_candidates;
 use super::command::{ExternalCommandOutcome, ExternalCommandSpec, run_command};
 use super::common::{
-    check_min_version, driver_env, failure_category, finite_non_negative, probe_failure_category,
-    target_http_url,
+    check_min_version, driver_env, failure_category, finite_non_negative, metric_u64_as_f64,
+    probe_failure_category, target_http_url,
 };
 use super::error::{DriverError, ErrorCategory};
 use super::parser::{ExternalOutputParser, ParsedExternalOutput};
@@ -159,9 +159,9 @@ impl H2loadWorkload {
         if self.version.is_none() {
             let probed = Self::probe(&self.executable, cancel)
                 .await
-                .map_err(|error| probe_failure_category(error, cancel))?;
+                .map_err(|error| probe_failure_category(&error, cancel))?;
             check_min_version(H2LOAD_TOOL, &probed.version, H2LOAD_MIN_VERSION)
-                .map_err(|error| probe_failure_category(error, cancel))?;
+                .map_err(|error| probe_failure_category(&error, cancel))?;
             self.version = Some(probed.version);
         }
         Ok(())
@@ -173,7 +173,7 @@ impl std::fmt::Debug for H2loadWorkload {
         f.debug_struct("H2loadWorkload")
             .field("driver", &H2LOAD_DRIVER_NAME)
             .field("version", &self.version)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -186,7 +186,8 @@ impl WorkloadExecutor for H2loadWorkload {
             self.ensure_probed(&context.cancellation).await?;
             let target = workload_target_name(&context.workload);
             let url = target_http_url(&context, target)?;
-            let argv = h2load_argv(&context.workload, &url).map_err(failure_category)?;
+            let argv =
+                h2load_argv(&context.workload, &url).map_err(|error| failure_category(&error))?;
             let spec = ExternalCommandSpec {
                 executable: self.executable.clone(),
                 args: argv,
@@ -199,8 +200,8 @@ impl WorkloadExecutor for H2loadWorkload {
             };
             let outcome = run_command(&spec, &context.cancellation)
                 .await
-                .map_err(failure_category)?;
-            let report = parse_h2load_report(&outcome).map_err(failure_category)?;
+                .map_err(|error| failure_category(&error))?;
+            let report = parse_h2load_report(&outcome).map_err(|error| failure_category(&error))?;
             Ok(h2load_output(&outcome, &report))
         })
     }
@@ -224,7 +225,7 @@ fn workload_target_name(workload: &Workload) -> &str {
 
 /// Build h2load argv from the plan workload (URL appended last).
 ///
-/// Count-bound loops map to `-n/-c`, durations to `--duration`. OpenLoop
+/// Count-bound loops map to `-n/-c`, durations to `--duration`. `OpenLoop`
 /// has no honest mapping (h2load offers no rate limiter) and fails closed.
 /// Cleartext targets use `--h1`; anything but `http(s)` fails closed.
 fn h2load_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverError> {
@@ -301,11 +302,17 @@ fn h2load_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverEr
 }
 
 /// Format milliseconds as h2load `--duration` seconds.
+///
+/// Integer quotient/remainder preserves the exact pre-C002 textual output:
+/// exact seconds emit a bare integer, other values emit three fractional
+/// digits with trailing zeros trimmed (so 1500ms emits `1.5`).
 fn duration_secs(duration_ms: u64) -> String {
-    if duration_ms % 1000 == 0 {
+    if duration_ms.is_multiple_of(1000) {
         (duration_ms / 1000).to_string()
     } else {
-        format!("{:.3}", duration_ms as f64 / 1000.0)
+        let whole = duration_ms / 1000;
+        let frac = duration_ms % 1000;
+        format!("{whole}.{frac:03}")
             .trim_end_matches('0')
             .to_owned()
     }
@@ -459,7 +466,7 @@ fn parse_h2_duration(token: &str) -> Result<f64, String> {
     let value: f64 = number
         .parse()
         .map_err(|_| format!("non-numeric duration: {token:?}"))?;
-    finite_non_negative(value * factor, "duration").map_err(|detail| detail)
+    finite_non_negative(value * factor, "duration")
 }
 
 /// Parse the `req/s` row mean (third numeric cell).
@@ -543,7 +550,7 @@ fn h2load_output(outcome: &ExternalCommandOutcome, report: &H2loadReport) -> Wor
         metrics.push(observation(
             "error_rate",
             "ratio",
-            report.failed as f64 / report.total as f64,
+            metric_u64_as_f64(report.failed) / metric_u64_as_f64(report.total),
             Aggregation::Ratio,
             "h2load.requests.failed",
             &raw,
@@ -688,16 +695,16 @@ mod tests {
             ),
             (20, 0, 0, 0)
         );
-        assert_eq!(report.req_per_sec_mean, 1072.78);
-        assert_eq!(report.request_min_ms, 0.631);
-        assert_eq!(report.request_mean_ms, 0.856);
+        assert_eq!(report.req_per_sec_mean.to_bits(), 1072.78_f64.to_bits());
+        assert_eq!(report.request_min_ms.to_bits(), 0.631_f64.to_bits());
+        assert_eq!(report.request_mean_ms.to_bits(), 0.856_f64.to_bits());
         let output = h2load_output(&outcome_with_stdout(SUCCESS.as_bytes()), &report);
         let rate = output
             .metrics
             .iter()
             .find(|m| m.name == "error_rate")
             .unwrap();
-        assert_eq!(rate.value, 0.0);
+        assert_eq!(rate.value.to_bits(), 0.0_f64.to_bits());
         assert!(output.error_counts.is_empty());
         assert!(
             output
@@ -718,7 +725,7 @@ mod tests {
             .iter()
             .find(|m| m.name == "error_rate")
             .unwrap();
-        assert_eq!(rate.value, 1.0);
+        assert_eq!(rate.value.to_bits(), 1.0_f64.to_bits());
         assert!(
             output
                 .error_counts
@@ -783,5 +790,44 @@ mod tests {
             duration_ms: None,
         };
         assert!(h2load_argv(&open, "http://127.0.0.1:9/").is_err());
+    }
+
+    #[test]
+    fn duration_secs_preserves_pre_c002_text() {
+        // Pre-C002 authority: float-formatted three decimals with trailing
+        // zeros trimmed; exact seconds emit a bare integer.
+        for (ms, expected) in [
+            (1_u64, "0.001"),
+            (999, "0.999"),
+            (1000, "1"),
+            (1001, "1.001"),
+            (1010, "1.01"),
+            (1100, "1.1"),
+            (1500, "1.5"),
+            (2501, "2.501"),
+        ] {
+            assert_eq!(duration_secs(ms), expected, "ms={ms}");
+        }
+    }
+
+    #[test]
+    fn debug_redacts_executable_identity() {
+        use std::path::PathBuf;
+        let workload = H2loadWorkload {
+            executable: ResolvedExecutable {
+                logical_tool: H2LOAD_TOOL.to_owned(),
+                selected_path: PathBuf::from("/tmp/h2load"),
+                canonical_path: PathBuf::from("/tmp/h2load"),
+                sha256_hex: "ab".repeat(32),
+                file_size: 1,
+                executable_class: "test".to_owned(),
+            },
+            version: Some("1.59.0".to_owned()),
+        };
+        let rendered = format!("{workload:?}");
+        assert!(rendered.contains(H2LOAD_DRIVER_NAME));
+        assert!(rendered.contains("1.59.0"));
+        assert!(!rendered.contains("/tmp/h2load"));
+        assert!(!rendered.contains(&"ab".repeat(32)));
     }
 }

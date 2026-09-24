@@ -44,15 +44,16 @@ impl DriverCatalog {
     /// startup.
     #[must_use]
     pub fn production() -> Self {
-        #[allow(unused_mut)]
         let mut descriptors = Vec::new();
         #[cfg(feature = "eggstack-http")]
         descriptors.extend(crate::eggstack::eggstack_descriptors());
         #[cfg(feature = "gregg")]
         descriptors.push(crate::gregg::gregg_telemetry_descriptor());
-        descriptors.push(crate::external::oha_descriptor());
-        descriptors.push(crate::external::h2load_descriptor());
-        descriptors.push(crate::external::iperf3_descriptor());
+        descriptors.extend([
+            crate::external::oha_descriptor(),
+            crate::external::h2load_descriptor(),
+            crate::external::iperf3_descriptor(),
+        ]);
         Self { descriptors }
     }
 

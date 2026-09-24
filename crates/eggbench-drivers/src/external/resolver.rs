@@ -270,13 +270,15 @@ fn hash_file(path: &Path) -> Result<(String, u64), DriverError> {
 fn classify(canonical: &Path) -> String {
     #[cfg(windows)]
     {
-        if let Some(ext) = canonical.extension().and_then(|e| e.to_str()) {
-            let lower = ext.to_ascii_lowercase();
-            if lower == "com" {
-                return "windows-com".to_owned();
-            }
+        let is_com = canonical
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("com"));
+        if is_com {
+            "windows-com".to_owned()
+        } else {
+            "windows-exe".to_owned()
         }
-        return "windows-exe".to_owned();
     }
     #[cfg(not(windows))]
     {

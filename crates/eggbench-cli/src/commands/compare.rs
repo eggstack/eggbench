@@ -126,7 +126,7 @@ fn present_receipt(
         "compare",
         output_payload,
         receipt.aggregate_verdict,
-        comparison_detail(&receipt),
+        comparison_detail(receipt),
     ))
 }
 

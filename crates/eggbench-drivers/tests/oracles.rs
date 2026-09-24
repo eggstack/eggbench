@@ -241,7 +241,7 @@ async fn oha_reports_parity_metrics_against_loopback() {
         .await
         .expect("oha trial completes");
     assert!(metric(&output, "throughput") > 0.0);
-    assert_eq!(metric(&output, "error_rate"), 0.0);
+    assert_eq!(metric(&output, "error_rate").to_bits(), 0.0_f64.to_bits());
     assert!(metric(&output, "latency_mean") > 0.0);
     assert!(metric(&output, "latency_p99") >= metric(&output, "latency_p50"));
     assert!(output.error_counts.is_empty());
@@ -282,7 +282,7 @@ async fn oha_surfaces_unreachable_target_as_full_error_rate() {
         ))
         .await
         .expect("unreachable trial still completes");
-    assert_eq!(metric(&output, "error_rate"), 1.0);
+    assert_eq!(metric(&output, "error_rate").to_bits(), 1.0_f64.to_bits());
     assert!(!output.error_counts.is_empty());
     assert!(!output.metrics.iter().any(|m| m.name == "latency_min"));
 }
@@ -312,7 +312,7 @@ async fn h2load_reports_parity_metrics_against_loopback() {
         .await
         .expect("h2load trial completes");
     assert!(metric(&output, "throughput") > 0.0);
-    assert_eq!(metric(&output, "error_rate"), 0.0);
+    assert_eq!(metric(&output, "error_rate").to_bits(), 0.0_f64.to_bits());
     assert!(metric(&output, "latency_mean") >= 0.0);
     assert!(output.error_counts.is_empty());
     assert!(
@@ -340,7 +340,7 @@ async fn h2load_surfaces_failures_as_counts_not_exit_status() {
         ))
         .await
         .expect("failed trial still completes");
-    assert_eq!(metric(&output, "error_rate"), 1.0);
+    assert_eq!(metric(&output, "error_rate").to_bits(), 1.0_f64.to_bits());
     assert!(
         output
             .error_counts
@@ -357,7 +357,7 @@ async fn iperf3_measures_loopback_throughput() {
         return;
     }
     let port = find_free_port();
-    let _server = spawn_iperf_server(port);
+    let server = spawn_iperf_server(port);
     // The -s -1 server exits after one test; hold the guard until done.
     let url = format!("http://127.0.0.1:{port}/");
 
@@ -382,7 +382,7 @@ async fn iperf3_measures_loopback_throughput() {
             .iter()
             .any(|a| a.name == "command-metadata.json")
     );
-    drop(_server);
+    drop(server);
 }
 
 #[tokio::test]

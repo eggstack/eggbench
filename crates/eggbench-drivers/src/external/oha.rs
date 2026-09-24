@@ -127,9 +127,9 @@ impl OhaWorkload {
         if self.version.is_none() {
             let probed = Self::probe(&self.executable, cancel)
                 .await
-                .map_err(|error| probe_failure_category(error, cancel))?;
+                .map_err(|error| probe_failure_category(&error, cancel))?;
             check_min_version(OHA_TOOL, &probed.version, OHA_MIN_VERSION)
-                .map_err(|error| probe_failure_category(error, cancel))?;
+                .map_err(|error| probe_failure_category(&error, cancel))?;
             self.version = Some(probed.version);
         }
         Ok(())
@@ -141,7 +141,7 @@ impl std::fmt::Debug for OhaWorkload {
         f.debug_struct("OhaWorkload")
             .field("driver", &OHA_DRIVER_NAME)
             .field("version", &self.version)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -154,7 +154,8 @@ impl WorkloadExecutor for OhaWorkload {
             self.ensure_probed(&context.cancellation).await?;
             let target = workload_target_name(&context.workload);
             let url = target_http_url(&context, target)?;
-            let argv = oha_argv(&context.workload, &url).map_err(failure_category)?;
+            let argv =
+                oha_argv(&context.workload, &url).map_err(|error| failure_category(&error))?;
             let spec = ExternalCommandSpec {
                 executable: self.executable.clone(),
                 args: argv,
@@ -167,8 +168,8 @@ impl WorkloadExecutor for OhaWorkload {
             };
             let outcome = run_command(&spec, &context.cancellation)
                 .await
-                .map_err(failure_category)?;
-            let report = parse_oha_report(&outcome).map_err(failure_category)?;
+                .map_err(|error| failure_category(&error))?;
+            let report = parse_oha_report(&outcome).map_err(|error| failure_category(&error))?;
             Ok(oha_output(&outcome, &report))
         })
     }
@@ -194,7 +195,7 @@ fn workload_target_name(workload: &Workload) -> &str {
 /// Build oha argv from the plan workload (URL appended last).
 ///
 /// ClosedLoop/FiniteCount counts map to `-n/-c`, durations to `-z`;
-/// OpenLoop rates map to `-q/--latency-correction`. Mutually exclusive
+/// `OpenLoop` rates map to `-q/--latency-correction`. Mutually exclusive
 /// count+duration pairs fail closed (oha silently ignores `-n` under `-z`).
 fn oha_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverError> {
     let unsupported = |detail: &str| {
@@ -302,7 +303,7 @@ fn rate_rps(milli_rps: u64) -> String {
     if frac == 0 {
         whole.to_string()
     } else {
-        format!("{whole}.{:03}", frac)
+        format!("{whole}.{frac:03}")
             .trim_end_matches('0')
             .to_owned()
     }
@@ -310,7 +311,7 @@ fn rate_rps(milli_rps: u64) -> String {
 
 /// Format a millisecond duration as oha `-z` humantime.
 fn humantime(duration_ms: u64) -> String {
-    if duration_ms % 1000 == 0 {
+    if duration_ms.is_multiple_of(1000) {
         format!("{}s", duration_ms / 1000)
     } else {
         format!("{duration_ms}ms")
@@ -631,10 +632,10 @@ mod tests {
     #[test]
     fn valid_report_maps_parity_metrics() {
         let report = parse_oha_report(&outcome_with_stdout(&valid_oha_json(), Some(0))).unwrap();
-        assert_eq!(report.requests_per_sec, 2000.0);
-        assert_eq!(report.success_rate, 1.0);
+        assert_eq!(report.requests_per_sec.to_bits(), 2000.0_f64.to_bits());
+        assert_eq!(report.success_rate.to_bits(), 1.0_f64.to_bits());
         assert_eq!(report.fastest_ms, Some(1.0));
-        assert_eq!(report.percentile_ms["p99"], 2.0);
+        assert_eq!(report.percentile_ms["p99"].to_bits(), 2.0_f64.to_bits());
         assert!(report.error_counts.is_empty());
         let output = oha_output(&outcome_with_stdout(&valid_oha_json(), Some(0)), &report);
         let names: Vec<&str> = output.metrics.iter().map(|m| m.name.as_str()).collect();
@@ -670,7 +671,7 @@ mod tests {
         .into_bytes();
         // Exit status is not the failure signal: oha exits 0 here.
         let report = parse_oha_report(&outcome_with_stdout(&bytes, Some(0))).unwrap();
-        assert_eq!(report.success_rate, 0.0);
+        assert_eq!(report.success_rate.to_bits(), 0.0_f64.to_bits());
         assert_eq!(report.fastest_ms, None);
         assert!(report.percentile_ms.is_empty());
         let output = oha_output(&outcome_with_stdout(&bytes, Some(0)), &report);
@@ -679,7 +680,7 @@ mod tests {
             .iter()
             .find(|m| m.name == "error_rate")
             .unwrap();
-        assert_eq!(error_rate.value, 1.0);
+        assert_eq!(error_rate.value.to_bits(), 1.0_f64.to_bits());
         assert!(!output.metrics.iter().any(|m| m.name == "latency_min"));
         assert!(!output.metrics.iter().any(|m| m.name == "latency_p99"));
         assert_eq!(output.error_counts.len(), 1);
@@ -744,5 +745,40 @@ mod tests {
             duration_ms: Some(DurationMs::new(1000).unwrap()),
         };
         assert!(oha_argv(&both, "http://127.0.0.1:1/").is_err());
+    }
+
+    #[test]
+    fn humantime_preserves_pre_c002_text() {
+        for (ms, expected) in [
+            (1_u64, "1ms"),
+            (999, "999ms"),
+            (1000, "1s"),
+            (1001, "1001ms"),
+            (1500, "1500ms"),
+            (2501, "2501ms"),
+        ] {
+            assert_eq!(humantime(ms), expected, "ms={ms}");
+        }
+    }
+
+    #[test]
+    fn debug_redacts_executable_identity() {
+        use std::path::PathBuf;
+        let workload = OhaWorkload {
+            executable: ResolvedExecutable {
+                logical_tool: OHA_TOOL.to_owned(),
+                selected_path: PathBuf::from("/tmp/oha"),
+                canonical_path: PathBuf::from("/tmp/oha"),
+                sha256_hex: "ab".repeat(32),
+                file_size: 1,
+                executable_class: "test".to_owned(),
+            },
+            version: Some("1.16.0".to_owned()),
+        };
+        let rendered = format!("{workload:?}");
+        assert!(rendered.contains(OHA_DRIVER_NAME));
+        assert!(rendered.contains("1.16.0"));
+        assert!(!rendered.contains("/tmp/oha"));
+        assert!(!rendered.contains(&"ab".repeat(32)));
     }
 }

@@ -35,7 +35,7 @@ pub fn run(
 ) -> Result<PresentedCommandResult, CliError> {
     let workload_driver = match parse_workload_driver(workload_driver) {
         Ok(selection) => selection,
-        Err(presented) => return Ok(presented),
+        Err(presented) => return Ok(*presented),
     };
     let runtime = ProductionRuntime::new();
     run_with_descriptors(
@@ -52,18 +52,18 @@ pub fn run(
 /// well-formed name resolves explicitly and surfaces as `missing_driver`.
 fn parse_workload_driver(
     workload_driver: Option<&str>,
-) -> Result<Option<Name>, PresentedCommandResult> {
+) -> Result<Option<Name>, Box<PresentedCommandResult>> {
     workload_driver
         .map(|name| {
             Name::new(name).map_err(|_| {
-                PresentedCommandResult::failure(
+                Box::new(PresentedCommandResult::failure(
                     "doctor",
                     &CliFailure::new(
                         "usage",
                         format!("invalid --workload-driver name {name:?}"),
                         ExitCode::ParseValidation,
                     ),
-                )
+                ))
             })
         })
         .transpose()
