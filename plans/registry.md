@@ -43,7 +43,7 @@ Canonical direction remains in:
 | post-M003 combined hosted qualification corrective | closed | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped (historical); C002 closed | Combined qualification closed by hosted run 36029547565 (four lanes green); closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 hosted-qualified; M002 plan-authorable | M002 implementation unblocked subject to its own authored implementation plan |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 hosted-qualified; M002 ready for handoff | Implementation plan: plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md; no dependency blocker |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
@@ -67,15 +67,15 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| post-M003 combined hosted qualification corrective | C002 Driver stable-Clippy debt and final hosted qualification | closed | plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md | Closed by implementation a8fbcea + 0e32ff0 and four-lane green hosted run 36029547565; closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
+| Eggstack integrations | M002 Route and stream-fault topology | ready | plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md | First-class schema-v3 network path; listener-free Eggress route -> Eggchaos stream wrapper -> Eggfetch; no route fallback, no packet-fault claims |
 
-C001 remains stopped historical work at plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md and must not be re-executed.
+Historical corrective C002 is closed at plans/closure/post-m003-hosted-qualification-corrective/002-status.md. C001 remains stopped historical work and must not be re-executed.
 
 ## Authored but dependency-blocked implementation plans
 
-No new capability implementation plan is dependency-ready.
+No additional authored capability plan is dependency-ready.
 
-Eggstack M002 route/stream-fault topology may be authored now that C002 closed (implementation unblocked subject to its own plan). External Oracles M003 netem remains the later milestone; security qualification still waits on its measurement + integration layer dependencies.
+Eggstack M003 replay/diagnostics remains blocked on M002 closure. External Oracles M003 netem remains the later oracle milestone. Security qualification remains blocked on the integration layer.
 
 ## Current execution order and dependency gates
 
@@ -128,22 +128,29 @@ C001 correctly stopped under its frozen-contract rule. Its successor C002 (imple
 
 ### Gate F — Drivers and integrations
 
-External Oracles M001 (7afa054) and M002 (3384a89) are implementation-closed. Eggstack M001 is implementation-closed through M001a (8426e08) and M001b (a0ff206).
+External Oracles M001 (7afa054) and M002 (3384a89) are hosted-qualified. Eggstack M001 is hosted-qualified through M001a (8426e08) and M001b (a0ff206). C002 supplied the final four-lane qualification at run 36029547565.
 
-C002 cleared the frozen-code driver lint class and produced the final four-lane green qualification (run 36029547565), closing the combined gate while preserving:
+Eggstack M002 is now the dependency-ready capability handoff:
 
-- oha/h2load/iperf3 argv semantics;
-- parser acceptance and metric values;
-- driver capabilities/version floors;
-- Debug redaction;
-- schemas/dependencies/MSRV.
+plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
 
-C002 closure records:
+Its controlling architecture is:
 
-- External Oracles M001/M002 hosted-qualified;
-- Eggstack M001a/M001b current integrated cross-platform qualification;
-- Eggstack M002 implementation unblocked subject to its own authored implementation plan;
-- External Oracles M003 remains the later netem milestone.
+- add a first-class schema-v3 network-path contract rather than a fake managed service;
+- use the published listener-free eggress-outbound seam for route establishment;
+- wrap the established logical stream with published eggchaos-core deterministic stream faults;
+- feed the resulting stream through Eggfetch's Dialer boundary while preserving Eggfetch HTTP/pooling ownership;
+- fail closed on route failure, credentials, unsupported workload/path combinations, and missing deterministic fault seed;
+- keep M002 stream-only: no UDP/datagram semantics, no netem, and no packet-loss terminology;
+- reject paired + network_path in M002 instead of weakening M003 physical-connection/trial semantics.
+
+The implementation plan re-audited sibling state on 2026-09-24: Eggress main is workspace 1.0.10 while the required public listener-free seam is already present in published v1.0.9; Eggchaos v0.1.0 is a published qualified release and eggchaos-core is the selected fault seam. Implementation must re-check exact published versions before pinning and must not use mutable git main merely for unreleased internals.
+
+After M002 closes:
+
+- Eggstack M003 replay/diagnostics may be authored/activated against the now-stable network-path contracts;
+- External Oracles M003 remains the later netem/system-level impairment milestone;
+- Eggstack M004/security integration remains sequenced behind the preceding integration layer.
 
 ### Gate G — Security profiles
 
@@ -174,6 +181,13 @@ Eggchaos/EggReplay/Eggprobe have no locally available seam; `oha 1.16.0`
 (built from crates.io), `h2load nghttp2/1.59.0`, and `iperf 3.16` all
 verified live against loopback.
 
+M002 handoff re-audit on 2026-09-24:
+
+- Eggress main reports workspace 1.0.10 / Rust 1.89; published v1.0.9 already exposes eggress-outbound listener-free TCP routing with typed detailed failures and OutboundInfo.
+- Eggchaos v0.1.0 is published and qualified; eggchaos-core exposes the protocol-neutral deterministic stream fault engine and BidirectionalChaosStream used by the M002 design.
+- eggchaos-eggfetch is deliberately not selected because its dialer owns a direct TCP connection; M002 composes Eggress route first and eggchaos-core second.
+- Eggchaos datagram work on main remains outside M002.
+
 ## Planning review checklist for new implementation plans
 
 Before marking a plan ready, verify:
@@ -192,6 +206,10 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-No corrective handoff remains dependency-ready: C002 is closed (four-lane green run 36029547565) and C001 is stopped historical work that must not be re-executed.
+The dependency-ready implementation handoff is:
 
-The next capability milestone is Eggstack M002 route/stream-fault topology, which may proceed to implementation once its own implementation plan is authored (no such plan exists yet; do not invent one here). External Oracles M003 netem remains the later milestone.
+plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
+
+Implement Eggstack M002, qualify it on the full default/all-feature/MSRV/four-lane matrix, and close it at plans/closure/eggstack-integration/002-status.md before activating Eggstack M003 replay/diagnostics.
+
+External Oracles M003 netem remains a separate later impairment boundary and must not be folded into M002.
