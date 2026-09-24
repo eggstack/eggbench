@@ -32,9 +32,11 @@ eggbench-drivers/eggstack-http
 ```
 
 The CLI forwards with its own `eggstack-http` feature
-(`eggbench-cli/eggstack-http`). Default features remain empty: without the
-feature the production catalog is empty and `run` fails closed before managed
-startup (`missing_driver`/`unsupported_workload`, exit code 3).
+(`eggbench-cli/eggstack-http`). Without the feature the native drivers stay
+unregistered (the external-process oracles still register, with an explicit
+`--workload-driver` selection required) and default `run` fails closed
+before managed startup (`ambiguous_selection`/`missing_driver`, exit
+code 3).
 
 Exact sibling versions are resolved from the workspace `Cargo.lock` by the
 `eggbench-drivers` build script and embedded as compile-time values; driver

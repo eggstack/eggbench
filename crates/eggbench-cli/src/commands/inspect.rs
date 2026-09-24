@@ -34,6 +34,9 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
                 .iter()
                 .map(|capability| format!("{capability:?}"))
                 .collect(),
+            // Bundle manifests predate presence probing; the binary state
+            // on this host says nothing about the recording host.
+            binary_present: None,
         })
         .collect();
     drivers.sort_by(|left, right| left.name.cmp(&right.name));

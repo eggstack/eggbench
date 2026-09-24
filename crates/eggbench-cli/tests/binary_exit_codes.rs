@@ -105,7 +105,9 @@ fn production_run_without_adapter_exits_three_in_both_modes() {
                 assert_eq!(value["ok"], false);
                 let category = value["error"]["category"].as_str().unwrap_or("");
                 assert!(
-                    category == "missing_driver" || category == "unsupported_workload",
+                    category == "missing_driver"
+                        || category == "unsupported_workload"
+                        || category == "ambiguous_selection",
                     "unexpected category {category}"
                 );
             }
@@ -140,11 +142,16 @@ fn doctor_production_reports_missing_driver_with_code_three() {
         let output = run(&args);
         #[cfg(not(feature = "eggstack-http"))]
         {
+            // Without native drivers the catalog holds only the
+            // non-default oracles, so default resolution is ambiguous
+            // while the doctor payload stays truthful.
             assert_eq!(output.status.code(), Some(3), "json={json}");
             if json {
                 let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
                 assert_eq!(value["ok"], false);
-                assert_eq!(value["result"]["has_workload_driver"], false);
+                assert_eq!(value["result"]["has_workload_driver"], true);
+                assert_eq!(value["result"]["resolved"], false);
+                assert_eq!(value["error"]["category"], "ambiguous_selection");
             }
         }
         #[cfg(feature = "eggstack-http")]

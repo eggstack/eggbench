@@ -115,5 +115,6 @@ Status: closed. Implementation commit `80ff6d1`, closure record at `plans/closur
 
 ### M003 — Paired/interleaved experiment qualification
 
-Status: blocked on M002 comparison policy and the required runner scheduling
-contract.
+Status: M002 comparison policy is closed; ready for plan authoring. The
+required runner scheduling contract (pair identities, balanced schedules,
+drift diagnostics) must be defined in the plan.

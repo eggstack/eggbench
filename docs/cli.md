@@ -12,6 +12,10 @@ runner’s bundle-preparation and execution seams.
 eggbench validate <plan>     Parse and validate an experiment plan.
 eggbench doctor <plan>       Validate plus driver/capability/environment preflight.
 eggbench run <plan> <bundle> Validate, resolve, prepare, and execute the experiment.
+
+`doctor` and `run` accept `--workload-driver <name>` to pin the workload
+driver explicitly (`oha`, `h2load`, `iperf3`, `eggfetch-http`); without the
+flag the unique marked default resolves.
 eggbench inspect <bundle>    Open, verify, and summarize a finalized bundle.
 eggbench compare <baseline.eggb> <candidate.eggb>
 eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb>
@@ -87,16 +91,22 @@ categories must be added through planning review.
 ## Driver registry and unsupported workloads
 
 Production `eggbench` resolves against the production catalog owned by
-`eggbench-drivers` (`DriverCatalog::production`). Without the
-`eggstack-http` feature the catalog is empty, `doctor` truthfully reports
-`has_workload_driver=false`, and `run` fails before managed startup with
-the stable `missing_driver` / `unsupported_workload` category. No service
-process is started and no bundle is published on that path. With the
-feature, the catalog registers the `eggserve-origin` service adapter and
-the `eggfetch-http` workload driver, plus the `gregg` telemetry driver
-with its own feature; `doctor` shows exact adapter/sibling versions and
-supported load-mode capabilities, and `run` executes the native loopback
-path. The CLI consumes the drivers catalog rather than owning
+`eggbench-drivers` (`DriverCatalog::production`). The catalog always
+carries the external-process oracles (`oha`, `h2load`, `iperf3`); with the
+`eggstack-http` feature it additionally registers the `eggserve-origin`
+service adapter and the `eggfetch-http` workload driver (the unique
+workload default), plus the `gregg` telemetry driver with its own feature.
+`doctor` and `run` accept `--workload-driver <name>` to pin the workload
+driver explicitly; without the flag the unique marked default resolves,
+without a unique default resolution fails with `ambiguous_selection`, and
+unknown names fail with `missing_driver`. Missing tool binaries fail with
+`missing_executable_path` and unsupported tool versions with
+`external_tool`, both before managed startup. No service
+process is started and no bundle is published on those paths. With the
+feature, `doctor` shows exact adapter/sibling versions,
+per-driver `binary_present` (filesystem resolution only, never spawning
+tools), and supported load-mode capabilities, and `run` executes the
+selected path. The CLI consumes the drivers catalog rather than owning
 registration. `doctor` validates declared Gregg endpoint config syntax
 (loopback policy) without dialing; live health/status probing stays in
 `run` preflight.

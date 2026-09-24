@@ -124,9 +124,11 @@ pub trait WorkloadRuntime {
 
 /// Production runtime: the compiled catalog adapters.
 ///
-/// Without `eggstack-http` the catalog is empty and `run` fails before
-/// managed startup; with the feature it carries the `EggServe` origin service
-/// descriptor and the `Eggfetch` workload descriptor.
+/// The catalog always carries the external-process oracles (`oha`,
+/// `h2load`, `iperf3`); `eggstack-http` adds the `EggServe` origin service
+/// descriptor and the `Eggfetch` workload descriptor (the unique workload
+/// default). Without a default workload driver an explicit
+/// `--workload-driver` selection is required.
 #[derive(Debug, Default, Clone)]
 pub struct ProductionRuntime {
     registry: WorkloadRegistry,
@@ -209,9 +211,10 @@ impl WorkloadRegistry {
     /// Production registry state: the catalog workload drivers.
     ///
     /// Delegates to the authoritative [`eggbench_drivers::DriverCatalog`]
-    /// production inventory, which is empty without the `eggstack-http`
-    /// feature. `doctor` reports `has_workload_driver=false` and `run` fails
-    /// before managed startup in that configuration.
+    /// production inventory: the external oracles unconditionally plus the
+    /// native `Eggfetch` driver with `eggstack-http`. `doctor` reports the
+    /// inventory truthfully and `run` fails before managed startup when no
+    /// driver resolves.
     #[must_use]
     pub fn production() -> Self {
         let catalog = eggbench_drivers::production_catalog();
@@ -362,11 +365,35 @@ pub fn production_service_adapters() -> ServiceAdapterRegistry {
 ///
 /// The factory lives here, not in `main.rs`, so adapter selection stays
 /// behind the registry seam. Only catalog-registered drivers resolve.
+/// External-process drivers resolve their binary synchronously here so a
+/// missing binary fails before managed startup; version probing runs in
+/// `run` preflight with executors self-probing on first execution.
 ///
 /// # Errors
 /// Returns a human-readable reason when no production executor exists for
 /// the driver (feature disabled or unknown driver name).
 pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExecutor>, String> {
+    if driver.as_str() == eggbench_drivers::OHA_DRIVER_NAME {
+        let executable =
+            eggbench_drivers::OhaWorkload::resolve().map_err(|error| error.to_string())?;
+        return Ok(Box::new(eggbench_drivers::OhaWorkload::from_resolved(
+            executable,
+        )));
+    }
+    if driver.as_str() == eggbench_drivers::H2LOAD_DRIVER_NAME {
+        let executable =
+            eggbench_drivers::H2loadWorkload::resolve().map_err(|error| error.to_string())?;
+        return Ok(Box::new(eggbench_drivers::H2loadWorkload::from_resolved(
+            executable,
+        )));
+    }
+    if driver.as_str() == eggbench_drivers::IPERF3_DRIVER_NAME {
+        let executable =
+            eggbench_drivers::Iperf3Workload::resolve().map_err(|error| error.to_string())?;
+        return Ok(Box::new(eggbench_drivers::Iperf3Workload::from_resolved(
+            executable,
+        )));
+    }
     #[cfg(feature = "eggstack-http")]
     {
         if driver.as_str() == eggbench_drivers::EGGFETCH_HTTP_DRIVER_NAME {
@@ -379,8 +406,10 @@ pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExe
     }
     #[cfg(not(feature = "eggstack-http"))]
     {
-        let _ = driver;
-        Err("no production workload adapter is compiled in".to_owned())
+        Err(format!(
+            "no production executor for workload driver {}",
+            driver.as_str()
+        ))
     }
 }
 
@@ -557,18 +586,22 @@ mod tests {
     #[test]
     fn production_registry_contains_no_fake_driver() {
         let registry = WorkloadRegistry::production();
-        #[cfg(not(feature = "eggstack-http"))]
-        {
-            assert!(!registry.has_workload_driver());
-            assert!(registry.default_workload().is_none());
-            assert!(registry.inventory().is_empty());
-        }
+        // The external oracles register unconditionally; only the native
+        // Eggfetch driver is feature-gated (and remains the unique default).
+        let mut expected = vec!["h2load", "iperf3", "oha"];
         #[cfg(feature = "eggstack-http")]
-        {
-            assert!(registry.has_workload_driver());
-            assert_eq!(registry.default_workload().unwrap().name, "eggfetch-http");
-            assert_eq!(registry.inventory().len(), 1);
-        }
+        expected.push("eggfetch-http");
+        let inventory = registry.inventory();
+        let mut names: Vec<&str> = inventory
+            .iter()
+            .map(|entry| entry.descriptor.name.as_str())
+            .collect();
+        names.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+        #[cfg(feature = "eggstack-http")]
+        assert_eq!(registry.default_workload().unwrap().name, "eggfetch-http");
+        assert!(registry.has_workload_driver());
         assert!(
             !registry
                 .inventory()
@@ -580,10 +613,11 @@ mod tests {
     #[test]
     fn legacy_builtin_constructor_is_production_empty() {
         let registry = WorkloadRegistry::with_builtin();
-        #[cfg(not(feature = "eggstack-http"))]
-        assert!(!registry.has_workload_driver());
-        #[cfg(feature = "eggstack-http")]
+        // The legacy constructor mirrors production: oracles always
+        // present, native Eggfetch only with the feature.
         assert!(registry.has_workload_driver());
+        #[cfg(feature = "eggstack-http")]
+        assert_eq!(registry.default_workload().unwrap().name, "eggfetch-http");
         assert!(
             !registry
                 .inventory()
@@ -603,23 +637,22 @@ mod tests {
     #[test]
     fn production_runtime_reports_no_driver() {
         let runtime = ProductionRuntime::new();
-        #[cfg(not(feature = "eggstack-http"))]
-        {
-            assert!(!runtime.has_workload_driver());
-            assert!(runtime.inventory().is_empty());
-            assert!(runtime.driver_descriptors().is_empty());
-        }
+        // Workload inventory always carries the three external oracles;
+        // the native descriptors join with eggstack-http (+gregg).
+        let mut expected_workload = 3;
+        let mut expected_descriptors = 3;
         #[cfg(feature = "eggstack-http")]
         {
-            assert!(runtime.has_workload_driver());
-            assert_eq!(runtime.inventory().len(), 1);
-            let mut expected = 2;
-            #[cfg(feature = "gregg")]
-            {
-                expected += 1;
-            }
-            assert_eq!(runtime.driver_descriptors().len(), expected);
+            expected_workload += 1;
+            expected_descriptors += 2;
         }
+        #[cfg(feature = "gregg")]
+        {
+            expected_descriptors += 1;
+        }
+        assert!(runtime.has_workload_driver());
+        assert_eq!(runtime.inventory().len(), expected_workload);
+        assert_eq!(runtime.driver_descriptors().len(), expected_descriptors);
     }
 
     #[test]

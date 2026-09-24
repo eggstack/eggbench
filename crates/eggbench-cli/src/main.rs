@@ -1,7 +1,10 @@
 //! Thin CLI binary: parses args, dispatches commands, writes JSON to stdout
 //! when requested, and human progress/diagnostics to stderr.
 //!
-//! Production `eggbench` registers no workload adapter: `run` fails before
+//! Production `eggbench` resolves against the production catalog: the
+//! external-process oracles always register while native adapters join per
+//! feature. Without a unique default workload driver an explicit
+//! `--workload-driver` selection is required; unresolvable runs fail before
 //! managed startup with a stable capability category. Exit status exactly
 //! matches the documented CLI result class in both JSON and human modes.
 
@@ -43,6 +46,9 @@ enum CliCommand {
         /// Optional explicit input format (`toml` or `json`).
         #[arg(long, value_enum)]
         input_format: Option<InputFormatArg>,
+        /// Optional explicit workload driver name (default selection otherwise).
+        #[arg(long)]
+        workload_driver: Option<String>,
     },
     /// Validate, resolve, prepare, and execute the experiment.
     Run {
@@ -53,6 +59,9 @@ enum CliCommand {
         input_format: Option<InputFormatArg>,
         /// Destination `.eggb` bundle path.
         bundle: PathBuf,
+        /// Optional explicit workload driver name (default selection otherwise).
+        #[arg(long)]
+        workload_driver: Option<String>,
     },
     /// Open, verify, and summarize a finalized bundle.
     Inspect {
@@ -124,18 +133,25 @@ fn build_command(command: CliCommand) -> Result<Command, String> {
             plan,
             input_format: input_format.map(Into::into),
         }),
-        CliCommand::Doctor { plan, input_format } => Ok(Command::Doctor {
+        CliCommand::Doctor {
+            plan,
+            input_format,
+            workload_driver,
+        } => Ok(Command::Doctor {
             plan,
             input_format: input_format.map(Into::into),
+            workload_driver,
         }),
         CliCommand::Run {
             plan,
             input_format,
             bundle,
+            workload_driver,
         } => Ok(Command::Run {
             plan,
             input_format: input_format.map(Into::into),
             bundle,
+            workload_driver,
         }),
         CliCommand::Inspect {
             bundle,

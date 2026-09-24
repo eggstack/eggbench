@@ -223,28 +223,22 @@ async fn raw_artifacts_are_deterministic_and_bounded() {
 // ---- Catalog / CLI regressions ----
 
 #[test]
-fn production_catalog_remains_empty() {
+fn production_catalog_registers_oracles_unconditionally() {
     let catalog = eggbench_drivers::production_catalog();
-    #[cfg(not(any(feature = "eggstack-http", feature = "gregg")))]
-    {
-        assert!(catalog.is_empty());
-        assert!(catalog.descriptors().is_empty());
-    }
-    // With features the catalog registers exactly the native drivers;
-    // nothing else may appear through this path.
-    #[cfg(any(feature = "eggstack-http", feature = "gregg"))]
-    {
-        let mut expected: Vec<String> = Vec::new();
-        #[cfg(feature = "eggstack-http")]
-        expected.extend(["eggfetch-http".to_owned(), "eggserve-origin".to_owned()]);
-        #[cfg(feature = "gregg")]
-        expected.push("gregg".to_owned());
-        let names: Vec<String> = catalog
-            .descriptors()
-            .iter()
-            .map(|d| d.name.as_str().to_owned())
-            .collect();
-        assert_eq!(names, expected);
-        assert_eq!(catalog.len(), expected.len());
-    }
+    // The external-process oracles register in every build; only the
+    // Eggstack-native drivers are feature-gated.
+    let mut expected: Vec<String> = Vec::new();
+    expected.extend(["h2load".to_owned(), "iperf3".to_owned(), "oha".to_owned()].into_iter());
+    #[cfg(feature = "eggstack-http")]
+    expected.extend(["eggfetch-http".to_owned(), "eggserve-origin".to_owned()]);
+    #[cfg(feature = "gregg")]
+    expected.push("gregg".to_owned());
+    expected.sort_unstable();
+    let names: Vec<String> = catalog
+        .descriptors()
+        .iter()
+        .map(|d| d.name.as_str().to_owned())
+        .collect();
+    assert_eq!(names, expected);
+    assert_eq!(catalog.len(), expected.len());
 }

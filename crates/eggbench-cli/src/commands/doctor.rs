@@ -28,10 +28,43 @@ use std::path::Path;
 pub fn run(
     plan: &Path,
     input_format: Option<InputFormat>,
+    workload_driver: Option<&str>,
     _options: CommandOptions,
 ) -> Result<PresentedCommandResult, CliError> {
+    let workload_driver = match parse_workload_driver(workload_driver) {
+        Ok(selection) => selection,
+        Err(presented) => return Ok(presented),
+    };
     let runtime = ProductionRuntime::new();
-    run_with_descriptors(plan, input_format, &runtime.driver_descriptors())
+    run_with_descriptors(
+        plan,
+        input_format,
+        &runtime.driver_descriptors(),
+        workload_driver.as_ref(),
+    )
+}
+
+/// Validate the explicit `--workload-driver` selection.
+///
+/// A malformed name is a usage failure before any plan I/O; an unknown but
+/// well-formed name resolves explicitly and surfaces as `missing_driver`.
+fn parse_workload_driver(
+    workload_driver: Option<&str>,
+) -> Result<Option<Name>, PresentedCommandResult> {
+    workload_driver
+        .map(|name| {
+            Name::new(name).map_err(|_| {
+                PresentedCommandResult::failure(
+                    "doctor",
+                    &CliFailure::new(
+                        "usage",
+                        format!("invalid --workload-driver name {name:?}"),
+                        ExitCode::ParseValidation,
+                    ),
+                )
+            })
+        })
+        .transpose()
 }
 
 /// Test/qualification seam with an explicit driver inventory.
@@ -47,7 +80,7 @@ pub fn run_with_registry(
         .iter()
         .map(|entry| entry.descriptor.to_descriptor())
         .collect();
-    run_with_descriptors(plan, input_format, &descriptors)
+    run_with_descriptors(plan, input_format, &descriptors, None)
 }
 
 /// Shared doctor flow over explicit canonical descriptors.
@@ -55,6 +88,7 @@ fn run_with_descriptors(
     plan: &Path,
     input_format: Option<InputFormat>,
     descriptors: &[eggbench_core::DriverDescriptor],
+    workload_driver: Option<&Name>,
 ) -> Result<PresentedCommandResult, CliError> {
     let input = load_plan(plan, input_format)?;
     let plan = input.plan;
@@ -73,6 +107,16 @@ fn run_with_descriptors(
         executable_paths: BTreeMap::default(),
         required_capabilities: BTreeMap::default(),
     };
+    if let Some(driver) = workload_driver {
+        options
+            .selections
+            .insert(DriverCategory::Workload, driver.clone());
+        if eggbench_drivers::is_external_workload(driver)
+            && let Some(path) = eggbench_drivers::executable_path_for(driver)
+        {
+            options.executable_paths.insert(driver.clone(), path);
+        }
+    }
 
     let workload_mode = workload_load_mode(&plan);
     let mut required_capabilities = std::collections::BTreeMap::new();
@@ -117,6 +161,7 @@ fn run_with_descriptors(
                     upstream_name: descriptor.upstream_name.clone(),
                     upstream_version: descriptor.upstream_version.clone(),
                     capabilities,
+                    binary_present: eggbench_drivers::external_binary_present(&descriptor.name),
                 }
             })
             .collect();

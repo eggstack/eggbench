@@ -1,19 +1,40 @@
 //! External command-driver substrate: trusted resolution, bounded argv
 //! execution, version probing, raw artifacts, and a versioned parser contract.
+//!
+//! Oracles M002 adds the first tool adapters on the substrate: `oha` and
+//! `h2load` HTTP load drivers plus the `iperf3` TCP throughput driver.
 
 mod artifact;
 mod command;
+mod common;
 mod error;
+mod h2load;
+mod iperf3;
+mod oha;
 mod parser;
+mod preflight;
 mod resolver;
 mod version;
 
 pub use artifact::{artifact_candidates, command_metadata_json, workload_output_from_outcome};
 pub use command::{CapturedStream, ExternalCommandOutcome, ExternalCommandSpec, run_command};
 pub use error::{DriverError, ErrorCategory};
+pub use h2load::{
+    H2LOAD_DRIVER_NAME, H2LOAD_PARSER_ID, H2LOAD_STATUS_ARTIFACT, H2loadParser, H2loadWorkload,
+    h2load_descriptor,
+};
+pub use iperf3::{
+    IPERF3_DRIVER_NAME, IPERF3_PARSER_ID, Iperf3Parser, Iperf3Workload, iperf3_descriptor,
+};
+pub use oha::{
+    OHA_DRIVER_NAME, OHA_PARSER_ID, OHA_STATUS_ARTIFACT, OhaParser, OhaWorkload, oha_descriptor,
+};
 pub use parser::{
     ExternalOutputParser, ExternalParseError, FixtureParsedOutput, FixtureParser,
     ParsedExternalOutput,
+};
+pub use preflight::{
+    executable_path_for, external_binary_present, is_external_workload, probe_external_workload,
 };
 pub use resolver::{BinaryResolver, ResolvedExecutable};
 pub use version::{ToolVersion, VersionProbe, VersionProbeSpec};

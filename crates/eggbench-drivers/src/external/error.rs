@@ -22,6 +22,8 @@ pub enum ErrorCategory {
     VersionProbeFailed,
     /// Tool version is unsupported by the adapter policy.
     UnsupportedVersion,
+    /// Plan workload or option has no honest mapping to tool flags.
+    UnsupportedOption,
     /// Process spawn failed.
     SpawnFailed,
     /// Execution was cancelled.
@@ -50,6 +52,7 @@ impl ErrorCategory {
             Self::VersionProbeTimeout => "version_probe_timeout",
             Self::VersionProbeFailed => "version_probe_failed",
             Self::UnsupportedVersion => "unsupported_version",
+            Self::UnsupportedOption => "unsupported_option",
             Self::SpawnFailed => "spawn_failed",
             Self::Cancelled => "cancelled",
             Self::TimedOut => "timed_out",

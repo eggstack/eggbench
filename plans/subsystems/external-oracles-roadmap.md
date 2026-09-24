@@ -90,4 +90,4 @@ The roadmap closes when Eggbench can qualify network subjects with independent g
 
 ## 8. Milestone status
 
-M001 is closed: implementation commit `7afa054`, closure record at `plans/closure/external-oracles/001-status.md`. It establishes the shared `eggbench-drivers` crate/catalog and external-command substrate. M002 (oha/h2load/iperf3 adapters) is unblocked and ready for plan authoring.
+M001 is closed: implementation commit `7afa054`, closure record at `plans/closure/external-oracles/001-status.md`. It establishes the shared `eggbench-drivers` crate/catalog and external-command substrate. M002 (oha/h2load/iperf3 adapters) plan is authored at `plans/implementation/external-oracles/002-http-and-capacity-oracles.md` and implementation is active; M003 netem remains future.

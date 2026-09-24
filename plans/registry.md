@@ -73,7 +73,11 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 ## Authored but dependency-blocked implementation plans
 
-None currently. External Oracles M002 tool adapters are unblocked but have no authored implementation plan yet.
+| Subsystem | Milestone | Status | Implementation plan | Handoff note |
+|---|---|---|---|---|
+| External measurement oracles | M002 HTTP and capacity oracles | active | plans/implementation/external-oracles/002-http-and-capacity-oracles.md | Authored 2026-09-24 against live oha 1.16.0 / h2load nghttp2-1.59.0 / iperf 3.16 ground truth; implementation in progress |
+
+Measurement M003 paired/interleaved qualification and Eggstack M002 route/stream-fault topology are unblocked but have no authored implementation plans yet.
 
 After External Oracles M001 closes, M001a and M001b may proceed in parallel if their runner/driver interface changes are reconciled rather than duplicated.
 
@@ -129,24 +133,21 @@ Measurement M002 is closed at `plans/closure/measurement-comparison/002-status.m
 
 ### Gate F — Drivers and integrations
 
-Two next-round implementation tracks are independent:
+Measurement M002 and External Oracles M001 are both closed (commits
+`80ff6d1`, `7afa054`). Eggstack M001 is closed via M001a (`8426e08`) plus
+M001b (`a0ff206`).
 
-- Measurement M002;
-- External Oracles M001.
+The next-round tracks now in progress or awaiting plans:
 
-External Oracles M001 is closed (`plans/closure/external-oracles/001-status.md`,
-commit `7afa054`). It established the shared `eggbench-drivers` crate,
-production catalog ownership, trusted executable resolution, bounded command
-capture, and parser contract. It deliberately ships no oha/h2load/iperf3
-adapter.
-
-Eggstack M001 is already decomposed into:
-
-- M001a EggServe controlled origin + Eggfetch native H1 workload;
-- M001b Gregg host telemetry.
-
-Those implementation plans are unblocked (External Oracles M001 closed) and
-may proceed in parallel.
+- External Oracles M002 (oha/h2load/iperf3): plan authored at
+  `plans/implementation/external-oracles/002-http-and-capacity-oracles.md`,
+  implementation active; netem stays in M003.
+- Measurement M003 paired/interleaved: unblocked (M002 policy closed) but
+  has no authored implementation plan yet; the runner scheduling contract
+  must be defined in the plan.
+- Eggstack M002 (Eggress + Eggchaos): unblocked by M001 closure but has no
+  authored implementation plan yet; Eggress 1.0.10 is present locally while
+  Eggchaos/EggReplay/Eggprobe have no available seam (see sibling facts).
 
 External Oracles M002 will add oha/h2load/iperf3 after the substrate closes. Eggress/Eggchaos, EggReplay/Eggprobe, and Eggsec remain later Eggstack milestones.
 
@@ -172,6 +173,13 @@ As of 2026-09-23 planning:
 
 These are planning observations, not permanent version pins. Every integration plan must inspect current sibling state at handoff.
 
+Observed 2026-09-24 during External Oracles M002 grounding (local host):
+Eggress workspace is 1.0.10 (many narrow crates incl. relay/outbound/
+metrics/routing/embed); EggServe workspace is 0.2.2; Eggsec is 0.1.0;
+Eggchaos/EggReplay/Eggprobe have no locally available seam; `oha 1.16.0`
+(built from crates.io), `h2load nghttp2/1.59.0`, and `iperf 3.16` all
+verified live against loopback.
+
 ## Planning review checklist for new implementation plans
 
 Before marking a plan ready, verify:
@@ -190,11 +198,10 @@ Before marking a plan ready, verify:
 
 ## Next handoffs
 
-Two plans may be handed off immediately in parallel (their runner/driver
-interface changes must be reconciled rather than duplicated):
+External Oracles M002 is the active handoff:
 
-1. `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
-2. `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
+1. `plans/implementation/external-oracles/002-http-and-capacity-oracles.md`
 
-External Oracles M002 tool adapters and Measurement M003 paired/interleaved
-qualification are unblocked but have no authored implementation plans yet.
+Measurement M003 paired/interleaved qualification and Eggstack M002
+route/stream-fault topology are unblocked but have no authored
+implementation plans yet.

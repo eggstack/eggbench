@@ -6,8 +6,9 @@
 //! M001 establishes reusable machinery only: trusted executable resolution,
 //! binary identity/version probing, argv-only command execution with bounded
 //! capture and cancellation, raw-output artifact helpers, and a versioned
-//! parser contract. It deliberately ships no oha/h2load/iperf3 adapter and
-//! no EggServe/Eggfetch/Gregg integration semantics.
+//! parser contract. Oracles M002 adds the first tool adapters on that
+//! substrate (`oha`, `h2load`, `iperf3`) with no EggServe/Eggfetch/Gregg
+//! integration semantics.
 
 #![forbid(unsafe_code)]
 
@@ -25,4 +26,11 @@ pub use eggstack::{
     EGGSERVE_PRIMITIVES_VERSION, EGGSERVE_SERVER_VERSION, EGGSTACK_ADAPTER_VERSION,
     EggServeOriginAdapter, EggfetchWorkload, eggfetch_http_descriptor, eggfetch_workload,
     eggserve_origin_descriptor, eggstack_descriptors, eggstack_service_adapters,
+};
+pub use external::{
+    BinaryResolver, DriverError, ErrorCategory, ExternalCommandOutcome, ExternalCommandSpec,
+    ExternalOutputParser, H2LOAD_DRIVER_NAME, H2loadParser, H2loadWorkload, IPERF3_DRIVER_NAME,
+    Iperf3Parser, Iperf3Workload, OHA_DRIVER_NAME, OhaParser, OhaWorkload, ResolvedExecutable,
+    ToolVersion, executable_path_for, external_binary_present, h2load_descriptor,
+    iperf3_descriptor, is_external_workload, oha_descriptor, probe_external_workload,
 };

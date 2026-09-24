@@ -134,7 +134,10 @@ Unblocked:
 
 ### M002 — Route and stream-fault topology
 
-Status: blocked on M001 closure.
+Status: unblocked by M001 closure; ready for plan authoring. Plan-time
+input for the author: Eggress 1.0.10 is present locally (roadmap §2 cited
+1.0.8 — re-audit the seam), while Eggchaos/EggReplay/Eggprobe have no
+locally available crate, CLI, or HTTP seam as of 2026-09-24.
 
 ### M003 — Replay and diagnostics
 

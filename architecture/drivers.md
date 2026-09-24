@@ -20,15 +20,19 @@ With the `eggstack-http` cargo feature, the catalog registers the first
 real Eggstack-native experiment path: the `eggserve-origin` named service
 adapter and the `eggfetch-http` workload driver. With the `gregg` feature
 it additionally registers the `gregg` host-telemetry driver (one
-`TelemetryField` capability per collected `host_*` metric). Without
-features the catalog remains empty and production `run` fails closed
-before managed startup. See [Eggstack HTTP](../docs/eggstack-http.md) and
-[Gregg telemetry](../docs/gregg-telemetry.md).
+`TelemetryField` capability per collected `host_*` metric). The
+external-process oracles (`oha`, `h2load`, `iperf3`) register
+unconditionally; without features and without installed tools only those
+descriptors remain and production `run` fails closed before managed
+startup. See [Eggstack HTTP](../docs/eggstack-http.md),
+[Gregg telemetry](../docs/gregg-telemetry.md), and
+[External oracles](../docs/external-oracles.md).
 
-## External command substrate (External Oracles M001)
+## External command substrate (External Oracles M001) and tool adapters (M002)
 
-Reusable machinery for optional external benchmark tools (no oha/h2load/
-iperf3 adapter ships in M001):
+Reusable machinery for optional external benchmark tools, plus the first
+tool adapters on that substrate (`oha`, `h2load`, `iperf3`; see
+[External oracles](../docs/external-oracles.md)):
 
 - trusted executable resolution (`BinaryResolver`): explicit absolute paths
   only; `PATH` search skips empty/relative components (no implicit cwd);

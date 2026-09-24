@@ -5,11 +5,13 @@
 //! subject snapshot → prepare BundleWriter → LocalSession::prepare →
 //! WorkloadExecutor/reset hooks → execute_run → machine/human result`.
 //!
-//! Production `eggbench` resolves against the production catalog: without the
-//! `eggstack-http` feature the catalog is empty and [`run`] fails before
-//! managed startup with a stable `missing_driver`/`unsupported_workload`
-//! category; with the feature the registered `EggServe`/`Eggfetch` adapters
-//! execute a real loopback run. Deterministic qualification uses
+//! Production `eggbench` resolves against the production catalog: without
+//! installed external tools or the `eggstack-http` feature, resolution or
+//! executor construction fails before managed startup with a stable
+//! `missing_driver`/`unsupported_workload` category; with the feature the
+//! registered `EggServe`/`Eggfetch` adapters execute a real loopback run.
+//! External-process drivers additionally probe their tool version in
+//! preflight. Deterministic qualification uses
 //! [`run_with_qualification`] with an explicitly injected `FakeWorkload`;
 //! that path is never used by `main.rs` and is not reachable through any
 //! public production flag.
@@ -36,26 +38,55 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
+/// Validate the explicit `--workload-driver` selection.
+///
+/// A malformed name is a usage failure before any plan I/O; an unknown but
+/// well-formed name resolves explicitly and fails later with
+/// `missing_driver` when no catalog driver matches.
+fn parse_workload_driver(
+    workload_driver: Option<&str>,
+) -> Result<Option<Name>, PresentedCommandResult> {
+    workload_driver
+        .map(|name| {
+            Name::new(name).map_err(|_| {
+                PresentedCommandResult::failure(
+                    "run",
+                    &CliFailure::new(
+                        "usage",
+                        format!("invalid --workload-driver name {name:?}"),
+                        ExitCode::ParseValidation,
+                    ),
+                )
+            })
+        })
+        .transpose()
+}
+
 /// Production run: resolve against the production catalog and execute with
 /// the registered adapters.
 ///
-/// Without the `eggstack-http` feature the catalog is empty and resolution
-/// fails with `missing_driver` before environment/bundle preparation,
-/// managed startup, workload invocation, or bundle publication. With the
-/// feature, the resolved workload driver selects its executor and the
-/// registered service adapters join the session; unsupported drivers fail
-/// closed with `unsupported_workload` before startup.
+/// Resolution, executor construction, and external-tool version probing all
+/// fail before environment/bundle preparation, managed startup, workload
+/// invocation, or bundle publication. With `eggstack-http`, the resolved
+/// workload driver selects its executor and the registered service adapters
+/// join the session; unsupported drivers fail closed with
+/// `unsupported_workload` before startup.
 pub async fn run(
     plan: &Path,
     input_format: Option<InputFormat>,
     bundle: &Path,
+    workload_driver: Option<&str>,
     _options: CommandOptions,
 ) -> Result<PresentedCommandResult, CliError> {
+    let driver_selection = match parse_workload_driver(workload_driver) {
+        Ok(selection) => selection,
+        Err(presented) => return Ok(presented),
+    };
     let runtime = ProductionRuntime::new();
     let descriptors = runtime.driver_descriptors();
 
     let input = load_plan(plan, input_format)?;
-    let options = resolution_options(platform_name()?, &input.plan);
+    let options = resolution_options(platform_name()?, &input.plan, driver_selection.as_ref());
     let resolved = eggbench_core::resolve_plan(&input.plan, &descriptors, &options)
         .map_err(CliError::Resolution)?;
 
@@ -80,6 +111,25 @@ pub async fn run(
         }
     };
 
+    // External-process preflight: resolve, probe, and version-check the tool
+    // before any managed startup. Executors self-probe on first execution as
+    // well, so this gate only moves the failure earlier, never wider.
+    if let Some(driver) = workload_driver
+        && eggbench_drivers::is_external_workload(&driver.descriptor.name)
+    {
+        let probe_cancel = CancellationToken::new();
+        if let Err(error) =
+            eggbench_drivers::probe_external_workload(&driver.descriptor.name, &probe_cancel).await
+        {
+            let failure = CliFailure::new(
+                "external_tool",
+                error.to_string(),
+                ExitCode::CapabilityPreflight,
+            );
+            return Ok(PresentedCommandResult::failure("run", &failure));
+        }
+    }
+
     run_impl(
         plan,
         input_format,
@@ -87,6 +137,7 @@ pub async fn run(
         &descriptors,
         &mut *executor,
         production_service_adapters(),
+        driver_selection.as_ref(),
         wait_for_ctrl_c(),
     )
     .await
@@ -115,6 +166,7 @@ pub async fn run_with_qualification(
         &descriptors,
         &mut executor,
         ServiceAdapterRegistry::new(),
+        None,
         signal,
     )
     .await
@@ -127,6 +179,7 @@ async fn run_impl(
     descriptors: &[DriverDescriptor],
     executor: &mut dyn WorkloadExecutor,
     service_adapters: ServiceAdapterRegistry,
+    workload_driver: Option<&Name>,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
     let input = load_plan(plan, input_format)?;
@@ -138,7 +191,7 @@ async fn run_impl(
     };
 
     let platform = platform_name()?;
-    let options = resolution_options(platform, &plan);
+    let options = resolution_options(platform, &plan, workload_driver);
 
     let resolved =
         eggbench_core::resolve_plan(&plan, descriptors, &options).map_err(CliError::Resolution)?;
@@ -330,7 +383,11 @@ fn presented_run_outcome(outcome: &eggbench_runner::RunOutcome) -> PresentedComm
     }
 }
 
-fn resolution_options(platform: Name, plan: &eggbench_core::ExperimentPlan) -> ResolutionOptions {
+fn resolution_options(
+    platform: Name,
+    plan: &eggbench_core::ExperimentPlan,
+    workload_driver: Option<&Name>,
+) -> ResolutionOptions {
     let mut options = ResolutionOptions {
         selections: BTreeMap::default(),
         default_policy: DefaultDriverPolicy::Deterministic,
@@ -338,6 +395,19 @@ fn resolution_options(platform: Name, plan: &eggbench_core::ExperimentPlan) -> R
         executable_paths: BTreeMap::default(),
         required_capabilities: BTreeMap::default(),
     };
+    if let Some(driver) = workload_driver {
+        options
+            .selections
+            .insert(DriverCategory::Workload, driver.clone());
+        // External-process drivers pin their resolved binary into
+        // resolution; when the binary is missing the path stays absent and
+        // resolution reports MissingExecutablePath before any startup.
+        if eggbench_drivers::is_external_workload(driver)
+            && let Some(path) = eggbench_drivers::executable_path_for(driver)
+        {
+            options.executable_paths.insert(driver.clone(), path);
+        }
+    }
     let workload_mode = workload_load_mode(plan);
     let mut caps = BTreeMap::new();
     caps.insert(

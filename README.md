@@ -11,7 +11,7 @@ eggbench run      <plan> <bundle>  # full lifecycle, finalized .eggb bundle
 eggbench inspect  <bundle>    # open, verify, and summarize a finalized bundle
 ```
 
-Production `eggbench run` resolves against the production catalog owned by `eggbench-drivers`. Without the `eggstack-http` feature the catalog is empty, so `run` fails before managed startup with a stable capability category; with the feature it executes the first Eggstack-native path — an EggServe loopback controlled origin driven by a native Eggfetch workload:
+Production `eggbench run` resolves against the production catalog owned by `eggbench-drivers`. The catalog always carries the external-process oracles (`oha`, `h2load`, `iperf3`, selectable with `--workload-driver`); with the `eggstack-http` feature it additionally executes the first Eggstack-native path — an EggServe loopback controlled origin driven by a native Eggfetch workload (the unique workload default):
 
 ```sh
 cargo build -p eggbench-cli --features eggstack-http
@@ -48,5 +48,6 @@ Deterministic trial-level bootstrap (10,000 resamples, 95% interval), practical 
 - [Baselines](docs/baselines.md)
 - [Eggstack HTTP native path](docs/eggstack-http.md)
 - [Gregg host telemetry](docs/gregg-telemetry.md)
+- [External measurement oracles](docs/external-oracles.md)
 - [Active implementation plans](plans/registry.md)
 

@@ -400,6 +400,11 @@ pub struct DriverSummary {
     pub upstream_version: Option<String>,
     /// Advertised capability labels in stable order.
     pub capabilities: Vec<String>,
+    /// External-binary presence (`None` for in-process drivers). Filesystem
+    /// resolution only: `doctor` never spawns the tool, so the probed
+    /// version stays in `run` preflight and trial evidence.
+    #[serde(default)]
+    pub binary_present: Option<bool>,
 }
 
 /// Environment fingerprint summary used by `doctor` and `inspect`.

@@ -95,20 +95,24 @@ async fn doctor_production_reports_no_workload_driver() {
         Command::Doctor {
             plan,
             input_format: None,
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
     .await;
     #[cfg(not(feature = "eggstack-http"))]
     {
-        // Production inventory is empty, so resolution fails truthfully while the
-        // doctor payload (including has_workload_driver=false) is retained.
+        // Without native drivers the catalog holds only the external
+        // oracles (all non-default), so default resolution is ambiguous
+        // while the doctor payload (including has_workload_driver=true) is
+        // retained. An explicit --workload-driver still resolves.
         assert!(!presented.envelope.ok);
         assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
         let body: Value = serde_json::to_value(&presented.envelope).unwrap();
         assert_eq!(body["result"]["kind"], "doctor");
         assert_eq!(body["result"]["resolved"], false);
-        assert_eq!(body["result"]["has_workload_driver"], false);
+        assert_eq!(body["result"]["has_workload_driver"], true);
+        assert_eq!(body["error"]["category"], "ambiguous_selection");
         assert!(
             !body["result"]["environment_fields"]
                 .as_array()
@@ -168,9 +172,7 @@ async fn doctor_qualification_registry_resolves() {
 #[tokio::test]
 async fn production_registry_contains_no_fake_driver() {
     let registry = WorkloadRegistry::production();
-    #[cfg(not(feature = "eggstack-http"))]
-    assert!(!registry.has_workload_driver());
-    #[cfg(feature = "eggstack-http")]
+    // Oracles register unconditionally; the native driver joins per feature.
     assert!(registry.has_workload_driver());
     assert!(
         !registry
@@ -197,6 +199,7 @@ async fn production_run_fails_before_startup_without_starting_services() {
             plan,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -207,7 +210,9 @@ async fn production_run_fails_before_startup_without_starting_services() {
         assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
         let failure = presented.envelope.error.as_ref().expect("error");
         assert!(
-            failure.category == "missing_driver" || failure.category == "unsupported_workload",
+            failure.category == "missing_driver"
+                || failure.category == "unsupported_workload"
+                || failure.category == "ambiguous_selection",
             "unexpected category {}",
             failure.category
         );
@@ -780,6 +785,7 @@ async fn eggstack_loopback_end_to_end() {
             plan,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -869,6 +875,7 @@ async fn trial_observation_count_is_independent_of_request_volume() {
                 plan: plan_path,
                 input_format: None,
                 bundle: bundle.clone(),
+                workload_driver: None,
             },
             CommandOptions::human(),
         )
@@ -942,6 +949,7 @@ async fn eggserve_startup_failure_is_reported_without_hanging() {
             plan: plan_path,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1031,6 +1039,7 @@ async fn production_run_without_target_binding_fails_at_workload() {
             plan,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1160,6 +1169,7 @@ async fn gregg_telemetry_end_to_end() {
             plan: plan_path,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1284,6 +1294,7 @@ async fn required_gregg_unavailable_fails_before_startup() {
             plan: plan_path,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1327,6 +1338,7 @@ async fn optional_gregg_unavailable_warns_and_completes() {
             plan: plan_path,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1381,6 +1393,7 @@ async fn gregg_telemetry_without_feature_fails_resolution() {
             plan: plan_path,
             input_format: None,
             bundle: bundle.clone(),
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1420,6 +1433,7 @@ async fn doctor_reports_gregg_descriptor_and_rejects_non_loopback() {
         Command::Doctor {
             plan: plan_path.clone(),
             input_format: None,
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1452,6 +1466,7 @@ async fn doctor_reports_gregg_descriptor_and_rejects_non_loopback() {
         Command::Doctor {
             plan: plan_path,
             input_format: None,
+            workload_driver: None,
         },
         CommandOptions::human(),
     )
@@ -1460,4 +1475,176 @@ async fn doctor_reports_gregg_descriptor_and_rejects_non_loopback() {
     assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
     let failure = presented.envelope.error.as_ref().expect("error");
     assert_eq!(failure.category, "telemetry_config");
+}
+
+fn tool_present(binary: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| {
+            let candidate = dir.join(binary);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                candidate.is_file()
+                    && candidate
+                        .metadata()
+                        .is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+            }
+            #[cfg(not(unix))]
+            {
+                candidate.is_file()
+            }
+        })
+    })
+}
+
+/// Oracles M002: explicit `--workload-driver oha` reaches the oha adapter
+/// end to end on loopback with the EggServe origin as target. Every
+/// measured trial retains the raw tool JSON plus the status diagnostic,
+/// and normalized metrics carry observed throughput/latency/error values.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn oha_loopback_end_to_end_with_explicit_selection() {
+    use eggbench_core::{BundleReader, TrialId};
+    if !tool_present("oha") {
+        eprintln!("skipping oha e2e: binary not installed");
+        return;
+    }
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["workload"] = serde_json::json!({"kind": "closed_loop", "target": "origin", "concurrency": 2, "requests": 20, "duration_ms": null});
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let bundle = tmp.path().join("oha.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: Some("oha".to_owned()),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(
+        presented.envelope.ok,
+        "oha run failed: {:?}",
+        presented.envelope
+    );
+    assert_eq!(presented.exit_code, ExitCode::Success);
+    let reader = BundleReader::open(&bundle).expect("bundle opens");
+    reader.verify().expect("bundle verifies");
+    assert_eq!(reader.manifest().trials.len(), 3);
+    let artifact_paths: Vec<String> = reader
+        .manifest()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.path.to_string())
+        .collect();
+    for trial in 1..=3 {
+        let prefix = format!("trials/{trial:03}/artifacts/");
+        for artifact in ["stdout.raw", "command-metadata.json", "oha-status.json"] {
+            assert!(
+                artifact_paths
+                    .iter()
+                    .any(|path| path.starts_with(&prefix) && path.ends_with(artifact)),
+                "trial {trial} retains {artifact}"
+            );
+        }
+        let metrics = reader
+            .trial_metrics(TrialId::new(trial).unwrap())
+            .expect("metrics read")
+            .expect("metrics present");
+        let value = |name: &str| {
+            let observation = metrics
+                .observations
+                .iter()
+                .find(|observation| observation.name.as_str() == name)
+                .expect("metric");
+            match observation.state {
+                eggbench_core::ObservationState::Observed { value } => value,
+                _ => panic!("metric {name} is not observed"),
+            }
+        };
+        assert!(value("throughput") > 1.0);
+        assert!(value("error_rate") < f64::EPSILON);
+        assert!(value("latency_p99") >= 0.0);
+    }
+}
+
+/// An unknown explicit workload driver fails closed with `missing_driver`
+/// before any managed startup.
+#[tokio::test]
+async fn unknown_workload_driver_selection_fails_closed() {
+    let plan = fixture_dir().join("minimal.json");
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: Some("no-such-driver".to_owned()),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    let failure = presented.envelope.error.as_ref().expect("error");
+    assert_eq!(failure.category, "missing_driver");
+}
+
+/// A malformed workload driver name is a usage error before any plan I/O.
+#[tokio::test]
+async fn malformed_workload_driver_selection_is_usage_error() {
+    let plan = fixture_dir().join("minimal.json");
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: Some(String::new()),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::ParseValidation);
+    let failure = presented.envelope.error.as_ref().expect("error");
+    assert_eq!(failure.category, "usage");
+}
+
+/// `doctor` reports external-binary presence per oracle driver without
+/// spawning any tool; in-process drivers report no presence either way.
+#[tokio::test]
+async fn doctor_reports_oracle_binary_presence() {
+    let plan = fixture_dir().join("minimal.json");
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    // Without the native default the fixture may not resolve; the driver
+    // payload is retained on both paths.
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    let drivers = body["result"]["drivers"].as_array().unwrap();
+    for tool in ["oha", "h2load", "iperf3"] {
+        let entry = drivers
+            .iter()
+            .find(|driver| driver["name"] == tool)
+            .unwrap_or_else(|| panic!("{tool} reported"));
+        assert_eq!(
+            entry["binary_present"],
+            Value::Bool(tool_present(tool)),
+            "{tool} presence"
+        );
+    }
+    for entry in drivers {
+        if entry["external_process"] == Value::Bool(false) {
+            assert_eq!(entry["binary_present"], Value::Null);
+        }
+    }
 }

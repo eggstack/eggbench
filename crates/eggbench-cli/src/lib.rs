@@ -48,6 +48,8 @@ pub enum Command {
         plan: PathBuf,
         /// Optional explicit input format (`toml` or `json`).
         input_format: Option<InputFormat>,
+        /// Optional explicit workload driver name (default selection otherwise).
+        workload_driver: Option<String>,
     },
     /// Validate, resolve, prepare, and execute the experiment.
     Run {
@@ -57,6 +59,8 @@ pub enum Command {
         input_format: Option<InputFormat>,
         /// Destination `.eggb` bundle path.
         bundle: PathBuf,
+        /// Optional explicit workload driver name (default selection otherwise).
+        workload_driver: Option<String>,
     },
     /// Open, verify, and summarize a finalized bundle.
     Inspect {
@@ -122,14 +126,26 @@ pub async fn execute(command: Command, options: CommandOptions) -> PresentedComm
     let label = command_label(&command);
     let outcome: Result<PresentedCommandResult, CliError> = match command {
         Command::Validate { plan, input_format } => commands::validate::run(&plan, input_format),
-        Command::Doctor { plan, input_format } => {
-            commands::doctor::run(&plan, input_format, options)
-        }
+        Command::Doctor {
+            plan,
+            input_format,
+            workload_driver,
+        } => commands::doctor::run(&plan, input_format, workload_driver.as_deref(), options),
         Command::Run {
             plan,
             input_format,
             bundle,
-        } => commands::r#run::run(&plan, input_format, &bundle, options).await,
+            workload_driver,
+        } => {
+            commands::r#run::run(
+                &plan,
+                input_format,
+                &bundle,
+                workload_driver.as_deref(),
+                options,
+            )
+            .await
+        }
         Command::Inspect {
             bundle,
             emit_manifest_json,

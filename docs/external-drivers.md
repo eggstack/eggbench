@@ -1,16 +1,20 @@
 # External drivers
 
 External Oracles M001 establishes the shared `eggbench-drivers` crate and a
-secure, bounded, testable command-adapter substrate. **No actual external
-benchmark adapter ships in M001** — no oha/h2load/iperf3 mapping, no
-tc/netem, no installer, no shell execution, no remote execution.
+secure, bounded, testable command-adapter substrate. Oracles M002 adds the
+first tool adapters on that substrate — oha/h2load/iperf3 mapping, with
+tc/netem still future and no installer, shell execution, or remote
+execution. See [external oracles](external-oracles.md).
 
 ## Catalog ownership
 
 Production driver inventory lives in `eggbench-drivers::DriverCatalog`. The
-M001 production catalog is empty: `doctor` truthfully reports
-`has_workload_driver=false` and production `run` fails before startup with
-`missing_driver`/`unsupported_workload`. The CLI no longer owns the
+catalog always registers the external-process oracles (`oha`, `h2load`,
+`iperf3`); native drivers join per feature. `doctor` truthfully reports the
+inventory (including per-driver `binary_present` without spawning tools)
+and production `run` fails before startup with
+`missing_driver`/`unsupported_workload`/`ambiguous_selection`/`missing_executable_path`
+when no driver resolves. The CLI no longer owns the
 authoritative registry. The qualification fake stays test-only.
 
 Feature policy: `default = []`, `external-command = [...]` (substrate only).
