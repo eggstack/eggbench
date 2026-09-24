@@ -1,6 +1,6 @@
 # Measurement and Comparison Roadmap
 
-Status: ready
+Status: closed (M001 qualified, M002 closed, M003 closed 2026-09-24)
 
 Long-term references:
 
@@ -115,6 +115,4 @@ Status: closed. Implementation commit `80ff6d1`, closure record at `plans/closur
 
 ### M003 — Paired/interleaved experiment qualification
 
-Status: M002 comparison policy is closed; ready for plan authoring. The
-required runner scheduling contract (pair identities, balanced schedules,
-drift diagnostics) must be defined in the plan.
+Status: closed. Implementation commit `49a4105`, closure record at `plans/closure/measurement-comparison/003-status.md`. Predeclared paired designs (plan schema v2), deterministic alternating runner schedule with arm/pair evidence, paired trial-level bootstrap policy v2, descriptive drift diagnostics, `eggbench compare --paired`, and methodology documentation are landed and regression-tested with v1 behavior proven unchanged. The measurement/comparison roadmap is complete: M001 closed (qualified), M002 closed, M003 closed.

@@ -1,8 +1,7 @@
 # Measurement/Comparison M003 — Paired/Interleaved Experiment Qualification
 
 Status: closed (closure
-`plans/closure/measurement-comparison/003-status.md`; implementation commit
-follows `2e35ab8`)
+`plans/closure/measurement-comparison/003-status.md`, commit `49a4105`)
 
 Repository baseline: `2e35ab8`
 

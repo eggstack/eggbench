@@ -41,7 +41,7 @@ Canonical direction remains in:
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 closed | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`); M003 paired/interleaved unblocked |
+| Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 closed; M003 closed | Closures: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`), 003-status.md (commit `49a4105`) |
 | Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 closed (M001a + M001b) | Closures: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`), 001b-status.md (commit `a0ff206`) |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed; M002 closed | Closures: plans/closure/external-oracles/001-status.md (commit `7afa054`), 002-status.md (commit `3384a89`); M003 netem future |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -67,15 +67,15 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
 | Measurement/comparison | M002 Baselines, comparability, and statistical gates | closed | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`) |
+| Measurement/comparison | M003 Paired/interleaved qualification | closed | plans/implementation/measurement-comparison/003-paired-interleaved-qualification.md | Closure: plans/closure/measurement-comparison/003-status.md (commit `49a4105`) |
 | External measurement oracles | M001 External command-driver substrate | closed | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Closure: plans/closure/external-oracles/001-status.md (commit `7afa054`) |
 | Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | closed | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | Closure: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`) |
 | Eggstack integrations | M001b Gregg host telemetry | closed | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | Closure: plans/closure/eggstack-integration/001b-status.md (commit `a0ff206`) |
 
 ## Authored but dependency-blocked implementation plans
 
-None currently. Measurement M003 paired/interleaved qualification and
-Eggstack M002 route/stream-fault topology are unblocked but have no
-authored implementation plans yet.
+None currently. Eggstack M002 route/stream-fault topology is unblocked but
+has no authored implementation plan yet.
 
 After External Oracles M001 closes, M001a and M001b may proceed in parallel if their runner/driver interface changes are reconciled rather than duplicated.
 
@@ -127,7 +127,7 @@ run `35808371805` green on all four jobs. The earlier red run `35803742746`
 is superseded. Local Runner M003 is fully closed and Measurement M001 is
 hosted-qualified with its schemas untouched.
 
-Measurement M002 is closed at `plans/closure/measurement-comparison/002-status.md` (commit `80ff6d1`). ADR-0003 remains controlling: trial is the statistical unit; practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states. M003 paired/interleaved qualification is unblocked but has no authored implementation plan yet.
+Measurement M002 is closed at `plans/closure/measurement-comparison/002-status.md` (commit `80ff6d1`). Measurement M003 paired/interleaved qualification is closed at `plans/closure/measurement-comparison/003-status.md` (commit `49a4105`): predeclared alternating designs, arm/pair evidence, paired trial-level bootstrap policy v2, descriptive drift diagnostics, and `eggbench compare --paired`, with v1 behavior proven unchanged. ADR-0003 remains controlling: trial is the statistical unit; pair is the resampling unit only where the runner created pair identities. Practical threshold and uncertainty are separate; pass/fail/inconclusive/invalid are comparison verdicts, not process lifecycle states.
 
 ### Gate F — Drivers and integrations
 
@@ -140,9 +140,8 @@ The next-round tracks now in progress or awaiting plans:
 - External Oracles M002 (oha/h2load/iperf3): closed
   (`plans/closure/external-oracles/002-status.md`, commit `3384a89`);
   netem stays in M003.
-- Measurement M003 paired/interleaved: unblocked (M002 policy closed) but
-  has no authored implementation plan yet; the runner scheduling contract
-  must be defined in the plan.
+- Measurement M003 paired/interleaved: closed
+  (`plans/closure/measurement-comparison/003-status.md`, commit `49a4105`).
 - Eggstack M002 (Eggress + Eggchaos): unblocked by M001 closure but has no
   authored implementation plan yet; Eggress 1.0.10 is present locally while
   Eggchaos/EggReplay/Eggprobe have no available seam (see sibling facts).
@@ -197,6 +196,5 @@ Before marking a plan ready, verify:
 ## Next handoffs
 
 No dependency-ready implementation plan is currently handed off.
-Measurement M003 paired/interleaved qualification and Eggstack M002
-route/stream-fault topology are unblocked but have no authored
-implementation plans yet; External Oracles M003 netem remains future.
+Eggstack M002 route/stream-fault topology is unblocked but has no authored
+implementation plan yet; External Oracles M003 netem remains future.
