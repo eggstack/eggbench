@@ -1,6 +1,6 @@
 # Eggstack Integration M001a — EggServe Controlled Origin and Eggfetch Native HTTP Workload
 
-Status: ready; unblocked by External Oracles M001 closure (`plans/closure/external-oracles/001-status.md`)
+Status: closed (closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`)
 
 Repository planning baseline: `852bf2dab6a266cc5043cf0817b429a8073d6339`
 

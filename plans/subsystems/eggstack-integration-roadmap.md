@@ -121,7 +121,7 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ### M001 — Controlled origin, native HTTP workload, host telemetry
 
-Status: plans ready; implementation sequencing gate satisfied by External Oracles M001 closure (`plans/closure/external-oracles/001-status.md`, commit `7afa054`).
+Status: M001a closed (`plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`); M001b ready.
 
 Implementation plans:
 
