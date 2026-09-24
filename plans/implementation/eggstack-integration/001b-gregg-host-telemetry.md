@@ -1,6 +1,6 @@
 # Eggstack Integration M001b — Gregg Host Telemetry
 
-Status: ready; unblocked by External Oracles M001 closure (`plans/closure/external-oracles/001-status.md`)
+Status: closed (closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`)
 
 Repository planning baseline: `46ebaa6baa13ec1b74512295a1886a54d2911ace`
 

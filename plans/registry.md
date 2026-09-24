@@ -42,7 +42,7 @@ Canonical direction remains in:
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 closed | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`); M003 paired/interleaved unblocked |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001a closed; M001b ready | M001a closure: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`); shared runner/driver seams landed |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 closed (M001a + M001b) | Closures: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`), 001b-status.md (commit `a0ff206`) |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed | Closure at `plans/closure/external-oracles/001-status.md`; M002 tool adapters unblocked |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
@@ -69,7 +69,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 | Measurement/comparison | M002 Baselines, comparability, and statistical gates | closed | plans/implementation/measurement-comparison/002-baselines-comparability-and-statistical-gates.md | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`) |
 | External measurement oracles | M001 External command-driver substrate | closed | plans/implementation/external-oracles/001-external-command-driver-substrate.md | Closure: plans/closure/external-oracles/001-status.md (commit `7afa054`) |
 | Eggstack integrations | M001a EggServe controlled origin + Eggfetch HTTP | closed | plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md | Closure: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`) |
-| Eggstack integrations | M001b Gregg host telemetry | ready | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | Unblocked by External Oracles M001 closure; shared `eggbench-drivers` crate/catalog landed |
+| Eggstack integrations | M001b Gregg host telemetry | closed | plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md | Closure: plans/closure/eggstack-integration/001b-status.md (commit `a0ff206`) |
 
 ## Authored but dependency-blocked implementation plans
 

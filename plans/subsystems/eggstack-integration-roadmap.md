@@ -121,7 +121,7 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ### M001 — Controlled origin, native HTTP workload, host telemetry
 
-Status: M001a closed (`plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`); M001b ready.
+Status: M001 closed (M001a `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`).
 
 Implementation plans:
 
