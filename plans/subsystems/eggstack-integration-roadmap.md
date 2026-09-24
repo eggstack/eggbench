@@ -121,7 +121,7 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ### M001 — Controlled origin, native HTTP workload, host telemetry
 
-Status: M001 implementation-closed; hosted qualification pending C002 (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). The combined hosted gate is `plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md`.
+Status: M001 hosted-qualified by C002 (run `36029547565`); M002 implementation unblocked subject to its own authored implementation plan (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). Corrective qualification evidence: `plans/closure/post-m003-hosted-qualification-corrective/002-status.md`.
 
 Implementation plans:
 
@@ -130,11 +130,11 @@ Implementation plans:
 
 Qualification note:
 
-- M001a and M001b are landed. Their original closure records explicitly left four-lane hosted qualification outstanding. C002 supplies the final current-tip qualification after C001 stopped on driver Clippy debt; neither corrective reopens Eggstack semantics.
+- M001a and M001b are landed and hosted-qualified by C002 run `36029547565`. Their original closure records explicitly left four-lane hosted qualification outstanding; C002 supplied the final current-tip qualification after C001 stopped on driver Clippy debt; neither corrective reopened Eggstack semantics.
 
 ### M002 — Route and stream-fault topology
 
-Status: ready for plan authoring/research, but implementation is blocked on post-M003 hosted qualification corrective C002. Plan-time input for the author: Eggress 1.0.10 is present locally (roadmap §2 cited 1.0.8 — re-audit the seam), while Eggchaos/EggReplay/Eggprobe have no locally available crate, CLI, or HTTP seam as of 2026-09-24.
+Status: ready for plan authoring; implementation unblocked by closed post-M003 hosted qualification corrective C002. Plan-time input for the author: Eggress 1.0.10 is present locally (roadmap §2 cited 1.0.8 — re-audit the seam), while Eggchaos/EggReplay/Eggprobe have no locally available crate, CLI, or HTTP seam as of 2026-09-24.
 
 ### M003 — Replay and diagnostics
 

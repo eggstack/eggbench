@@ -40,11 +40,11 @@ Canonical direction remains in:
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
-| post-M003 combined hosted qualification corrective | active | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped; C002 ready | C001 implementation 808c35f fixed original defects; rerun 36017662684 exposed eggbench-drivers stable-Clippy debt; C002 is the sole executable corrective |
+| post-M003 combined hosted qualification corrective | closed | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped (historical); C002 closed | Combined qualification closed by hosted run 36029547565 (four lanes green); closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | conditionally closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 implementation-closed; M003 conditionally closed | Final hosted qualification requires C002 green four-lane run |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 implementation-closed; M002 plan-authorable | M001 hosted qualification pending C002; M002 implementation blocked until C002 closes |
-| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 implementation-closed; C002 ready; M003 future | C002 must clear stable-Clippy debt and final hosted qualification before M003 implementation |
+| Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 hosted-qualified; M002 plan-authorable | M002 implementation unblocked subject to its own authored implementation plan |
+| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -67,7 +67,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| post-M003 combined hosted qualification corrective | C002 Driver stable-Clippy debt and final hosted qualification | ready | plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md | Sole executable corrective; preserve oracle semantics, clear driver Clippy debt, then require four-lane green hosted CI |
+| post-M003 combined hosted qualification corrective | C002 Driver stable-Clippy debt and final hosted qualification | closed | plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md | Closed by implementation a8fbcea + 0e32ff0 and four-lane green hosted run 36029547565; closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
 
 C001 remains stopped historical work at plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md and must not be re-executed.
 
@@ -75,7 +75,7 @@ C001 remains stopped historical work at plans/implementation/post-m003-hosted-qu
 
 No new capability implementation plan is dependency-ready.
 
-Eggstack M002 route/stream-fault topology may be researched/authored but implementation is blocked on C002. External Oracles M003 netem and security qualification also remain blocked on the final hosted qualification.
+Eggstack M002 route/stream-fault topology may be authored now that C002 closed (implementation unblocked subject to its own plan). External Oracles M003 netem remains the later milestone; security qualification still waits on its measurement + integration layer dependencies.
 
 ## Current execution order and dependency gates
 
@@ -124,17 +124,13 @@ Measurement M002 (80ff6d1) and Measurement M003 (49a4105) subsequently landed wi
 
 Fresh hosted run 36017662684 then passed Linux Rust 1.89 and passed cargo check on Linux/macOS/Windows stable, but all three stable jobs stopped at all-feature Clippy because stable 1.98 exposed pre-existing eggbench-drivers lint debt.
 
-C001 correctly stopped under its frozen-contract rule. The dependency-ready follow-up is:
-
-plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md
-
-Until C002 closes with one four-lane green run, Measurement M003 remains conditionally closed and the accumulated post-M001 feature set is not release-qualified.
+C001 correctly stopped under its frozen-contract rule. Its successor C002 (implementation a8fbcea + 0e32ff0) cleared the driver debt plus narrowly masked follow-on findings and closed with four-lane green hosted run 36029547565. Measurement M003 is therefore closed/hosted-qualified and the accumulated post-M001 feature set carries current-tip hosted qualification.
 
 ### Gate F — Drivers and integrations
 
 External Oracles M001 (7afa054) and M002 (3384a89) are implementation-closed. Eggstack M001 is implementation-closed through M001a (8426e08) and M001b (a0ff206).
 
-C002 is specifically authorized to repair stable-Clippy debt in eggbench-drivers while preserving:
+C002 cleared the frozen-code driver lint class and produced the final four-lane green qualification (run 36029547565), closing the combined gate while preserving:
 
 - oha/h2load/iperf3 argv semantics;
 - parser acceptance and metric values;
@@ -142,11 +138,11 @@ C002 is specifically authorized to repair stable-Clippy debt in eggbench-drivers
 - Debug redaction;
 - schemas/dependencies/MSRV.
 
-After C002 closes:
+C002 closure records:
 
-- External Oracles M001/M002 become hosted-qualified;
-- Eggstack M001a/M001b gain current integrated cross-platform qualification;
-- Eggstack M002 may proceed to implementation once its own implementation plan exists;
+- External Oracles M001/M002 hosted-qualified;
+- Eggstack M001a/M001b current integrated cross-platform qualification;
+- Eggstack M002 implementation unblocked subject to its own authored implementation plan;
 - External Oracles M003 remains the later netem milestone.
 
 ### Gate G — Security profiles
@@ -196,8 +192,6 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The only dependency-ready implementation handoff is:
+No corrective handoff remains dependency-ready: C002 is closed (four-lane green run 36029547565) and C001 is stopped historical work that must not be re-executed.
 
-plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md
-
-C001 is stopped historical work and must not be re-executed. Eggstack M002 may be researched/planned in parallel, but no new capability implementation should land until C002 restores a four-lane green current tip and closes the combined qualification gate.
+The next capability milestone is Eggstack M002 route/stream-fault topology, which may proceed to implementation once its own implementation plan is authored (no such plan exists yet; do not invent one here). External Oracles M003 netem remains the later milestone.

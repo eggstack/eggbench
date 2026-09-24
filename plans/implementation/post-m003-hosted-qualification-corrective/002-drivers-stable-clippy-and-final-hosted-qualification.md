@@ -1,6 +1,6 @@
 # Post-M003 Hosted Qualification Corrective C002 — Driver Stable-Clippy Debt and Final Hosted Qualification
 
-Status: ready for handoff
+Status: closed — implementation `a8fbcea` + `0e32ff0`; four-lane green hosted run `36029547565`; see plans/closure/post-m003-hosted-qualification-corrective/002-status.md
 
 Repository baseline: 327eaab513b162897388b0e7ca15565b052feb4e
 
