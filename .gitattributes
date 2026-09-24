@@ -1,3 +1,7 @@
 # Evidence bundles are immutable byte artifacts; line-ending conversion
 # would invalidate their recorded sizes and digests on Windows checkouts.
 **/*.eggb/** -text
+# Comparison golden receipts are compared byte-for-byte against LF-joined
+# serializer output; CRLF checkout conversion would fail them on Windows
+# without any semantic difference.
+crates/eggbench-core/tests/golden/*.json text eol=lf
