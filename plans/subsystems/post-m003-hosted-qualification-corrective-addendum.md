@@ -1,6 +1,6 @@
 # Post-M003 Combined Hosted Qualification Corrective Addendum
 
-Status: active — C001 implementation attempted at 808c35f; stopped for planning review (§20): rerun 36017662684 fixed the three known defects but exposed frozen-code eggbench-drivers stable-Clippy findings
+Status: active — C001 stopped after fixing its original defects; C002 ready for handoff to clear eggbench-drivers stable-Clippy debt and complete hosted qualification
 
 Repository audit baseline: `5ffe87ba9bb352822f85b7780cd15745097dc230`
 
@@ -123,38 +123,51 @@ Implementation handoff:
 
 Status: implementation attempted at `808c35f`; stopped for planning review — see the §22 stop notice in the implementation plan. Rerun CI `36017662684` (2026-09-24) confirms the three known defects fixed (fmt/check green all lanes, MSRV green) but fails all-feature Clippy on pre-existing `eggbench-drivers` findings in frozen oracle-adapter code (lib 20/21 errors, lib test 32/33 errors; includes `float_cmp` parser goldens, `cast_precision_loss` parser math, and one Windows-only `needless_return` at `resolver.rs:279`). These cannot be folded into C001 per §20; a follow-up corrective must disposition them first.
 
+## 5.1 Follow-up corrective C002
+
+C001 correctly stopped when rerun 36017662684 exposed warnings-as-errors inside the frozen External Oracles adapter code.
+
+Follow-up implementation handoff:
+
+- plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md
+
+C002 scope is limited to stable-Clippy cleanup and semantic-equivalence qualification in eggbench-drivers. It explicitly protects oracle argv mappings, parser domains, metric values, Debug redaction, schemas, dependencies, and Rust 1.89.
+
+C002 becomes the only executable corrective handoff. C001 remains a stopped historical attempt and must not be re-executed.
+
 ## 6. Qualification disposition
 
-Until C001 closes:
+Until the combined corrective closes through C002:
 
 - Measurement M002 remains implementation-complete but hosted qualification is outstanding;
 - Measurement M003 is **conditionally closed**;
 - External Oracles M001/M002 remain implementation-complete but hosted qualification is outstanding;
 - Eggstack M001a/M001b remain implementation-complete but hosted qualification is outstanding;
 - no release-qualified claim should be made for the combined current-tip feature set;
-- Eggstack M002 plan authoring may continue, but implementation should wait until C001 returns the current tip to a green hosted matrix.
+- Eggstack M002 plan authoring may continue, but implementation must wait until C002 returns the current tip to a green hosted matrix.
 
 Historical closure records remain immutable evidence of the local closure state at the time they were written. C001 supplies additive qualification evidence; it does not rewrite history.
 
 ## 7. Completion definition
 
-C001 closes only when:
+The combined corrective closes only when C002 supplies:
 
-1. all three known source/test warning/compile defects are corrected;
-2. local default and all-feature checks are warning-free;
-3. Rust 1.89 remains green;
-4. the Windows platform test fixture compiles and runs under the supported subset;
-5. a fresh CI run on the corrective HEAD passes Linux stable, Linux 1.89, macOS stable, and Windows stable;
-6. the corrective closure explicitly records that this run supplies the previously outstanding hosted qualification for the combined M002/M003/oracle/Eggstack implementation state;
-7. registry/roadmaps stop claiming unconditional closure where hosted qualification was still outstanding;
-8. stale forward-looking registry text for already-closed M001/M002 work is reconciled.
+1. C001's three original source/test defects remain corrected;
+2. eggbench-drivers default and all-feature Clippy are warning-free;
+3. driver semantic-equivalence fixtures prove oracle behavior unchanged;
+4. Rust 1.89 remains green;
+5. the Windows platform test fixture and driver cfg paths compile/run under the supported subset;
+6. a fresh CI run on the C002 implementation HEAD passes Linux stable, Linux 1.89, macOS stable, and Windows stable;
+7. the corrective closure explicitly records that this run supplies the previously outstanding hosted qualification for the combined M002/M003/oracle/Eggstack implementation state;
+8. registry/roadmaps stop claiming unconditional closure where hosted qualification was still outstanding;
+9. stale forward-looking registry text for already-closed M001/M002 work is reconciled.
 
 ## 8. Dependency disposition
 
-C001 is the only dependency-ready implementation handoff. 2026-09-24: C001 implementation ran
-once (`808c35f`) and stopped per §20 of the implementation plan — rerun `36017662684` exposed
-frozen-code `eggbench-drivers` Clippy debt the corrective may not absorb. No handoff is executable
-until a follow-up corrective dispositions that debt; see the §22 stop notice in the implementation
-plan.
+C001 is stopped and is not re-executable. C002 is the only dependency-ready implementation handoff:
+
+- plans/implementation/post-m003-hosted-qualification-corrective/002-drivers-stable-clippy-and-final-hosted-qualification.md
+
+C002 must clear the frozen-code driver lint class and produce the final four-lane green qualification before any new capability implementation is unblocked.
 
 Eggstack M002 route/stream-fault topology remains the next capability milestone, but implementation should begin only after this qualification corrective closes.
