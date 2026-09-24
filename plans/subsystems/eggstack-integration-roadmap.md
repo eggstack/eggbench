@@ -118,7 +118,7 @@ Every adapter needs:
 
 ## 8. Risks and decision points
 
-- Pre-release Eggchaos/EggReplay/Eggprobe APIs may move; process adapters reduce coupling.
+- Eggchaos v0.1.0 is published, but its API may still evolve rapidly; EggReplay/Eggprobe remain evolving integration seams. Pin published versions and preserve narrow ownership boundaries.
 - Eggsec is broad; importing it as a library may be unjustifiably heavy.
 - Eggress exposes many crates; only the smallest necessary seam should be used.
 - Eggfetch native workloads are not independent oracles when Eggfetch itself is the subject.
@@ -131,7 +131,7 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ### M001 — Controlled origin, native HTTP workload, host telemetry
 
-Status: M001 hosted-qualified by C002 (run `36029547565`); M002 implementation unblocked subject to its own authored implementation plan (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). Corrective qualification evidence: `plans/closure/post-m003-hosted-qualification-corrective/002-status.md`.
+Status: M001 hosted-qualified by C002 (run `36029547565`); M002 is now ready for handoff under its authored implementation plan (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). Corrective qualification evidence: `plans/closure/post-m003-hosted-qualification-corrective/002-status.md`.
 
 Implementation plans:
 
