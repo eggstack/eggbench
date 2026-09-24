@@ -43,7 +43,7 @@ Canonical direction remains in:
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 closed (qualified); M002 closed | Closure: plans/closure/measurement-comparison/002-status.md (commit `80ff6d1`); M003 paired/interleaved unblocked |
 | Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 closed (M001a + M001b) | Closures: plans/closure/eggstack-integration/001a-status.md (commit `8426e08`), 001b-status.md (commit `a0ff206`) |
-| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed | Closure at `plans/closure/external-oracles/001-status.md`; M002 tool adapters unblocked |
+| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001 closed; M002 closed | Closures: plans/closure/external-oracles/001-status.md (commit `7afa054`), 002-status.md (commit `3384a89`); M003 netem future |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -73,11 +73,9 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 ## Authored but dependency-blocked implementation plans
 
-| Subsystem | Milestone | Status | Implementation plan | Handoff note |
-|---|---|---|---|---|
-| External measurement oracles | M002 HTTP and capacity oracles | active | plans/implementation/external-oracles/002-http-and-capacity-oracles.md | Authored 2026-09-24 against live oha 1.16.0 / h2load nghttp2-1.59.0 / iperf 3.16 ground truth; implementation in progress |
-
-Measurement M003 paired/interleaved qualification and Eggstack M002 route/stream-fault topology are unblocked but have no authored implementation plans yet.
+None currently. Measurement M003 paired/interleaved qualification and
+Eggstack M002 route/stream-fault topology are unblocked but have no
+authored implementation plans yet.
 
 After External Oracles M001 closes, M001a and M001b may proceed in parallel if their runner/driver interface changes are reconciled rather than duplicated.
 
@@ -139,9 +137,9 @@ M001b (`a0ff206`).
 
 The next-round tracks now in progress or awaiting plans:
 
-- External Oracles M002 (oha/h2load/iperf3): plan authored at
-  `plans/implementation/external-oracles/002-http-and-capacity-oracles.md`,
-  implementation active; netem stays in M003.
+- External Oracles M002 (oha/h2load/iperf3): closed
+  (`plans/closure/external-oracles/002-status.md`, commit `3384a89`);
+  netem stays in M003.
 - Measurement M003 paired/interleaved: unblocked (M002 policy closed) but
   has no authored implementation plan yet; the runner scheduling contract
   must be defined in the plan.
@@ -198,10 +196,7 @@ Before marking a plan ready, verify:
 
 ## Next handoffs
 
-External Oracles M002 is the active handoff:
-
-1. `plans/implementation/external-oracles/002-http-and-capacity-oracles.md`
-
+No dependency-ready implementation plan is currently handed off.
 Measurement M003 paired/interleaved qualification and Eggstack M002
 route/stream-fault topology are unblocked but have no authored
-implementation plans yet.
+implementation plans yet; External Oracles M003 netem remains future.

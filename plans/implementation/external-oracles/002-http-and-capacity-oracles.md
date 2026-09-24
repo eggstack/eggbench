@@ -1,7 +1,6 @@
 # External Oracles M002 — HTTP and Capacity Oracles (oha/h2load/iperf3)
 
-Status: ready (2026-09-24; author and implementer are the same agent pass —
-review checklist §14 was worked explicitly before implementation)
+Status: closed (closure `plans/closure/external-oracles/002-status.md`, commit `3384a89`)
 
 Source roadmap: `plans/subsystems/external-oracles-roadmap.md` M002.
 Long-term: `plans/002-long-term-roadmap.md` Phase 6 (substrate already
