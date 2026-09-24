@@ -86,19 +86,24 @@ categories must be added through planning review.
 
 ## Driver registry and unsupported workloads
 
-Production `eggbench` has no workload adapter yet: the production catalog
-owned by `eggbench-drivers` (`DriverCatalog::production`) is empty, `doctor`
-truthfully reports `has_workload_driver=false`, and `run` fails before
-managed startup with the stable `missing_driver` / `unsupported_workload`
-category. No service process is started and no bundle is published on that
-path. The CLI consumes the drivers catalog rather than owning registration.
+Production `eggbench` resolves against the production catalog owned by
+`eggbench-drivers` (`DriverCatalog::production`). Without the
+`eggstack-http` feature the catalog is empty, `doctor` truthfully reports
+`has_workload_driver=false`, and `run` fails before managed startup with
+the stable `missing_driver` / `unsupported_workload` category. No service
+process is started and no bundle is published on that path. With the
+feature, the catalog registers the `eggserve-origin` service adapter and
+the `eggfetch-http` workload driver; `doctor` shows exact adapter/sibling
+versions and supported load-mode capabilities, and `run` executes the
+native loopback path. The CLI consumes the drivers catalog rather than
+owning registration.
 
 A deterministic `fake-load` adapter exists only as explicit test injection
 for qualification harnesses. It is not a production traffic generator, has
 no public `--fake-workload` (or similar) switch, and never appears in the
-production driver inventory. Production adapters (for example `oha`,
-`h2load`, `Eggfetch`) belong to External Oracles / Eggstack Integration
-milestones.
+production driver inventory. Independent external adapters (for example
+`oha`, `h2load`) belong to External Oracles milestones. See
+[Eggstack HTTP](eggstack-http.md).
 
 ## Cancellation
 

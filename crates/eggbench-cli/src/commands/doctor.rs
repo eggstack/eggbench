@@ -19,7 +19,7 @@ use std::path::Path;
 /// Run validate plus driver/capability/environment preflight checks without
 /// starting any managed process.
 ///
-/// Uses the empty production inventory, so with no production adapter the
+/// Uses the production inventory, so without the `eggstack-http` feature the
 /// command completes truthfully reporting `has_workload_driver=false`.
 pub fn run(
     plan: &Path,
@@ -93,6 +93,10 @@ pub fn run_with_registry(
             category: format!("{:?}", entry.descriptor.to_descriptor().category),
             default: entry.descriptor.default,
             external_process: entry.descriptor.to_descriptor().external_process,
+            adapter_version: entry.descriptor.adapter_version.clone(),
+            upstream_name: entry.descriptor.upstream_name.clone(),
+            upstream_version: entry.descriptor.upstream_version.clone(),
+            capabilities: entry.descriptor.capabilities.clone(),
         })
         .collect();
 

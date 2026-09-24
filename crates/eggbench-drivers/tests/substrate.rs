@@ -225,6 +225,21 @@ async fn raw_artifacts_are_deterministic_and_bounded() {
 #[test]
 fn production_catalog_remains_empty() {
     let catalog = eggbench_drivers::production_catalog();
-    assert!(catalog.is_empty());
-    assert!(catalog.descriptors().is_empty());
+    #[cfg(not(feature = "eggstack-http"))]
+    {
+        assert!(catalog.is_empty());
+        assert!(catalog.descriptors().is_empty());
+    }
+    // With `eggstack-http` the catalog registers exactly the two native
+    // drivers; nothing else may appear through this path.
+    #[cfg(feature = "eggstack-http")]
+    {
+        assert_eq!(catalog.len(), 2);
+        let names: Vec<String> = catalog
+            .descriptors()
+            .iter()
+            .map(|d| d.name.as_str().to_owned())
+            .collect();
+        assert_eq!(names, vec!["eggfetch-http", "eggserve-origin"]);
+    }
 }

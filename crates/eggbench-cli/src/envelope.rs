@@ -392,6 +392,14 @@ pub struct DriverSummary {
     pub default: bool,
     /// Whether the driver is backed by an external process.
     pub external_process: bool,
+    /// Eggbench adapter implementation version.
+    pub adapter_version: String,
+    /// Upstream tool or library name.
+    pub upstream_name: String,
+    /// Upstream version or revision, when known.
+    pub upstream_version: Option<String>,
+    /// Advertised capability labels in stable order.
+    pub capabilities: Vec<String>,
 }
 
 /// Environment fingerprint summary used by `doctor` and `inspect`.

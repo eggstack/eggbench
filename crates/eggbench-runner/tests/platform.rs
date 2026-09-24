@@ -8,7 +8,7 @@ use eggbench_core::{
 #[cfg(windows)]
 use eggbench_runner::{
     LocalSession, MapSecretProvider, PlatformAdapter, PlatformSupport, ProbeRegistry, RunnerError,
-    RunnerOptions, UnixPlatform,
+    RunnerOptions, ServiceAdapterRegistry, UnixPlatform,
 };
 #[cfg(not(windows))]
 use eggbench_runner::{PlatformAdapter, PlatformSupport, UnixPlatform};
@@ -80,6 +80,7 @@ fn options(root: PathBuf) -> RunnerOptions {
         secrets: Arc::new(MapSecretProvider::empty()),
         probes: ProbeRegistry::with_builtins(),
         platform: Arc::new(UnixPlatform),
+        service_adapters: ServiceAdapterRegistry::new(),
     }
 }
 

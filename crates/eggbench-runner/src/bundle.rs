@@ -37,6 +37,38 @@ struct EventSummary {
     elapsed_ms: u64,
 }
 
+/// Stage versioned runtime-topology evidence as a JSON artifact.
+///
+/// The artifact lands at `lifecycle/runtime-topology.json` with role
+/// [`ArtifactRole::Other`] labeled `runtime-topology` and
+/// [`Sensitivity::Redacted`]. It records schema version, service identities,
+/// adapter/process ownership kind, adapter provenance, and the non-secret
+/// startup-established runtime bindings. Staging reads retained session
+/// state, so it remains available through teardown for final evidence.
+///
+/// # Errors
+/// Returns [`BundleError`] when artifact registration violates bundle bounds.
+pub fn stage_runtime_topology(
+    session: &LocalSession,
+    writer: &mut BundleWriter,
+) -> Result<ArtifactPath, BundleError> {
+    let topology = session.runtime_topology();
+    let bytes = serde_json::to_vec_pretty(&topology)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    let path = ArtifactPath::new("lifecycle/runtime-topology.json")?;
+    writer.add_artifact(
+        path.clone(),
+        ArtifactRole::Other {
+            label: Name::new("runtime-topology")
+                .map_err(|_| BundleError::InvalidManifest("bad label"))?,
+        },
+        "application/json",
+        Sensitivity::Redacted,
+        bytes.as_slice(),
+    )?;
+    Ok(path)
+}
+
 /// Stage bounded stdout/stderr logs for every identity that ever started.
 ///
 /// Artifacts land under `lifecycle/logs/<identity>.stdout` and `.stderr`

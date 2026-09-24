@@ -10,7 +10,8 @@ use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
     FailureCategory, InvocationKind, LocalSession, MapSecretProvider, OrchestrationError,
     PhaseEvent, PhaseKind, PlatformAdapter, PlatformSupport, ResetContext, ResetHook,
-    ResetRegistry, RunnerOptions, UnixPlatform, WorkloadArtifact, execute_run,
+    ResetRegistry, RunnerOptions, ServiceAdapterRegistry, UnixPlatform, WorkloadArtifact,
+    execute_run,
 };
 use std::{
     collections::BTreeMap,
@@ -76,6 +77,7 @@ fn runner_options(root: &Path) -> RunnerOptions {
         secrets: Arc::new(MapSecretProvider::empty()),
         probes: eggbench_runner::ProbeRegistry::with_builtins(),
         platform: Arc::new(UnixPlatform),
+        service_adapters: ServiceAdapterRegistry::new(),
     }
 }
 
@@ -1337,5 +1339,193 @@ async fn finalization_event_is_terminalized_exactly_once() {
     assert!(
         finalization.elapsed_ns.is_some(),
         "finalization must have one terminal duration"
+    );
+}
+
+// ---- Named-service cleanup invariants under failure ----
+
+use eggbench_runner::{
+    BoxFuture, ManagedServiceAdapter, ManagedServiceHandle, RuntimeBindings, ServiceStartRequest,
+};
+use tokio::sync::Mutex as AsyncMutex;
+
+/// Minimal adapter double: records start/stop, optionally fails shutdown.
+#[derive(Debug)]
+struct StopRecorder {
+    events: Arc<AsyncMutex<Vec<String>>>,
+    shutdown_error: Option<String>,
+}
+
+impl ManagedServiceAdapter for StopRecorder {
+    fn service_type(&self) -> &'static str {
+        "fake-svc"
+    }
+
+    fn start(
+        &self,
+        request: ServiceStartRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Box<dyn ManagedServiceHandle>, String>> {
+        Box::pin(async move {
+            if cancel.is_cancelled() {
+                return Err("cancelled".to_owned());
+            }
+            self.events
+                .lock()
+                .await
+                .push(format!("start:{}", request.service));
+            Ok(Box::new(StopHandle {
+                identity: request.service,
+                events: Arc::clone(&self.events),
+                shutdown_error: self.shutdown_error.clone(),
+            }) as Box<dyn ManagedServiceHandle>)
+        })
+    }
+}
+
+#[derive(Debug)]
+struct StopHandle {
+    identity: String,
+    events: Arc<AsyncMutex<Vec<String>>>,
+    shutdown_error: Option<String>,
+}
+
+impl ManagedServiceHandle for StopHandle {
+    fn bindings(&self) -> RuntimeBindings {
+        RuntimeBindings::new()
+    }
+
+    fn shutdown(&mut self, _grace: Duration) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            self.events
+                .lock()
+                .await
+                .push(format!("stop:{}", self.identity));
+            match &self.shutdown_error {
+                Some(reason) => Err(reason.clone()),
+                None => Ok(()),
+            }
+        })
+    }
+}
+
+fn named_service(service: &str) -> Service {
+    Service {
+        name: name(service),
+        kind: ServiceKind::Named {
+            service_type: name("fake-svc"),
+        },
+        lifecycle: Lifecycle::Managed,
+        depends_on: Vec::new(),
+        config: BTreeMap::new(),
+        readiness: None,
+        shutdown: None,
+        working_directory: None,
+        log_limit_bytes: 4096,
+    }
+}
+
+fn options_with_recorder(
+    root: &Path,
+    recorder: StopRecorder,
+) -> (RunnerOptions, Arc<AsyncMutex<Vec<String>>>) {
+    let events = Arc::clone(&recorder.events);
+    let mut registry = ServiceAdapterRegistry::new();
+    registry.register(Arc::new(recorder)).expect("test adapter");
+    (
+        RunnerOptions {
+            workspace_root: root.to_path_buf(),
+            secrets: Arc::new(MapSecretProvider::empty()),
+            probes: eggbench_runner::ProbeRegistry::with_builtins(),
+            platform: Arc::new(UnixPlatform),
+            service_adapters: registry,
+        },
+        events,
+    )
+}
+
+#[tokio::test]
+async fn evidence_staging_failure_after_startup_still_cleans_up_adapter() {
+    let temp = tempfile::tempdir().unwrap();
+    let events = Arc::new(AsyncMutex::new(Vec::new()));
+    let (runner_options, events) = options_with_recorder(
+        temp.path(),
+        StopRecorder {
+            events: Arc::clone(&events),
+            shutdown_error: None,
+        },
+    );
+    let mut resolved = plan();
+    resolved.topology = vec![named_service("origin")];
+    let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
+    // An unsafe workload artifact name fails staging after the adapter has
+    // started; teardown must still own the adapter exactly once.
+    let mut workload = FakeWorkload::default();
+    workload.artifacts_by_invocation = vec![Some(vec![WorkloadArtifact {
+        name: "evil/x".to_owned(),
+        media_type: "application/octet-stream".to_owned(),
+        bytes: vec![1],
+    }])];
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(error, OrchestrationError::Evidence { .. }),
+        "staging failure is the evidence cause, got {error:?}"
+    );
+    assert_eq!(
+        events.lock().await.as_slice(),
+        ["start:origin", "stop:origin"]
+    );
+    // Nothing remains owned after the failed run.
+    let shutdown = session.shutdown().await;
+    assert!(shutdown.stopped_order.is_empty());
+    assert!(shutdown.failures.is_empty());
+}
+
+#[tokio::test]
+async fn adapter_shutdown_failure_does_not_overwrite_workload_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let events = Arc::new(AsyncMutex::new(Vec::new()));
+    let (runner_options, _) = options_with_recorder(
+        temp.path(),
+        StopRecorder {
+            events: Arc::clone(&events),
+            shutdown_error: Some("adapter stop failed".to_owned()),
+        },
+    );
+    let mut resolved = plan();
+    resolved.topology = vec![named_service("origin")];
+    let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.fail_on = Some(1);
+    let outcome = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    // The workload failure stays primary; the teardown failure is attached
+    // as cleanup evidence without rewriting it.
+    assert_eq!(
+        outcome.primary_failure,
+        Some(FailureCategory::WorkloadFailed)
+    );
+    assert_eq!(outcome.cleanup_failures.len(), 1);
+    assert_eq!(outcome.cleanup_failures[0].service, "origin");
+    assert_eq!(
+        events.lock().await.as_slice(),
+        ["start:origin", "stop:origin"]
     );
 }

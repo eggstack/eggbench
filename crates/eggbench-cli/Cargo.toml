@@ -12,6 +12,10 @@ path = "src/main.rs"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+eggstack-http = ["eggbench-drivers/eggstack-http"]
+
 [dependencies]
 eggbench-core = { path = "../eggbench-core" }
 eggbench-drivers = { path = "../eggbench-drivers" }

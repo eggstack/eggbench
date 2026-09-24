@@ -2,11 +2,13 @@
 //!
 //! Covers the exact matrix in both JSON and human modes:
 //! 0 success, 2 parse/validation, 3 capability/preflight (production run
-//! with no adapter), 5 evidence/bundle failure. Code 4 (finalized
-//! non-success run retaining its bundle) cannot be produced by the
-//! production binary — which correctly has no executable fake path — so it
-//! is locked through the injected qualification harness in `tests/cli.rs`
-//! exercising the same presentation/exit-code path.
+//! with no adapter without the `eggstack-http` feature), 5 evidence/bundle
+//! failure. Code 4 (finalized non-success run retaining its bundle) cannot
+//! be produced by the feature-off production binary — which correctly has no
+//! executable path — so it is locked through the injected qualification
+//! harness in `tests/cli.rs` exercising the same presentation/exit-code
+//! path. With `eggstack-http`, the native loopback path produces code 4 for
+//! workload failures and code 0 for the deterministic fixture run.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -94,16 +96,32 @@ fn production_run_without_adapter_exits_three_in_both_modes() {
         };
         let args = arg_strings(&owned);
         let output = run(&args);
-        assert_eq!(output.status.code(), Some(3), "json={json}");
-        assert!(!bundle.exists(), "no bundle may be published");
-        if json {
-            let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
-            assert_eq!(value["ok"], false);
-            let category = value["error"]["category"].as_str().unwrap_or("");
-            assert!(
-                category == "missing_driver" || category == "unsupported_workload",
-                "unexpected category {category}"
-            );
+        #[cfg(not(feature = "eggstack-http"))]
+        {
+            assert_eq!(output.status.code(), Some(3), "json={json}");
+            assert!(!bundle.exists(), "no bundle may be published");
+            if json {
+                let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
+                assert_eq!(value["ok"], false);
+                let category = value["error"]["category"].as_str().unwrap_or("");
+                assert!(
+                    category == "missing_driver" || category == "unsupported_workload",
+                    "unexpected category {category}"
+                );
+            }
+        }
+        #[cfg(feature = "eggstack-http")]
+        {
+            // With the native drivers compiled in, the timeout-less fixture
+            // resolves but fails orchestration preflight (measurement
+            // timeout is required) before any managed startup.
+            assert_eq!(output.status.code(), Some(5), "json={json}");
+            assert!(!bundle.exists(), "no bundle may be published");
+            if json {
+                let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
+                assert_eq!(value["ok"], false);
+                assert_eq!(value["error"]["category"], "evidence");
+            }
         }
     }
 }
@@ -120,11 +138,26 @@ fn doctor_production_reports_missing_driver_with_code_three() {
         };
         let args = arg_strings(&owned);
         let output = run(&args);
-        assert_eq!(output.status.code(), Some(3), "json={json}");
-        if json {
-            let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
-            assert_eq!(value["ok"], false);
-            assert_eq!(value["result"]["has_workload_driver"], false);
+        #[cfg(not(feature = "eggstack-http"))]
+        {
+            assert_eq!(output.status.code(), Some(3), "json={json}");
+            if json {
+                let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
+                assert_eq!(value["ok"], false);
+                assert_eq!(value["result"]["has_workload_driver"], false);
+            }
+        }
+        #[cfg(feature = "eggstack-http")]
+        {
+            // With the native drivers compiled in, the closed-loop fixture
+            // resolves against the production catalog.
+            assert_eq!(output.status.code(), Some(0), "json={json}");
+            if json {
+                let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
+                assert_eq!(value["ok"], true);
+                assert_eq!(value["result"]["resolved"], true);
+                assert_eq!(value["result"]["has_workload_driver"], true);
+            }
         }
     }
 }
@@ -241,4 +274,39 @@ fn json_failures_emit_exactly_one_document() {
         text.trim().lines().count() - 1
     );
     let _ = Path::new(".");
+}
+
+/// With `eggstack-http`, the production binary executes the deterministic
+/// loopback fixture end to end: origin startup, warmup and measured trials,
+/// bundle publication, exit code 0.
+#[cfg(feature = "eggstack-http")]
+#[test]
+fn production_loopback_run_exits_zero_in_both_modes() {
+    let plan = fixture("eggstack-loopback.json");
+    let plan_str = plan.to_str().unwrap().to_owned();
+    for json in [false, true] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle = tmp.path().join("loopback.eggb");
+        let bundle_str = bundle.to_str().unwrap().to_owned();
+        let owned = if json {
+            vec![
+                "run".to_owned(),
+                plan_str.clone(),
+                bundle_str.clone(),
+                "--json".to_owned(),
+            ]
+        } else {
+            vec!["run".to_owned(), plan_str.clone(), bundle_str.clone()]
+        };
+        let args = arg_strings(&owned);
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(0), "json={json}");
+        assert!(bundle.exists(), "bundle is published");
+        if json {
+            let value: Value = serde_json::from_slice(&output.stdout).expect("one JSON doc");
+            assert_eq!(value["ok"], true);
+            assert_eq!(value["result"]["execution_status"], "completed");
+            assert_eq!(value["result"]["measured_trials"], 3);
+        }
+    }
 }

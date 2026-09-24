@@ -9,8 +9,14 @@ Default selection is deterministic: use one marked category default, or the only
 ResolvedPlan schema v1 captures driver and upstream provenance and is serializable. Unknown fields and capability variants are rejected under v1. Driver upgrades can change behavior without a schema change, so concrete adapter/upstream versions remain in every resolved snapshot. Secret values and callable/runtime objects do not belong in this contract.
 
 Production catalog ownership lives in `eggbench-drivers` (External Oracles
-M001); the CLI consumes it. The M001 production inventory is empty and the
+M001); the CLI consumes it. Without the `eggstack-http` feature the
+production inventory is empty; with the feature it registers the
+`eggserve-origin` service descriptor (`HttpVersion::Http11`) and the
+`eggfetch-http` workload descriptor (`HttpVersion::Http11`,
+`LoadMode::ClosedLoop`, compatible service type `eggserve-origin`) with
+exact lockfile-resolved sibling versions. No open-loop capability is
+advertised, so open-loop plans fail resolution explicitly. The
 external-command substrate (trusted resolution, bounded argv execution,
 versioned parsers) is documented in [external drivers](external-drivers.md).
-No oha/h2load/iperf3 adapter ships yet.
+No oha/h2load/iperf3 adapter ships yet. See [Eggstack HTTP](eggstack-http.md).
 

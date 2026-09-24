@@ -2,9 +2,10 @@
 
 `eggbench-runner` owns local side effects; `eggbench-core` owns portable,
 runtime-independent plans and evidence contracts. `LocalSession` owns managed
-process groups, readiness, bounded logs, and mandatory reverse teardown.
-`execute_run` owns experiment phase order and delegates process work to the
-session rather than duplicating supervision.
+process groups, named in-process service adapters, readiness, bounded logs,
+runtime bindings, and mandatory reverse teardown. `execute_run` owns
+experiment phase order and delegates process work to the session rather than
+duplicating supervision.
 
 The phase coordinator preflights timeout names and explicit reset
 capabilities before startup. It executes warmups and measured invocations
@@ -56,6 +57,26 @@ parsing out of the runner's execution engine.
 The CLI in [`eggbench-cli`](../docs/cli.md) consumes these helpers and
 delegates measurement work to `execute_run`; it does not duplicate
 orchestration.
+
+## Named in-process service adapters (Eggstack M001a)
+
+The runner owns command processes; Eggstack (and future) in-process services
+participate through the object-safe `ManagedServiceAdapter` seam
+(`service.rs`): `start` returns only after adapter-owned readiness, handles
+expose immutable `RuntimeBindings`, and `shutdown` honors the plan grace.
+Adapters register by stable service-type label in a `ServiceAdapterRegistry`
+carried by `RunnerOptions`; `prepare` rejects `ServiceKind::Named` entries
+with no registered adapter (`UnsupportedService`).
+
+`LocalSession` runs one unified dependency order over processes and adapters
+(`RunningManagedService::Process/Adapter`) and tears down in reverse order.
+No adapter service is ever represented as process-owned: adapters carry no
+PID and plan-level `Readiness::Probe` on an in-process service is rejected.
+Every `InvocationContext` receives the same startup-established bindings
+snapshot (read-only), and `lifecycle/runtime-topology.json` records schema
+version, ownership kind, adapter provenance, and non-secret bindings from
+retained session state after teardown. See
+[`eggstack-http.md`](../docs/eggstack-http.md).
 
 ## Post-start cleanup contract
 

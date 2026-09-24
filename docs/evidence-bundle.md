@@ -34,6 +34,17 @@ this artifact. Pre-M001 bundles simply have no `metrics.json`;
 
 Environment data has a separate schema version (`EnvironmentFingerprint` v1). Each selected, non-secret field is classified as comparison-critical, warning-only, or informational. The schema does not fingerprint the host automatically.
 
+## Runtime-topology evidence (Eggstack M001a)
+
+`lifecycle/runtime-topology.json` (schema v1, `Redacted`) records one entry
+per launch-order service identity plus externally managed services: ownership
+kind (`process`/`adapter`/`external`), the named service type for
+adapter-owned services, and the non-secret startup-established runtime
+bindings (for example the origin's `http_url`, `bound_addr`, `bound_port`).
+It stages from retained session state after teardown, so topology evidence
+survives service shutdown, and its failure still routes through the M002
+evidence-safety cleanup invariant. See [Eggstack HTTP](eggstack-http.md).
+
 ## Staging and finalization
 
 `BundleWriter` creates a sibling staging directory. Each artifact is copied and hashed with a fixed 64 KiB buffer and checked against the plan's count, per-artifact, total-byte, path-length, and path-depth limits. Hard caps are 10,000 artifacts, 256 MiB per artifact, 2 GiB total, a 4 MiB manifest, 1,024 path bytes, and 16 path components. Finalization checks required primary roles and references, verifies staged content again, flushes files, writes the manifest last, and atomically renames the directory into place. A destination collision fails. If the filesystem cannot perform the same-directory atomic rename, finalization reports an error; it never copies a partial tree and labels it atomic. On Windows, the library flushes each artifact and manifest file, while directory-entry durability follows OS/filesystem behavior because portable directory syncing is unavailable through `std`.

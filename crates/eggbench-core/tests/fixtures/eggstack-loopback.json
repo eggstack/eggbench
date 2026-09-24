@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "experiment": "eggstack-loopback",
+  "subject": { "kind": "label", "label": "eggstack-loopback" },
+  "services": [
+    { "name": "origin", "kind": { "kind": "named", "service_type": "eggserve-origin" }, "lifecycle": "managed", "depends_on": [], "config": { "path": "/bench", "body_bytes": "1024", "status": "200" }, "readiness": null, "shutdown": { "grace_ms": 5000, "method": null }, "working_directory": null, "log_limit_bytes": 4096 }
+  ],
+  "workload": { "kind": "closed_loop", "target": "origin", "concurrency": 4, "requests": 50, "duration_ms": null },
+  "trials": { "measured": 3, "warmup": 1, "cooldown_ms": 100, "reset": { "kind": "none" }, "timeouts": { "measurement": 30000, "warmup": 30000, "drain": 5000 } },
+  "telemetry": [],
+  "metrics": [
+    { "name": "throughput", "unit": "rps", "direction": { "kind": "higher_is_better" }, "intent": "primary", "gate": { "kind": "absolute", "value": 1.0 } },
+    { "name": "latency_p99", "unit": "ms", "direction": { "kind": "lower_is_better" }, "intent": "primary", "gate": { "kind": "absolute", "value": 5000.0 } },
+    { "name": "error_rate", "unit": "ratio", "direction": { "kind": "lower_is_better" }, "intent": "primary", "gate": { "kind": "absolute", "value": 0.05 } }
+  ],
+  "environment_policy": { "kind": "strict_same_testbed" },
+  "seed": 7,
+  "bounds": { "artifact_count": 64, "artifact_bytes": 4194304, "total_bytes": 67108864 }
+}

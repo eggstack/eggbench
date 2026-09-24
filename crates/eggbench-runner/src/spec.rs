@@ -9,12 +9,16 @@
 use crate::error::RunnerError;
 use crate::platform::{PlatformAdapter, PlatformSupport};
 use crate::secret::SecretProvider;
-use eggbench_core::{Lifecycle, Readiness, ResolvedPlan, ServiceKind, Shutdown, Subject};
+use crate::service::ServiceAdapterRegistry;
+use eggbench_core::{
+    Lifecycle, Name, Readiness, ResolvedPlan, Service, ServiceKind, Shutdown, Subject,
+};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Default retained log bytes for the subject, which carries no core log bound.
 pub const DEFAULT_SUBJECT_LOG_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -72,17 +76,54 @@ fn redacted_env(env: &BTreeMap<String, String>) -> BTreeMap<String, &'static str
 /// dependency order.
 #[derive(Debug, Clone)]
 pub struct SpawnPlan {
-    /// Specs in spawn order.
+    /// Process specs in spawn order.
     pub specs: Vec<ProcessSpec>,
+    /// Named-service adapter specs.
+    pub adapters: Vec<AdapterSpec>,
+    /// Unified launch order across processes and adapters.
+    pub launch_order: Vec<LaunchEntry>,
+}
+
+/// Runner-owned start request for one managed named service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterSpec {
+    /// Service name.
+    pub identity: String,
+    /// Stable service-type label from `ServiceKind::Named`.
+    pub service_type: String,
+    /// Opaque non-secret config values.
+    pub config: BTreeMap<String, String>,
+    /// Declared readiness request.
+    pub readiness: Option<Readiness>,
+    /// Graceful shutdown allowance.
+    pub grace: Duration,
+}
+
+/// Which runner-owned machinery starts one launch entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchKind {
+    /// OS process from [`ProcessSpec`].
+    Process,
+    /// In-process service from [`AdapterSpec`].
+    Adapter,
+}
+
+/// One entry in the unified dependency-ordered launch sequence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchEntry {
+    /// Service name, or `subject` for a managed subject command.
+    pub identity: String,
+    /// Owning machinery.
+    pub kind: LaunchKind,
 }
 
 impl SpawnPlan {
     /// Identities in spawn order.
     #[must_use]
     pub fn order(&self) -> Vec<String> {
-        self.specs
+        self.launch_order
             .iter()
-            .map(|spec| spec.identity.clone())
+            .map(|entry| entry.identity.clone())
             .collect()
     }
 
@@ -90,6 +131,18 @@ impl SpawnPlan {
     #[must_use]
     pub fn teardown_order(&self) -> Vec<String> {
         self.order().into_iter().rev().collect()
+    }
+
+    /// Adapter spec for one identity, if it is adapter-owned.
+    #[must_use]
+    pub fn adapter(&self, identity: &str) -> Option<&AdapterSpec> {
+        self.adapters.iter().find(|spec| spec.identity == identity)
+    }
+
+    /// Process spec for one identity, if it is process-owned.
+    #[must_use]
+    pub fn process(&self, identity: &str) -> Option<&ProcessSpec> {
+        self.specs.iter().find(|spec| spec.identity == identity)
     }
 }
 
@@ -101,6 +154,8 @@ pub struct PrepareOptions {
     pub secrets: Arc<dyn SecretProvider>,
     /// Platform adapter used for capability gating.
     pub platform: Arc<dyn PlatformAdapter>,
+    /// Registered named-service adapters.
+    pub service_adapters: ServiceAdapterRegistry,
 }
 
 impl fmt::Debug for PrepareOptions {
@@ -109,6 +164,7 @@ impl fmt::Debug for PrepareOptions {
             .field("workspace_root", &self.workspace_root)
             .field("secrets", &self.secrets)
             .field("platform", &self.platform)
+            .field("service_adapters", &self.service_adapters)
             .finish()
     }
 }
@@ -130,6 +186,8 @@ pub fn prepare(
     ensure_platform(resolved, options.platform.as_ref())?;
     let workspace_root = normalize_workspace_root(&options.workspace_root)?;
     let mut specs = Vec::new();
+    let mut adapters = Vec::new();
+    let mut launch_order = Vec::new();
     if let Subject::ManagedCommand {
         argv, environment, ..
     } = &resolved.subject
@@ -165,48 +223,60 @@ pub fn prepare(
             shutdown: None,
             is_subject: true,
         });
+        launch_order.push(LaunchEntry {
+            identity: SUBJECT_IDENTITY.to_owned(),
+            kind: LaunchKind::Process,
+        });
     }
     let ordered = topological_order(&resolved.topology)?;
     for service in ordered {
         if service.lifecycle != Lifecycle::Managed {
             continue;
         }
-        let mut argv = match &service.kind {
-            ServiceKind::Command { argv } => argv.clone(),
-            ServiceKind::Named { service_type } => {
-                return Err(RunnerError::UnsupportedService {
-                    service: service.name.as_str().to_owned(),
-                    detail: format!(
-                        "named service type {} needs a future adapter",
-                        service_type.as_str()
-                    ),
+        match &service.kind {
+            ServiceKind::Command { argv } => {
+                let mut argv = argv.clone();
+                if argv.is_empty() || argv[0].trim().is_empty() {
+                    return Err(RunnerError::EmptyArgv {
+                        service: service.name.as_str().to_owned(),
+                    });
+                }
+                let cwd = resolve_working_directory(
+                    service.name.as_str(),
+                    service.working_directory.as_deref(),
+                    &workspace_root,
+                )?;
+                argv = resolve_executable(service.name.as_str(), &argv, &cwd)?;
+                specs.push(ProcessSpec {
+                    identity: service.name.as_str().to_owned(),
+                    argv,
+                    cwd,
+                    env: BTreeMap::new(),
+                    secret_references: Vec::new(),
+                    log_limit_bytes: service.log_limit_bytes,
+                    readiness: service.readiness.clone(),
+                    shutdown: service.shutdown.clone(),
+                    is_subject: false,
+                });
+                launch_order.push(LaunchEntry {
+                    identity: service.name.as_str().to_owned(),
+                    kind: LaunchKind::Process,
                 });
             }
-        };
-        if argv.is_empty() || argv[0].trim().is_empty() {
-            return Err(RunnerError::EmptyArgv {
-                service: service.name.as_str().to_owned(),
-            });
+            ServiceKind::Named { service_type } => {
+                adapters.push(adapter_spec(service, service_type, options)?);
+                launch_order.push(LaunchEntry {
+                    identity: service.name.as_str().to_owned(),
+                    kind: LaunchKind::Adapter,
+                });
+            }
         }
-        let cwd = resolve_working_directory(
-            service.name.as_str(),
-            service.working_directory.as_deref(),
-            &workspace_root,
-        )?;
-        argv = resolve_executable(service.name.as_str(), &argv, &cwd)?;
-        specs.push(ProcessSpec {
-            identity: service.name.as_str().to_owned(),
-            argv,
-            cwd,
-            env: BTreeMap::new(),
-            secret_references: Vec::new(),
-            log_limit_bytes: service.log_limit_bytes,
-            readiness: service.readiness.clone(),
-            shutdown: service.shutdown.clone(),
-            is_subject: false,
-        });
     }
-    Ok(SpawnPlan { specs })
+    Ok(SpawnPlan {
+        specs,
+        adapters,
+        launch_order,
+    })
 }
 
 fn ensure_platform(
@@ -331,6 +401,40 @@ fn resolve_executable(
     let mut resolved_argv = argv.to_vec();
     resolved_argv[0] = resolved.to_string_lossy().into_owned();
     Ok(resolved_argv)
+}
+
+/// Validate one named service against the registered adapters and lower it to
+/// an [`AdapterSpec`].
+fn adapter_spec(
+    service: &Service,
+    service_type: &Name,
+    options: &PrepareOptions,
+) -> Result<AdapterSpec, RunnerError> {
+    if options
+        .service_adapters
+        .get(service_type.as_str())
+        .is_none()
+    {
+        return Err(RunnerError::UnsupportedService {
+            service: service.name.as_str().to_owned(),
+            detail: format!(
+                "named service type {} has no registered adapter",
+                service_type.as_str()
+            ),
+        });
+    }
+    Ok(AdapterSpec {
+        identity: service.name.as_str().to_owned(),
+        service_type: service_type.as_str().to_owned(),
+        config: service.config.clone(),
+        readiness: service.readiness.clone(),
+        grace: service
+            .shutdown
+            .as_ref()
+            .map_or(Duration::from_millis(DEFAULT_GRACE_MS), |shutdown| {
+                Duration::from_millis(shutdown.grace_ms.get())
+            }),
+    })
 }
 
 fn topological_order(

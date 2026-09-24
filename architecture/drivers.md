@@ -8,13 +8,19 @@ The resolver derives the required load-model capability from the plan and verifi
 
 ResolvedPlan schema v1 freezes the source-plan version, resolved schema version, exact driver descriptors and upstream versions, paths supplied for external drivers, normalized topology/workload, trial defaults, environment/comparison requests, seed, and warnings. It contains no process or runtime handles. Unknown v1 fields and unknown capability variants are rejected; adding serialized capability variants requires an explicit compatibility/version decision.
 
-## Production catalog ownership (External Oracles M001)
+## Production catalog ownership (External Oracles M001, Eggstack M001a)
 
 `eggbench-drivers` is the sole production adapter/catalog ownership crate
-(`DriverCatalog::production`, currently empty). The CLI consumes the catalog
-rather than owning registration; the qualification fake remains
-test/qualification-only and is never linked into the production path.
-Dependency direction stays `core <- runner <- drivers <- cli`.
+(`DriverCatalog::production`). The CLI consumes the catalog rather than
+owning registration; the qualification fake remains test/qualification-only
+and is never linked into the production path. Dependency direction stays
+`core <- runner <- drivers <- cli`.
+
+With the `eggstack-http` cargo feature, the catalog registers the first
+real Eggstack-native experiment path: the `eggserve-origin` named service
+adapter and the `eggfetch-http` workload driver. Without the feature the
+catalog remains empty and production `run` fails closed before managed
+startup. See [Eggstack HTTP](../docs/eggstack-http.md).
 
 ## External command substrate (External Oracles M001)
 

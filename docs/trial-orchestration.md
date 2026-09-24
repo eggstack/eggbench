@@ -1,10 +1,13 @@
 # Local trial orchestration (M002)
 
 `eggbench_runner::execute_run` coordinates one resolved local experiment above
-`LocalSession`. The session remains the sole owner of managed service
-processes. Workload adapters and reset hooks are explicit asynchronous seams;
-M002 includes a deterministic `FakeWorkload` for qualification and defines no
-protocol-specific workload or reset behavior.
+`LocalSession`. The session remains the sole owner of managed services:
+command processes and named in-process adapter services alike. Workload
+adapters and reset hooks are explicit asynchronous seams; M002 includes a
+deterministic `FakeWorkload` for qualification and defines no
+protocol-specific workload or reset behavior. Every `InvocationContext`
+carries the same startup-established runtime-bindings snapshot (read-only);
+see [Eggstack HTTP](eggstack-http.md).
 
 ## Phase order
 

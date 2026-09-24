@@ -99,20 +99,56 @@ async fn doctor_production_reports_no_workload_driver() {
         CommandOptions::human(),
     )
     .await;
-    // Production inventory is empty, so resolution fails truthfully while the
-    // doctor payload (including has_workload_driver=false) is retained.
-    assert!(!presented.envelope.ok);
-    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
-    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
-    assert_eq!(body["result"]["kind"], "doctor");
-    assert_eq!(body["result"]["resolved"], false);
-    assert_eq!(body["result"]["has_workload_driver"], false);
-    assert!(
-        !body["result"]["environment_fields"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    #[cfg(not(feature = "eggstack-http"))]
+    {
+        // Production inventory is empty, so resolution fails truthfully while the
+        // doctor payload (including has_workload_driver=false) is retained.
+        assert!(!presented.envelope.ok);
+        assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+        let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+        assert_eq!(body["result"]["kind"], "doctor");
+        assert_eq!(body["result"]["resolved"], false);
+        assert_eq!(body["result"]["has_workload_driver"], false);
+        assert!(
+            !body["result"]["environment_fields"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[cfg(feature = "eggstack-http")]
+    {
+        // With the native drivers compiled in, the closed-loop fixture
+        // resolves against the production catalog.
+        assert!(presented.envelope.ok);
+        assert_eq!(presented.exit_code, ExitCode::Success);
+        let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+        assert_eq!(body["result"]["resolved"], true);
+        assert_eq!(body["result"]["has_workload_driver"], true);
+        let drivers = body["result"]["drivers"].as_array().unwrap();
+        let fetch = drivers
+            .iter()
+            .find(|driver| driver["name"] == "eggfetch-http")
+            .expect("eggfetch driver is reported");
+        assert_eq!(fetch["category"], "Workload");
+        assert_eq!(fetch["upstream_name"], "eggfetch-core");
+        assert!(
+            fetch["upstream_version"]
+                .as_str()
+                .is_some_and(|version| !version.is_empty()),
+            "doctor shows the exact sibling version"
+        );
+        assert!(
+            fetch["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|capability| capability
+                    .as_str()
+                    .is_some_and(|text| text.contains("ClosedLoop"))),
+            "doctor shows supported load-mode capabilities"
+        );
+    }
 }
 
 #[tokio::test]
@@ -132,7 +168,10 @@ async fn doctor_qualification_registry_resolves() {
 #[tokio::test]
 async fn production_registry_contains_no_fake_driver() {
     let registry = WorkloadRegistry::production();
+    #[cfg(not(feature = "eggstack-http"))]
     assert!(!registry.has_workload_driver());
+    #[cfg(feature = "eggstack-http")]
+    assert!(registry.has_workload_driver());
     assert!(
         !registry
             .inventory()
@@ -162,17 +201,31 @@ async fn production_run_fails_before_startup_without_starting_services() {
         CommandOptions::human(),
     )
     .await;
-    assert!(!presented.envelope.ok);
-    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
-    let failure = presented.envelope.error.as_ref().expect("error");
-    assert!(
-        failure.category == "missing_driver" || failure.category == "unsupported_workload",
-        "unexpected category {}",
-        failure.category
-    );
-    // No bundle publication and no managed startup occurred.
-    assert!(!bundle.exists());
-    assert!(presented.envelope.result.is_none());
+    #[cfg(not(feature = "eggstack-http"))]
+    {
+        assert!(!presented.envelope.ok);
+        assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+        let failure = presented.envelope.error.as_ref().expect("error");
+        assert!(
+            failure.category == "missing_driver" || failure.category == "unsupported_workload",
+            "unexpected category {}",
+            failure.category
+        );
+        // No bundle publication and no managed startup occurred.
+        assert!(!bundle.exists());
+        assert!(presented.envelope.result.is_none());
+    }
+    #[cfg(feature = "eggstack-http")]
+    {
+        // With the native drivers compiled in, the timeout-less fixture
+        // resolves but fails orchestration preflight (measurement timeout
+        // is required) before any managed startup or bundle publication.
+        assert!(!presented.envelope.ok);
+        assert_eq!(presented.exit_code, ExitCode::EvidenceIo);
+        let failure = presented.envelope.error.as_ref().expect("error");
+        assert_eq!(failure.category, "evidence");
+        assert!(!bundle.exists());
+    }
 }
 
 /// Minimal plan plus the M002-required measurement/drain timeouts.
@@ -699,4 +752,290 @@ async fn envelope_serializes_to_machine_json() {
     assert_eq!(value["ok"], true);
     assert_eq!(value["result"]["kind"], "validate");
     let _ = InputFormat::Json;
+}
+
+// ---- Eggstack M001a end-to-end loopback (feature-gated) ----
+
+/// Full native experiment path: `EggServe` controlled origin, runtime HTTP
+/// binding, `Eggfetch` workload, M002 trial lifecycle, immutable bundle.
+///
+/// Proves `EggServe` starts and becomes ready, the ephemeral URL is recorded,
+/// warmup and measured trials execute without errors on loopback, every
+/// measured trial retains a raw histogram, `metrics.json` carries observed
+/// throughput/latency/error metrics, runtime-topology evidence exists, the
+/// server shuts down, and the finalized bundle verifies.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn eggstack_loopback_end_to_end() {
+    use eggbench_core::{ArtifactPath, BundleReader};
+    use std::io::Read;
+
+    let plan = fixture_dir().join("eggstack-loopback.json");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle = tmp.path().join("loopback.eggb");
+    let presented = execute(
+        Command::Run {
+            plan,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(
+        presented.envelope.ok,
+        "run failed: {:?}",
+        presented.envelope
+    );
+    assert_eq!(presented.exit_code, ExitCode::Success);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["execution_status"], "completed");
+    assert_eq!(body["result"]["measured_trials"], 3);
+    assert!(bundle.exists());
+
+    let reader = BundleReader::open(&bundle).expect("bundle opens");
+    reader.verify().expect("bundle verifies");
+    assert_eq!(reader.manifest().trials.len(), 3);
+
+    let mut artifact_paths: Vec<String> = reader
+        .manifest()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.path.to_string())
+        .collect();
+    artifact_paths.sort();
+
+    // One raw histogram plus method evidence per measured trial.
+    for trial in 1..=3 {
+        assert_loopback_trial(&reader, &artifact_paths, trial);
+    }
+
+    // Runtime-topology evidence names the adapter-owned origin and its
+    // startup-established loopback binding.
+    assert!(
+        artifact_paths
+            .iter()
+            .any(|path| path == "lifecycle/runtime-topology.json"),
+        "runtime-topology evidence exists"
+    );
+    let topology_path = ArtifactPath::new("lifecycle/runtime-topology.json").unwrap();
+    let mut topology_file = reader
+        .open_artifact(&topology_path)
+        .expect("topology opens");
+    let mut topology_bytes = Vec::new();
+    topology_file
+        .read_to_end(&mut topology_bytes)
+        .expect("topology reads");
+    let topology: Value = serde_json::from_slice(&topology_bytes).expect("topology json");
+    let origin = topology["services"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|service| service["identity"] == "origin")
+        .expect("origin entry");
+    assert_eq!(origin["ownership"], "adapter");
+    assert_eq!(origin["service_type"], "eggserve-origin");
+    let http_url = origin["bindings"]["http_url"].as_str().expect("http_url");
+    assert!(http_url.starts_with("http://127.0.0.1:"));
+    assert!(http_url.ends_with("/bench"));
+}
+
+/// Methodological guard: per-trial request volume must not change the
+/// trial-level observation count exposed to Measurement M002.
+///
+/// Two runs differing only in request count (10 vs 50 per trial) must both
+/// expose exactly 3 trials with the same requested observation names, while
+/// the raw histogram sample counts differ.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn trial_observation_count_is_independent_of_request_volume() {
+    use eggbench_core::{BundleReader, TrialId};
+    use std::io::Read;
+
+    async fn run_with_requests(requests: u64) -> (Vec<Vec<String>>, Vec<u64>) {
+        let plan_text =
+            std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+        let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+        plan["workload"]["requests"] = Value::from(requests);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plan_path = tmp.path().join("plan.json");
+        std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+            .expect("write plan");
+        let bundle = tmp.path().join("run.eggb");
+        let presented = execute(
+            Command::Run {
+                plan: plan_path,
+                input_format: None,
+                bundle: bundle.clone(),
+            },
+            CommandOptions::human(),
+        )
+        .await;
+        assert!(
+            presented.envelope.ok,
+            "run with {requests} requests failed: {:?}",
+            presented.envelope
+        );
+        let reader = BundleReader::open(&bundle).expect("bundle opens");
+        reader.verify().expect("bundle verifies");
+        let mut observation_sets = Vec::new();
+        let mut samples = Vec::new();
+        for trial in 1..=3 {
+            let metrics = reader
+                .trial_metrics(TrialId::new(trial).unwrap())
+                .expect("metrics read")
+                .expect("metrics present");
+            observation_sets.push(
+                metrics
+                    .observations
+                    .iter()
+                    .map(|observation| observation.name.as_str().to_owned())
+                    .collect(),
+            );
+            // Raw sample counts come from the same-trial method evidence.
+            let method_path = eggbench_core::ArtifactPath::new(format!(
+                "trials/{trial:03}/artifacts/002-eggfetch-method.json"
+            ))
+            .unwrap();
+            let mut file = reader.open_artifact(&method_path).expect("method opens");
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).expect("method reads");
+            let method: Value = serde_json::from_slice(&bytes).expect("method json");
+            samples.push(method["attempted_requests"].as_u64().expect("samples"));
+        }
+        (observation_sets, samples)
+    }
+
+    let (few_observations, few_samples) = run_with_requests(10).await;
+    let (many_observations, many_samples) = run_with_requests(50).await;
+    // Both runs expose exactly 3 trial-level observations per trial.
+    assert_eq!(few_observations.len(), 3);
+    assert_eq!(many_observations.len(), 3);
+    for (few, many) in few_observations.iter().zip(many_observations.iter()) {
+        assert_eq!(few, &vec!["error_rate", "latency_p99", "throughput"]);
+        assert_eq!(few, many);
+    }
+    // Raw histogram sample counts differ; statistical sample counts do not.
+    assert_eq!(few_samples, vec![10, 10, 10]);
+    assert_eq!(many_samples, vec![50, 50, 50]);
+}
+
+/// `EggServe` startup failure is reported truthfully without hanging: an
+/// invalid origin config passes preparation (adapters validate at start)
+/// and fails managed startup with the adapter error preserved.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn eggserve_startup_failure_is_reported_without_hanging() {
+    let plan_text =
+        std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json")).expect("fixture");
+    let mut plan: Value = serde_json::from_str(&plan_text).expect("fixture json");
+    plan["services"][0]["config"]["status"] = Value::from("600");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_vec_pretty(&plan).expect("plan"))
+        .expect("write plan");
+    let bundle = tmp.path().join("run.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::RunCompletedNonSuccess);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["primary_failure"], "StartupFailed");
+    assert!(bundle.exists(), "failed run still finalizes evidence");
+}
+
+/// Assert one loopback trial retained its histogram, method evidence, and
+/// normalized throughput/latency/error observations.
+#[cfg(feature = "eggstack-http")]
+fn assert_loopback_trial(
+    reader: &eggbench_core::BundleReader,
+    artifact_paths: &[String],
+    trial: u32,
+) {
+    use eggbench_core::TrialId;
+
+    let prefix = format!("trials/{trial:03}/artifacts/");
+    assert!(
+        artifact_paths
+            .iter()
+            .any(|path| path == &format!("{prefix}001-latency.hdr")),
+        "trial {trial} retains latency.hdr"
+    );
+    assert!(
+        artifact_paths
+            .iter()
+            .any(|path| path == &format!("{prefix}002-eggfetch-method.json")),
+        "trial {trial} retains method evidence"
+    );
+
+    // Normalized metrics carry observed throughput/latency/error values.
+    let metrics = reader
+        .trial_metrics(TrialId::new(trial).unwrap())
+        .expect("metrics read")
+        .expect("metrics present");
+    let observed: Vec<&str> = metrics
+        .observations
+        .iter()
+        .map(|observation| observation.name.as_str())
+        .collect();
+    assert_eq!(observed, vec!["error_rate", "latency_p99", "throughput"]);
+    let value = |name: &str| {
+        let observation = metrics
+            .observations
+            .iter()
+            .find(|observation| observation.name.as_str() == name)
+            .expect("metric");
+        match observation.state {
+            eggbench_core::ObservationState::Observed { value } => value,
+            _ => panic!("metric {name} is not observed"),
+        }
+    };
+    assert!(
+        value("error_rate") < f64::EPSILON,
+        "loopback run is error-free"
+    );
+    assert!(value("throughput") > 1.0, "loopback serves real traffic");
+    assert!(value("latency_p99") >= 0.0);
+    // The histogram reference points at the retained same-trial artifact.
+    assert_eq!(metrics.histograms.len(), 1);
+    assert_eq!(metrics.histograms[0].metric.as_str(), "latency");
+    assert_eq!(metrics.histograms[0].format, "hdrhistogram-v2");
+    assert!(
+        metrics.histograms[0]
+            .path
+            .to_string()
+            .ends_with("001-latency.hdr")
+    );
+}
+
+/// With the native drivers, a production run whose workload target has no
+/// runtime binding fails truthfully at invocation: the run finalizes with
+/// `WorkloadFailed` (exit code 4) and retains its evidence bundle.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn production_run_without_target_binding_fails_at_workload() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_qualification_plan(tmp.path());
+    let bundle = tmp.path().join("run.eggb");
+    let presented = execute(
+        Command::Run {
+            plan,
+            input_format: None,
+            bundle: bundle.clone(),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::RunCompletedNonSuccess);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["primary_failure"], "WorkloadFailed");
+    assert!(bundle.exists());
 }

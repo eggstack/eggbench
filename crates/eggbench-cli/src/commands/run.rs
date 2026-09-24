@@ -5,18 +5,21 @@
 //! subject snapshot → prepare BundleWriter → LocalSession::prepare →
 //! WorkloadExecutor/reset hooks → execute_run → machine/human result`.
 //!
-//! Production `eggbench` registers no workload adapter at this milestone, so
-//! [`run`] fails before managed startup with a stable
-//! `missing_driver`/`unsupported_workload` category. Deterministic
-//! qualification uses [`run_with_qualification`] with an explicitly injected
-//! `FakeWorkload`; that path is never used by `main.rs` and is not reachable
-//! through any public production flag.
+//! Production `eggbench` resolves against the production catalog: without the
+//! `eggstack-http` feature the catalog is empty and [`run`] fails before
+//! managed startup with a stable `missing_driver`/`unsupported_workload`
+//! category; with the feature the registered `EggServe`/`Eggfetch` adapters
+//! execute a real loopback run. Deterministic qualification uses
+//! [`run_with_qualification`] with an explicitly injected `FakeWorkload`;
+//! that path is never used by `main.rs` and is not reachable through any
+//! public production flag.
 
 use crate::envelope::{CliOutput, ExitCode, PathBufPayload, PresentedCommandResult};
 use crate::error::{CliError, CliFailure};
 use crate::plan_input::load_plan;
 use crate::workload_registry::{
     BuiltinWorkloadExecutor, ProductionRuntime, QualificationRuntime, WorkloadRuntime,
+    production_service_adapters, production_workload_executor,
 };
 use crate::{CommandOptions, InputFormat};
 use eggbench_core::{
@@ -25,57 +28,68 @@ use eggbench_core::{
 };
 use eggbench_runner::{
     BundlePreparation, MapSecretProvider, PlatformAdapter, ResetRegistry, RunnerOptions,
-    SecretProvider, UnixPlatform, WorkloadExecutor, collect_local_environment, prepare_bundle,
+    SecretProvider, ServiceAdapterRegistry, UnixPlatform, WorkloadExecutor,
+    collect_local_environment, prepare_bundle,
 };
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
-/// Production run: no synthetic driver is registered.
+/// Production run: resolve against the production catalog and execute with
+/// the registered adapters.
 ///
-/// Resolution against the empty production inventory fails with
-/// `missing_driver` before environment/bundle preparation, managed startup,
-/// workload invocation, or bundle publication.
-#[allow(clippy::unused_async)]
+/// Without the `eggstack-http` feature the catalog is empty and resolution
+/// fails with `missing_driver` before environment/bundle preparation,
+/// managed startup, workload invocation, or bundle publication. With the
+/// feature, the resolved workload driver selects its executor and the
+/// registered service adapters join the session; unsupported drivers fail
+/// closed with `unsupported_workload` before startup.
 pub async fn run(
     plan: &Path,
     input_format: Option<InputFormat>,
     bundle: &Path,
     _options: CommandOptions,
 ) -> Result<PresentedCommandResult, CliError> {
-    let input = load_plan(plan, input_format)?;
-    let plan = input.plan;
-    let platform = platform_name()?;
     let runtime = ProductionRuntime::new();
     let descriptors = runtime.driver_descriptors();
 
-    let mut options = resolution_options(platform, &plan);
-    let _ = &mut options;
-    let resolved =
-        eggbench_core::resolve_plan(&plan, &descriptors, &options).map_err(CliError::Resolution)?;
+    let input = load_plan(plan, input_format)?;
+    let options = resolution_options(platform_name()?, &input.plan);
+    let resolved = eggbench_core::resolve_plan(&input.plan, &descriptors, &options)
+        .map_err(CliError::Resolution)?;
 
     // Defense in depth: even if resolution ever succeeded without a workload
     // adapter, production must still fail before startup.
-    if !runtime.has_workload_driver() {
-        let failure = CliFailure::new(
-            "unsupported_workload",
-            "no workload driver is registered",
-            ExitCode::CapabilityPreflight,
-        );
-        return Ok(PresentedCommandResult::failure("run", &failure));
-    }
+    let workload_driver = resolved
+        .drivers
+        .get(&eggbench_core::DriverCategory::Workload);
+    let executor_result = match workload_driver {
+        Some(driver) => production_workload_executor(&driver.descriptor.name),
+        None => Err("no workload driver is registered".to_owned()),
+    };
+    let mut executor = match executor_result {
+        Ok(executor) => executor,
+        Err(message) => {
+            let failure = CliFailure::new(
+                "unsupported_workload",
+                message,
+                ExitCode::CapabilityPreflight,
+            );
+            return Ok(PresentedCommandResult::failure("run", &failure));
+        }
+    };
 
-    // Unreachable with the empty production inventory: resolution already
-    // failed above. Keep the tail explicit so a future real adapter lands
-    // through the qualification seam, not by reviving a production fake.
-    let _ = (bundle, resolved);
-    let failure = CliFailure::new(
-        "unsupported_workload",
-        "no production workload adapter is compiled in",
-        ExitCode::CapabilityPreflight,
-    );
-    Ok(PresentedCommandResult::failure("run", &failure))
+    run_impl(
+        plan,
+        input_format,
+        bundle,
+        &descriptors,
+        &mut *executor,
+        production_service_adapters(),
+        wait_for_ctrl_c(),
+    )
+    .await
 }
 
 /// Qualification-only run with an explicitly injected fake workload.
@@ -100,6 +114,7 @@ pub async fn run_with_qualification(
         bundle,
         &descriptors,
         &mut executor,
+        ServiceAdapterRegistry::new(),
         signal,
     )
     .await
@@ -110,7 +125,8 @@ async fn run_impl(
     input_format: Option<InputFormat>,
     bundle: &Path,
     descriptors: &[DriverDescriptor],
-    executor: &mut impl WorkloadExecutor,
+    executor: &mut dyn WorkloadExecutor,
+    service_adapters: ServiceAdapterRegistry,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
     let input = load_plan(plan, input_format)?;
@@ -169,6 +185,7 @@ async fn run_impl(
         secrets: secret_provider,
         probes: eggbench_runner::ProbeRegistry::with_builtins(),
         platform: std::sync::Arc::new(UnixPlatform),
+        service_adapters,
     };
 
     let session = match eggbench_runner::LocalSession::prepare(&resolved, runner_options) {

@@ -26,6 +26,14 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
             category: format!("{:?}", driver.category),
             default: driver.default,
             external_process: driver.external_process,
+            adapter_version: driver.adapter_version.clone(),
+            upstream_name: driver.upstream_name.clone(),
+            upstream_version: driver.upstream_version.clone(),
+            capabilities: driver
+                .capabilities
+                .iter()
+                .map(|capability| format!("{capability:?}"))
+                .collect(),
         })
         .collect();
     drivers.sort_by(|left, right| left.name.cmp(&right.name));

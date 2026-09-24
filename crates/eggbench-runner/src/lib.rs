@@ -36,11 +36,12 @@ mod platform;
 mod prepare;
 mod probe;
 mod secret;
+mod service;
 mod session;
 mod spec;
 mod subject;
 
-pub use bundle::{stage_lifecycle_logs, stage_lifecycle_metadata};
+pub use bundle::{stage_lifecycle_logs, stage_lifecycle_metadata, stage_runtime_topology};
 pub use environment::{EnvironmentError, LocalEnvironmentCollector};
 pub use error::{CleanupFailure, RunnerError};
 pub use orchestration::{
@@ -57,6 +58,11 @@ pub use probe::{
     ReadinessProbe,
 };
 pub use secret::{MapSecretProvider, SecretProvider};
+pub use service::{
+    BoxFuture, ManagedServiceAdapter, ManagedServiceHandle, RUNTIME_TOPOLOGY_SCHEMA_VERSION,
+    RuntimeBindings, RuntimeTopology, ServiceAdapterRegistry, ServiceOwnership,
+    ServiceStartRequest, ServiceTopologyEntry,
+};
 
 /// Deterministic adapters for runner integration tests and qualification.
 pub mod test_support {
@@ -72,7 +78,7 @@ pub use session::{
     RunnerOptions, ServiceLogs, ShutdownReport, StartupReport,
 };
 pub use spec::{
-    DEFAULT_GRACE_MS, DEFAULT_SUBJECT_LOG_LIMIT_BYTES, PrepareOptions, ProcessSpec,
-    SUBJECT_IDENTITY, SpawnPlan, prepare,
+    AdapterSpec, DEFAULT_GRACE_MS, DEFAULT_SUBJECT_LOG_LIMIT_BYTES, LaunchEntry, LaunchKind,
+    PrepareOptions, ProcessSpec, SUBJECT_IDENTITY, SpawnPlan, prepare,
 };
 pub use subject::{MAX_SUBJECT_SNAPSHOT_BYTES, SUBJECT_SNAPSHOT_SCHEMA_VERSION, SubjectSnapshot};

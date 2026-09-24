@@ -11,7 +11,14 @@ eggbench run      <plan> <bundle>  # full lifecycle, finalized .eggb bundle
 eggbench inspect  <bundle>    # open, verify, and summarize a finalized bundle
 ```
 
-Production `eggbench run` is substrate-only until an External Oracles / Eggstack driver lands: the production catalog owned by `eggbench-drivers` is empty, so `run` fails before managed startup with a stable capability category. A deterministic fake workload remains injectable in tests and qualification harnesses only. Production traffic generators (for example `oha`, `h2load`, `Eggfetch`) belong to External Oracles / Eggstack Integrations milestones. The shared external-command substrate (trusted resolution, bounded argv execution, versioned parsers) is documented in [external drivers](docs/external-drivers.md).
+Production `eggbench run` resolves against the production catalog owned by `eggbench-drivers`. Without the `eggstack-http` feature the catalog is empty, so `run` fails before managed startup with a stable capability category; with the feature it executes the first Eggstack-native path — an EggServe loopback controlled origin driven by a native Eggfetch workload:
+
+```sh
+cargo build -p eggbench-cli --features eggstack-http
+./target/debug/eggbench run crates/eggbench-core/tests/fixtures/eggstack-loopback.json loopback.eggb
+```
+
+See [Eggstack HTTP](docs/eggstack-http.md). A deterministic fake workload remains injectable in tests and qualification harnesses only. Independent external traffic generators (for example `oha`, `h2load`) belong to External Oracles milestones. The shared external-command substrate (trusted resolution, bounded argv execution, versioned parsers) is documented in [external drivers](docs/external-drivers.md).
 
 Measurement M001 normalizes every measured trial into `trials/NNN/metrics.json`: one `observed`/`missing`/`invalid` record per requested metric, with explicit units, direction, aggregation, and provenance. Trial — not request — is the comparison unit. No baseline comparison or verdict is implemented yet.
 
@@ -36,5 +43,6 @@ Deterministic trial-level bootstrap (10,000 resamples, 95% interval), practical 
 - [Metrics and trial normalization](docs/metrics.md)
 - [Comparison policy](docs/comparison.md)
 - [Baselines](docs/baselines.md)
+- [Eggstack HTTP native path](docs/eggstack-http.md)
 - [Active implementation plans](plans/registry.md)
 

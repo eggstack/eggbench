@@ -9,7 +9,7 @@ use eggbench_core::{
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
     LocalSession, MapSecretProvider, OrchestrationError, ResetRegistry, RunnerOptions,
-    UnixPlatform, WorkloadArtifact, execute_run,
+    ServiceAdapterRegistry, UnixPlatform, WorkloadArtifact, execute_run,
 };
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -81,6 +81,7 @@ fn runner_options(root: &Path) -> RunnerOptions {
         secrets: Arc::new(MapSecretProvider::empty()),
         probes: eggbench_runner::ProbeRegistry::with_builtins(),
         platform: Arc::new(UnixPlatform),
+        service_adapters: ServiceAdapterRegistry::new(),
     }
 }
 

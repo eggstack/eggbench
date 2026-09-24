@@ -12,6 +12,15 @@
 #![forbid(unsafe_code)]
 
 mod catalog;
+#[cfg(feature = "eggstack-http")]
+pub mod eggstack;
 pub mod external;
 
 pub use catalog::{DriverCatalog, production_catalog};
+#[cfg(feature = "eggstack-http")]
+pub use eggstack::{
+    EGGFETCH_CORE_VERSION, EGGFETCH_HTTP_DRIVER_NAME, EGGSERVE_ORIGIN_SERVICE_TYPE,
+    EGGSERVE_PRIMITIVES_VERSION, EGGSERVE_SERVER_VERSION, EGGSTACK_ADAPTER_VERSION,
+    EggServeOriginAdapter, EggfetchWorkload, eggfetch_http_descriptor, eggfetch_workload,
+    eggserve_origin_descriptor, eggstack_descriptors, eggstack_service_adapters,
+};

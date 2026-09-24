@@ -1,7 +1,9 @@
 //! Production driver-catalog ownership.
 //!
-//! The catalog is the authoritative production driver inventory. It is empty
-//! after M001: no fake or real benchmark adapter is registered. Qualification
+//! The catalog is the authoritative production driver inventory. With the
+//! `eggstack-http` feature enabled it registers the `EggServe` controlled
+//! origin (`eggserve-origin`) and the Eggfetch native HTTP workload
+//! (`eggfetch-http`); without the feature it remains empty. Qualification
 //! fakes remain test/qualification-only and are never linked through this
 //! catalog.
 
@@ -29,11 +31,17 @@ impl DriverCatalog {
 
     /// Production catalog consumed by the CLI.
     ///
-    /// Empty after M001; future milestones register real adapters here behind
-    /// explicit cargo features.
+    /// With `eggstack-http`, registers the `EggServe` origin service adapter
+    /// and the Eggfetch workload driver. Without the feature the catalog is
+    /// empty and production `run` fails closed before managed startup.
     #[must_use]
     pub fn production() -> Self {
-        Self::empty()
+        #[cfg(feature = "eggstack-http")]
+        return Self {
+            descriptors: crate::eggstack::eggstack_descriptors(),
+        };
+        #[cfg(not(feature = "eggstack-http"))]
+        return Self::empty();
     }
 
     /// Canonical descriptors in stable name order.
@@ -92,11 +100,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_catalog_is_empty() {
+    fn production_catalog_matches_feature() {
         let catalog = production_catalog();
-        assert!(catalog.is_empty());
-        assert_eq!(catalog.len(), 0);
-        assert!(catalog.descriptors().is_empty());
+        #[cfg(feature = "eggstack-http")]
+        {
+            assert_eq!(catalog.len(), 2);
+            let fetch = Name::new("eggfetch-http").unwrap();
+            let origin = Name::new("eggserve-origin").unwrap();
+            assert!(catalog.workload(&fetch).is_some());
+            assert!(catalog.service(&origin).is_some());
+            assert!(catalog.telemetry(&fetch).is_none());
+        }
+        #[cfg(not(feature = "eggstack-http"))]
+        {
+            assert!(catalog.is_empty());
+            assert_eq!(catalog.len(), 0);
+            assert!(catalog.descriptors().is_empty());
+        }
     }
 
     #[test]

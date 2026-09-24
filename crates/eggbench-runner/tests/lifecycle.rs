@@ -16,7 +16,8 @@ use eggbench_core::{
 };
 use eggbench_runner::{
     LifecycleEventKind, LocalSession, MapSecretProvider, PlatformAdapter, PlatformSupport,
-    ProbeRegistry, RunnerError, RunnerOptions, UnixPlatform, UnsupportedPlatform, is_process_alive,
+    ProbeRegistry, RunnerError, RunnerOptions, ServiceAdapterRegistry, UnixPlatform,
+    UnsupportedPlatform, is_process_alive,
 };
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
@@ -102,6 +103,7 @@ fn options(root: &std::path::Path) -> RunnerOptions {
         secrets: Arc::new(MapSecretProvider::empty()),
         probes: ProbeRegistry::with_builtins(),
         platform: Arc::new(UnixPlatform),
+        service_adapters: ServiceAdapterRegistry::new(),
     }
 }
 
@@ -110,6 +112,7 @@ fn prepare_options(root: &std::path::Path) -> eggbench_runner::PrepareOptions {
         workspace_root: root.to_path_buf(),
         secrets: Arc::new(MapSecretProvider::empty()),
         platform: Arc::new(UnixPlatform),
+        service_adapters: ServiceAdapterRegistry::new(),
     }
 }
 
@@ -429,6 +432,7 @@ async fn cleanup_failure_preserves_primary_failure() {
             secrets: Arc::new(MapSecretProvider::empty()),
             probes: ProbeRegistry::with_builtins(),
             platform: Arc::new(FailKillPlatform),
+            service_adapters: ServiceAdapterRegistry::new(),
         },
     )
     .unwrap();
@@ -551,6 +555,7 @@ async fn missing_secret_fails_before_spawn_and_values_stay_redacted() {
             secrets: Arc::new(provider),
             probes: ProbeRegistry::with_builtins(),
             platform: Arc::new(UnixPlatform),
+            service_adapters: ServiceAdapterRegistry::new(),
         },
     )
     .unwrap();
@@ -624,6 +629,7 @@ async fn managed_environment_is_hermetic_and_explicit_secrets_stay_redacted() {
             secrets: Arc::new(provider),
             probes: ProbeRegistry::with_builtins(),
             platform: Arc::new(UnixPlatform),
+            service_adapters: ServiceAdapterRegistry::new(),
         },
     )
     .unwrap();
@@ -960,6 +966,7 @@ async fn unsupported_service_and_platform_fail_explicitly() {
             secrets: Arc::new(MapSecretProvider::empty()),
             probes: ProbeRegistry::with_builtins(),
             platform: Arc::new(UnsupportedPlatform),
+            service_adapters: ServiceAdapterRegistry::new(),
         },
     )
     .unwrap_err();
@@ -997,4 +1004,231 @@ fn supported_platform_matrix_is_truthful() {
         }
     );
     assert_eq!(UnsupportedPlatform.support(), PlatformSupport::Unsupported);
+}
+
+// ---- Named in-process service adapters (generic seam) ----
+
+use eggbench_runner::{
+    BoxFuture, ManagedServiceAdapter, ManagedServiceHandle, RuntimeBindings, ServiceStartRequest,
+};
+use tokio::sync::Mutex as AsyncMutex;
+
+fn named(service: &str, service_type: &str, depends_on: &[&str]) -> Service {
+    Service {
+        name: name(service),
+        kind: ServiceKind::Named {
+            service_type: name(service_type),
+        },
+        lifecycle: Lifecycle::Managed,
+        depends_on: depends_on.iter().map(|dep| name(dep)).collect(),
+        config: BTreeMap::new(),
+        readiness: None,
+        shutdown: None,
+        working_directory: None,
+        log_limit_bytes: 4096,
+    }
+}
+
+/// Deterministic test adapter recording start/stop order.
+#[derive(Debug)]
+struct FakeAdapter {
+    service_type: &'static str,
+    events: Arc<AsyncMutex<Vec<String>>>,
+    shutdown_error: Option<String>,
+    bindings: BTreeMap<String, String>,
+}
+
+impl FakeAdapter {
+    fn new(service_type: &'static str, events: Arc<AsyncMutex<Vec<String>>>) -> Self {
+        Self {
+            service_type,
+            events,
+            shutdown_error: None,
+            bindings: BTreeMap::from([(
+                "http_url".to_owned(),
+                "http://127.0.0.1:9/bench".to_owned(),
+            )]),
+        }
+    }
+}
+
+struct FakeHandle {
+    identity: String,
+    events: Arc<AsyncMutex<Vec<String>>>,
+    shutdown_error: Option<String>,
+    bindings: RuntimeBindings,
+}
+
+impl ManagedServiceAdapter for FakeAdapter {
+    fn service_type(&self) -> &str {
+        self.service_type
+    }
+
+    fn start(
+        &self,
+        request: ServiceStartRequest,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, Result<Box<dyn ManagedServiceHandle>, String>> {
+        Box::pin(async move {
+            if cancel.is_cancelled() {
+                return Err("cancelled".to_owned());
+            }
+            self.events
+                .lock()
+                .await
+                .push(format!("start:{}", request.service));
+            let mut bindings = RuntimeBindings::new();
+            for (key, value) in &self.bindings {
+                bindings
+                    .insert(&request.service, key, value.clone())
+                    .expect("test bindings are valid");
+            }
+            Ok(Box::new(FakeHandle {
+                identity: request.service,
+                events: Arc::clone(&self.events),
+                shutdown_error: self.shutdown_error.clone(),
+                bindings,
+            }) as Box<dyn ManagedServiceHandle>)
+        })
+    }
+}
+
+impl ManagedServiceHandle for FakeHandle {
+    fn bindings(&self) -> RuntimeBindings {
+        self.bindings.clone()
+    }
+
+    fn shutdown(&mut self, _grace: Duration) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            self.events
+                .lock()
+                .await
+                .push(format!("stop:{}", self.identity));
+            match &self.shutdown_error {
+                Some(reason) => Err(reason.clone()),
+                None => Ok(()),
+            }
+        })
+    }
+}
+
+fn options_with(
+    root: &std::path::Path,
+    adapter: FakeAdapter,
+) -> (RunnerOptions, Arc<AsyncMutex<Vec<String>>>) {
+    let events = Arc::clone(&adapter.events);
+    let mut registry = ServiceAdapterRegistry::new();
+    registry.register(Arc::new(adapter)).expect("test adapter");
+    (
+        RunnerOptions {
+            workspace_root: root.to_path_buf(),
+            secrets: Arc::new(MapSecretProvider::empty()),
+            probes: ProbeRegistry::with_builtins(),
+            platform: Arc::new(UnixPlatform),
+            service_adapters: registry,
+        },
+        events,
+    )
+}
+
+#[tokio::test]
+async fn mixed_services_start_in_dependency_order_and_stop_in_reverse() {
+    let root = temp_root();
+    let events = Arc::new(AsyncMutex::new(Vec::new()));
+    let (runner_options, events) = options_with(
+        root.path(),
+        FakeAdapter::new("fake-svc", Arc::clone(&events)),
+    );
+    let mut resolved = base_resolved();
+    // Adapter service depends on the command process: unified order applies.
+    resolved.topology = vec![
+        managed("app", &["sleep", "30000"], &[], 4096),
+        named("origin", "fake-svc", &["app"]),
+    ];
+    let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
+    assert_eq!(session.spawn_order(), vec!["app", "origin"]);
+    let report = session.startup(&CancellationToken::new()).await.unwrap();
+    assert_eq!(report.started, vec!["app", "origin"]);
+    // Adapter bindings are visible after readiness and survive for evidence.
+    assert_eq!(
+        session.runtime_bindings().get("origin", "http_url"),
+        Some("http://127.0.0.1:9/bench")
+    );
+    // Adapter services own no process logs.
+    assert!(session.logs("origin").await.is_none());
+    let shutdown = session.shutdown().await;
+    assert_eq!(shutdown.stopped_order, vec!["origin", "app"]);
+    assert!(shutdown.failures.is_empty());
+    assert_eq!(
+        events.lock().await.as_slice(),
+        ["start:origin", "stop:origin"]
+    );
+    // Bindings remain available through teardown for final evidence.
+    assert_eq!(
+        session.runtime_bindings().get("origin", "http_url"),
+        Some("http://127.0.0.1:9/bench")
+    );
+    let topology = session.runtime_topology();
+    assert_eq!(topology.services.len(), 2);
+    let entry = topology
+        .services
+        .iter()
+        .find(|entry| entry.identity == "origin")
+        .expect("origin entry");
+    assert_eq!(entry.ownership, eggbench_runner::ServiceOwnership::Adapter);
+    assert_eq!(entry.service_type.as_deref(), Some("fake-svc"));
+    assert_eq!(
+        entry.bindings.get("http_url").map(String::as_str),
+        Some("http://127.0.0.1:9/bench")
+    );
+}
+
+#[tokio::test]
+async fn adapter_probe_readiness_is_rejected_and_service_is_torn_down() {
+    let root = temp_root();
+    let events = Arc::new(AsyncMutex::new(Vec::new()));
+    let (runner_options, events) = options_with(
+        root.path(),
+        FakeAdapter::new("fake-svc", Arc::clone(&events)),
+    );
+    let mut resolved = base_resolved();
+    let mut service = named("origin", "fake-svc", &[]);
+    service.readiness = Some(Readiness::Probe {
+        probe: name("process-alive"),
+        timeout_ms: DurationMs::new(1000).unwrap(),
+    });
+    resolved.topology = vec![service];
+    let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
+    let error = session
+        .startup(&CancellationToken::new())
+        .await
+        .unwrap_err();
+    // Plan-level probes on in-process services are rejected: no PID exists.
+    assert!(matches!(error, RunnerError::UnsupportedProbe { .. }));
+    // The started adapter was still torn down in reverse order.
+    assert_eq!(
+        events.lock().await.as_slice(),
+        ["start:origin", "stop:origin"]
+    );
+    let shutdown = session.shutdown().await;
+    assert!(shutdown.stopped_order.is_empty());
+    assert!(shutdown.failures.is_empty());
+}
+
+#[tokio::test]
+async fn adapter_shutdown_failure_becomes_cleanup_evidence() {
+    let root = temp_root();
+    let events = Arc::new(AsyncMutex::new(Vec::new()));
+    let mut adapter = FakeAdapter::new("fake-svc", Arc::clone(&events));
+    adapter.shutdown_error = Some("fake stop failed".to_owned());
+    let (runner_options, _) = options_with(root.path(), adapter);
+    let mut resolved = base_resolved();
+    resolved.topology = vec![named("origin", "fake-svc", &[])];
+    let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
+    session.startup(&CancellationToken::new()).await.unwrap();
+    let shutdown = session.shutdown().await;
+    assert_eq!(shutdown.stopped_order, vec!["origin"]);
+    assert_eq!(shutdown.failures.len(), 1);
+    assert_eq!(shutdown.failures[0].service, "origin");
+    assert_eq!(shutdown.failures[0].reason, "fake stop failed");
 }

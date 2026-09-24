@@ -14,9 +14,14 @@ use crate::error::{CleanupFailure, RunnerError};
 use crate::platform::{PlatformAdapter, PlatformSupport};
 use crate::probe::{ProbeContext, ProbeRegistry};
 use crate::secret::SecretProvider;
-use crate::spec::{PrepareOptions, ProcessSpec, SpawnPlan, prepare};
+use crate::service::{
+    ManagedServiceHandle, RUNTIME_TOPOLOGY_SCHEMA_VERSION, RuntimeBindings, RuntimeTopology,
+    ServiceAdapterRegistry, ServiceOwnership, ServiceStartRequest, ServiceTopologyEntry,
+};
+use crate::spec::{AdapterSpec, LaunchKind, PrepareOptions, ProcessSpec, SpawnPlan, prepare};
 use eggbench_core::Readiness;
 use eggbench_core::ResolvedPlan;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -45,6 +50,8 @@ pub struct RunnerOptions {
     pub probes: ProbeRegistry,
     /// Process-tree ownership adapter.
     pub platform: Arc<dyn PlatformAdapter>,
+    /// Registered named-service adapters.
+    pub service_adapters: ServiceAdapterRegistry,
 }
 
 impl fmt::Debug for RunnerOptions {
@@ -54,6 +61,7 @@ impl fmt::Debug for RunnerOptions {
             .field("secrets", &self.secrets)
             .field("probes", &self.probes)
             .field("platform", &self.platform)
+            .field("service_adapters", &self.service_adapters)
             .finish()
     }
 }
@@ -182,13 +190,42 @@ impl SpoolState {
     }
 }
 
-struct RunningService {
+struct RunningProcess {
     spec: ProcessSpec,
     child: tokio::process::Child,
     pid: u32,
     stdout_spool: Arc<Mutex<SpoolState>>,
     stderr_spool: Arc<Mutex<SpoolState>>,
     drain_handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+struct RunningAdapter {
+    identity: String,
+    service_type: String,
+    handle: Box<dyn ManagedServiceHandle>,
+    bindings: RuntimeBindings,
+    grace: Duration,
+}
+
+/// One runner-owned managed service: an OS process or an in-process adapter.
+///
+/// No service is ever represented as process-owned when it is actually
+/// in-process: adapter services carry no PID and shut down through their
+/// adapter handle.
+enum RunningManagedService {
+    /// Runner-owned OS process.
+    Process(Box<RunningProcess>),
+    /// Runner-owned in-process adapter service.
+    Adapter(RunningAdapter),
+}
+
+impl RunningManagedService {
+    fn identity(&self) -> &str {
+        match self {
+            Self::Process(service) => service.spec.identity.as_str(),
+            Self::Adapter(service) => service.identity.as_str(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -203,11 +240,14 @@ pub struct LocalSession {
     spawn_plan: SpawnPlan,
     options: RunnerOptions,
     external: Vec<String>,
-    running: Vec<RunningService>,
+    running: Vec<RunningManagedService>,
     retained: Vec<RetainedLogs>,
     events: Vec<LifecycleEvent>,
     prepared_at: Instant,
     next_seq: u64,
+    /// Startup-established runtime bindings, retained through teardown for
+    /// final evidence.
+    bindings: RuntimeBindings,
 }
 
 impl fmt::Debug for LocalSession {
@@ -221,7 +261,7 @@ impl fmt::Debug for LocalSession {
                 &self
                     .running
                     .iter()
-                    .map(|service| service.spec.identity.clone())
+                    .map(|service| service.identity().to_owned())
                     .collect::<Vec<_>>(),
             )
             .field(
@@ -235,6 +275,7 @@ impl fmt::Debug for LocalSession {
             .field("events", &self.events)
             .field("prepared_at", &self.prepared_at)
             .field("next_seq", &self.next_seq)
+            .field("bindings", &self.bindings)
             .finish()
     }
 }
@@ -252,6 +293,7 @@ impl LocalSession {
             workspace_root: options.workspace_root.clone(),
             secrets: Arc::clone(&options.secrets),
             platform: Arc::clone(&options.platform),
+            service_adapters: options.service_adapters.clone(),
         };
         let spawn_plan = prepare(resolved, &prepare_options)?;
         let external_names = resolved
@@ -269,6 +311,7 @@ impl LocalSession {
             events: Vec::new(),
             prepared_at: Instant::now(),
             next_seq: 0,
+            bindings: RuntimeBindings::new(),
         })
     }
 
@@ -305,13 +348,15 @@ impl LocalSession {
     /// Bounded log snapshot for one identity, if it ever started.
     ///
     /// Drain tasks continue in the background while the process runs, so the
-    /// snapshot reflects output retained up to the call point.
+    /// snapshot reflects output retained up to the call point. In-process
+    /// adapter services own no logs and always yield `None`.
     pub async fn logs(&self, identity: &str) -> Option<ServiceLogs> {
-        if let Some(service) = self
-            .running
-            .iter()
-            .find(|service| service.spec.identity == identity)
-        {
+        if let Some(service) = self.running.iter().find_map(|service| match service {
+            RunningManagedService::Process(process) if process.spec.identity == identity => {
+                Some(process)
+            }
+            _ => None,
+        }) {
             let stdout = service.stdout_spool.lock().await.snapshot();
             let stderr = service.stderr_spool.lock().await.snapshot();
             return Some(ServiceLogs { stdout, stderr });
@@ -324,12 +369,77 @@ impl LocalSession {
         None
     }
 
-    /// Spawn managed processes in dependency order and apply readiness.
+    /// Startup-established runtime bindings, merged across all started
+    /// adapter services. Available through teardown for final evidence.
+    #[must_use]
+    pub fn runtime_bindings(&self) -> &RuntimeBindings {
+        &self.bindings
+    }
+
+    /// Versioned runtime-topology evidence: one entry per launch-order
+    /// identity plus externally managed services.
+    #[must_use]
+    pub fn runtime_topology(&self) -> RuntimeTopology {
+        let mut services = Vec::new();
+        for entry in &self.spawn_plan.launch_order {
+            let retained: BTreeMap<String, String> = self
+                .bindings
+                .service_bindings(&entry.identity)
+                .cloned()
+                .unwrap_or_default();
+            let running_adapter = self.running.iter().find_map(|service| match service {
+                RunningManagedService::Adapter(adapter) if adapter.identity == entry.identity => {
+                    Some(adapter)
+                }
+                _ => None,
+            });
+            let (ownership, service_type, bindings) = match entry.kind {
+                LaunchKind::Process => (ServiceOwnership::Process, None, retained),
+                LaunchKind::Adapter => {
+                    let live: Option<BTreeMap<String, String>> =
+                        running_adapter.and_then(|adapter| {
+                            adapter.bindings.service_bindings(&entry.identity).cloned()
+                        });
+                    let service_type = self
+                        .spawn_plan
+                        .adapter(&entry.identity)
+                        .map(|spec| spec.service_type.clone())
+                        .or_else(|| running_adapter.map(|adapter| adapter.service_type.clone()));
+                    (
+                        ServiceOwnership::Adapter,
+                        service_type,
+                        live.unwrap_or(retained),
+                    )
+                }
+            };
+            services.push(ServiceTopologyEntry {
+                identity: entry.identity.clone(),
+                ownership,
+                service_type,
+                bindings,
+            });
+        }
+        for identity in &self.external {
+            services.push(ServiceTopologyEntry {
+                identity: identity.clone(),
+                ownership: ServiceOwnership::External,
+                service_type: None,
+                bindings: BTreeMap::new(),
+            });
+        }
+        RuntimeTopology {
+            schema_version: RUNTIME_TOPOLOGY_SCHEMA_VERSION,
+            services,
+        }
+    }
+
+    /// Spawn managed services in dependency order and apply readiness.
     ///
-    /// On any spawn, readiness, or cancellation failure after the first
-    /// successful spawn, already-started processes are torn down in reverse
-    /// dependency order and the initiating failure is preserved with cleanup
-    /// problems attached.
+    /// Processes and named adapter services start in one unified dependency
+    /// order and tear down in reverse order. On any spawn, readiness, or
+    /// cancellation failure after the first successful start, already-started
+    /// services are torn down in reverse dependency order and the initiating
+    /// failure is preserved with cleanup problems attached.
     ///
     /// # Errors
     /// Returns [`RunnerError`] for spawn, readiness, timeout, early exit,
@@ -339,61 +449,205 @@ impl LocalSession {
         cancel: &CancellationToken,
     ) -> Result<StartupReport, RunnerError> {
         self.check_probes_registered()?;
-        if self.spawn_plan.specs.is_empty() {
+        if self.spawn_plan.launch_order.is_empty() {
             return Ok(StartupReport {
                 started: Vec::new(),
             });
         }
         let mut started = Vec::new();
-        for spec in self.spawn_plan.specs.clone() {
+        for entry in self.spawn_plan.launch_order.clone() {
             if cancel.is_cancelled() {
                 return self.cancel_after_start().await;
             }
-            let running = match Self::spawn_one(&spec) {
-                Ok(running) => running,
-                Err(message) => {
-                    let cleanup = self.teardown_running().await;
-                    return Err(RunnerError::SpawnFailed {
-                        service: spec.identity,
-                        message,
-                        cleanup,
-                    });
+            match entry.kind {
+                LaunchKind::Process => {
+                    let spec = self
+                        .spawn_plan
+                        .process(&entry.identity)
+                        .cloned()
+                        .ok_or_else(|| RunnerError::InvalidPlan {
+                            detail: format!(
+                                "launch order references unknown process {}",
+                                entry.identity
+                            ),
+                        })?;
+                    let running = match Self::spawn_one(&spec) {
+                        Ok(running) => running,
+                        Err(message) => {
+                            let cleanup = self.teardown_running().await;
+                            return Err(RunnerError::SpawnFailed {
+                                service: spec.identity,
+                                message,
+                                cleanup,
+                            });
+                        }
+                    };
+                    let pid = running.pid;
+                    self.push_event(&spec.identity, LifecycleEventKind::Spawned, Some(pid));
+                    self.running
+                        .push(RunningManagedService::Process(Box::new(running)));
+                    started.push(spec.identity.clone());
+                    if let Err(error) = self.apply_readiness(&spec, pid, cancel).await {
+                        let cleanup = self.teardown_running().await;
+                        return Err(attach_cleanup(error, cleanup));
+                    }
+                    self.push_event(&spec.identity, LifecycleEventKind::Ready, Some(pid));
                 }
-            };
-            let pid = running.pid;
-            self.push_event(&spec.identity, LifecycleEventKind::Spawned, Some(pid));
-            self.running.push(running);
-            started.push(spec.identity.clone());
-            if let Err(error) = self.apply_readiness(&spec, pid, cancel).await {
-                let cleanup = self.teardown_running().await;
-                return Err(attach_cleanup(error, cleanup));
+                LaunchKind::Adapter => {
+                    let spec = self
+                        .spawn_plan
+                        .adapter(&entry.identity)
+                        .cloned()
+                        .ok_or_else(|| RunnerError::InvalidPlan {
+                            detail: format!(
+                                "launch order references unknown adapter {}",
+                                entry.identity
+                            ),
+                        })?;
+                    match self.start_adapter(&spec, cancel).await {
+                        Ok(bindings) => {
+                            self.push_event(&spec.identity, LifecycleEventKind::Spawned, None);
+                            started.push(spec.identity.clone());
+                            if let Err(error) = self.apply_adapter_readiness(&spec, cancel).await {
+                                let cleanup = self.teardown_running().await;
+                                return Err(attach_cleanup(error, cleanup));
+                            }
+                            self.bindings.merge(&bindings);
+                            self.push_event(&spec.identity, LifecycleEventKind::Ready, None);
+                        }
+                        Err(error) => {
+                            if cancel.is_cancelled() {
+                                return self.cancel_after_start().await;
+                            }
+                            let cleanup = self.teardown_running().await;
+                            return Err(attach_cleanup(error, cleanup));
+                        }
+                    }
+                }
             }
-            self.push_event(&spec.identity, LifecycleEventKind::Ready, Some(pid));
         }
         Ok(StartupReport { started })
     }
 
-    /// Stop owned processes in reverse dependency order.
+    /// Start one named adapter service and register its running handle.
+    async fn start_adapter(
+        &mut self,
+        spec: &AdapterSpec,
+        cancel: &CancellationToken,
+    ) -> Result<RuntimeBindings, RunnerError> {
+        let adapter = self
+            .options
+            .service_adapters
+            .get(&spec.service_type)
+            .cloned()
+            .ok_or_else(|| RunnerError::UnsupportedService {
+                service: spec.identity.clone(),
+                detail: format!(
+                    "named service type {} has no registered adapter",
+                    spec.service_type
+                ),
+            })?;
+        let request = ServiceStartRequest {
+            service: spec.identity.clone(),
+            service_type: spec.service_type.clone(),
+            config: spec.config.clone(),
+            grace: spec.grace,
+        };
+        let child = cancel.child_token();
+        let handle = tokio::select! {
+            () = cancel.cancelled() => {
+                return Err(RunnerError::Cancelled { cleanup: Vec::new() });
+            }
+            started = adapter.start(request, child) => {
+                started.map_err(|message| RunnerError::SpawnFailed {
+                    service: spec.identity.clone(),
+                    message,
+                    cleanup: Vec::new(),
+                })?
+            }
+        };
+        // Adapter `start` returns after adapter-owned readiness; bindings are
+        // captured here so workloads receive the startup-established map.
+        // The handle moves into `running` so shutdown owns it.
+        let bindings = handle.bindings();
+        self.running
+            .push(RunningManagedService::Adapter(RunningAdapter {
+                identity: spec.identity.clone(),
+                service_type: spec.service_type.clone(),
+                handle,
+                bindings: bindings.clone(),
+                grace: spec.grace,
+            }));
+        Ok(bindings)
+    }
+
+    /// Apply plan-level readiness to an adapter service.
     ///
-    /// Every owned process is attempted even when one stop fails; failures
+    /// Adapter start already waited for adapter-owned readiness. A
+    /// plan-level `Probe` on an in-process service is rejected (no PID
+    /// exists to probe); an optional post-ready delay remains supported
+    /// outside measurement.
+    async fn apply_adapter_readiness(
+        &self,
+        spec: &AdapterSpec,
+        cancel: &CancellationToken,
+    ) -> Result<(), RunnerError> {
+        match &spec.readiness {
+            None => Ok(()),
+            Some(Readiness::Delay { after_ms }) => {
+                let delay = Duration::from_millis(after_ms.get());
+                tokio::select! {
+                    () = cancel.cancelled() => Err(RunnerError::Cancelled {
+                        cleanup: Vec::new(),
+                    }),
+                    () = tokio::time::sleep(delay) => Ok(()),
+                }
+            }
+            Some(Readiness::Probe { probe, .. }) => Err(RunnerError::UnsupportedProbe {
+                service: spec.identity.clone(),
+                probe: probe.as_str().to_owned(),
+            }),
+        }
+    }
+
+    /// Stop owned services in reverse dependency order.
+    ///
+    /// Every owned service is attempted even when one stop fails; failures
     /// are collected, never thrown away, and never rewrite a primary outcome.
+    /// Adapter shutdown failure becomes existing cleanup evidence, exactly
+    /// like process teardown failure.
     pub async fn shutdown(&mut self) -> ShutdownReport {
         let mut stopped_order = Vec::new();
         let mut failures = Vec::new();
         while let Some(mut service) = self.running.pop() {
-            let identity = service.spec.identity.clone();
+            let identity = service.identity().to_owned();
             stopped_order.push(identity.clone());
-            self.push_event(&identity, LifecycleEventKind::Stopping, Some(service.pid));
-            let grace = shutdown_grace(&service.spec);
-            if let Err(reason) = stop_service(&mut service, &self.options.platform, grace).await {
-                failures.push(CleanupFailure::new(identity.clone(), reason));
+            match &mut service {
+                RunningManagedService::Process(process) => {
+                    let pid = process.pid;
+                    self.push_event(&identity, LifecycleEventKind::Stopping, Some(pid));
+                    let grace = shutdown_grace(&process.spec);
+                    if let Err(reason) =
+                        stop_process(process.as_mut(), &self.options.platform, grace).await
+                    {
+                        failures.push(CleanupFailure::new(identity.clone(), reason));
+                    }
+                    self.push_event(&identity, LifecycleEventKind::Stopped, Some(pid));
+                    self.retained.push(RetainedLogs {
+                        identity,
+                        stdout_spool: Arc::clone(&process.stdout_spool),
+                        stderr_spool: Arc::clone(&process.stderr_spool),
+                    });
+                }
+                RunningManagedService::Adapter(adapter) => {
+                    self.push_event(&identity, LifecycleEventKind::Stopping, None);
+                    let grace = adapter.grace;
+                    if let Err(reason) = adapter.handle.shutdown(grace).await {
+                        failures.push(CleanupFailure::new(identity.clone(), reason));
+                    }
+                    self.push_event(&identity, LifecycleEventKind::Stopped, None);
+                }
             }
-            self.push_event(&identity, LifecycleEventKind::Stopped, Some(service.pid));
-            self.retained.push(RetainedLogs {
-                identity,
-                stdout_spool: Arc::clone(&service.stdout_spool),
-                stderr_spool: Arc::clone(&service.stderr_spool),
-            });
         }
         ShutdownReport {
             stopped_order,
@@ -449,7 +703,7 @@ impl LocalSession {
         self.next_seq += 1;
     }
 
-    fn spawn_one(spec: &ProcessSpec) -> Result<RunningService, String> {
+    fn spawn_one(spec: &ProcessSpec) -> Result<RunningProcess, String> {
         let mut command = tokio::process::Command::new(&spec.argv[0]);
         if spec.argv.len() > 1 {
             command.args(&spec.argv[1..]);
@@ -484,7 +738,7 @@ impl LocalSession {
             spawn_drain_task(stdout, Arc::clone(&stdout_spool)),
             spawn_drain_task(stderr, Arc::clone(&stderr_spool)),
         ];
-        Ok(RunningService {
+        Ok(RunningProcess {
             spec: spec.clone(),
             child,
             pid,
@@ -578,8 +832,15 @@ impl LocalSession {
             .running
             .iter_mut()
             .rev()
-            .find(|service| service.spec.identity == spec.identity)
-            .and_then(|service| service.child.try_wait().ok().flatten());
+            .find_map(|service| match service {
+                RunningManagedService::Process(process)
+                    if process.spec.identity == spec.identity =>
+                {
+                    Some(process)
+                }
+                _ => None,
+            })
+            .and_then(|process| process.child.try_wait().ok().flatten());
         if let Some(status) = exited {
             return Err(RunnerError::ProcessExitedEarly {
                 service: spec.identity.clone(),
@@ -605,8 +866,14 @@ impl LocalSession {
         self.running
             .iter_mut()
             .rev()
-            .find(|service| service.spec.identity == spec.identity)
-            .map(|service| &mut service.child)
+            .find_map(|service| match service {
+                RunningManagedService::Process(process)
+                    if process.spec.identity == spec.identity =>
+                {
+                    Some(&mut process.child)
+                }
+                _ => None,
+            })
             .ok_or_else(|| RunnerError::ProcessExitedEarly {
                 service: spec.identity.clone(),
                 message: "owned process handle is missing".to_owned(),
@@ -617,18 +884,33 @@ impl LocalSession {
     async fn teardown_running(&mut self) -> Vec<CleanupFailure> {
         let mut failures = Vec::new();
         while let Some(mut service) = self.running.pop() {
-            let identity = service.spec.identity.clone();
-            self.push_event(&identity, LifecycleEventKind::Stopping, Some(service.pid));
-            let grace = shutdown_grace(&service.spec);
-            if let Err(reason) = stop_service(&mut service, &self.options.platform, grace).await {
-                failures.push(CleanupFailure::new(identity.clone(), reason));
+            let identity = service.identity().to_owned();
+            match &mut service {
+                RunningManagedService::Process(process) => {
+                    let pid = process.pid;
+                    self.push_event(&identity, LifecycleEventKind::Stopping, Some(pid));
+                    let grace = shutdown_grace(&process.spec);
+                    if let Err(reason) =
+                        stop_process(process.as_mut(), &self.options.platform, grace).await
+                    {
+                        failures.push(CleanupFailure::new(identity.clone(), reason));
+                    }
+                    self.push_event(&identity, LifecycleEventKind::Stopped, Some(pid));
+                    self.retained.push(RetainedLogs {
+                        identity,
+                        stdout_spool: Arc::clone(&process.stdout_spool),
+                        stderr_spool: Arc::clone(&process.stderr_spool),
+                    });
+                }
+                RunningManagedService::Adapter(adapter) => {
+                    self.push_event(&identity, LifecycleEventKind::Stopping, None);
+                    let grace = adapter.grace;
+                    if let Err(reason) = adapter.handle.shutdown(grace).await {
+                        failures.push(CleanupFailure::new(identity.clone(), reason));
+                    }
+                    self.push_event(&identity, LifecycleEventKind::Stopped, None);
+                }
             }
-            self.push_event(&identity, LifecycleEventKind::Stopped, Some(service.pid));
-            self.retained.push(RetainedLogs {
-                identity,
-                stdout_spool: Arc::clone(&service.stdout_spool),
-                stderr_spool: Arc::clone(&service.stderr_spool),
-            });
         }
         failures
     }
@@ -741,8 +1023,8 @@ async fn wait_for_exit_cancel(
     }
 }
 
-async fn stop_service(
-    service: &mut RunningService,
+async fn stop_process(
+    service: &mut RunningProcess,
     platform: &Arc<dyn PlatformAdapter>,
     grace: Duration,
 ) -> Result<(), String> {
@@ -786,7 +1068,7 @@ async fn wait_for_child_exit(child: &mut tokio::process::Child, limit: Duration)
     }
 }
 
-async fn join_drains(service: &mut RunningService) {
+async fn join_drains(service: &mut RunningProcess) {
     for handle in service.drain_handles.drain(..) {
         let _ = tokio::time::timeout(DRAIN_JOIN_LIMIT, handle).await;
     }

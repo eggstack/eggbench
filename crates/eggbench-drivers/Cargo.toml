@@ -8,6 +8,12 @@ license.workspace = true
 [features]
 default = []
 external-command = []
+eggstack-http = [
+  "dep:eggfetch-core",
+  "dep:eggserve-primitives",
+  "dep:eggserve-server",
+  "dep:hdrhistogram",
+]
 
 [dependencies]
 eggbench-core = { path = "../eggbench-core" }
@@ -18,6 +24,14 @@ sha2 = "0.10"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+eggfetch-core = { version = "0.2", optional = true, default-features = false, features = [
+  "standard-http1",
+] }
+eggserve-primitives = { version = "0.2", optional = true }
+eggserve-server = { version = "0.2", optional = true }
+hdrhistogram = { version = "7", optional = true, default-features = false, features = [
+  "serialization",
+] }
 
 [dev-dependencies]
 tempfile = "3"

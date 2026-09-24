@@ -1,8 +1,10 @@
 //! Local run phase orchestration above the process-owning [`LocalSession`].
 
 use crate::DEFAULT_SUBJECT_LOG_LIMIT_BYTES;
+use crate::service::RuntimeBindings;
 use crate::{
     CleanupFailure, LifecycleOutcome, LocalSession, stage_lifecycle_logs, stage_lifecycle_metadata,
+    stage_runtime_topology,
 };
 use eggbench_core::{
     ArtifactPath, ArtifactRole, BundleError, BundleManifest, BundleWriter, ComparisonVerdict,
@@ -55,6 +57,10 @@ pub struct InvocationContext {
     pub workload: Workload,
     /// Deterministic invocation-specific seed, when the plan has a seed.
     pub seed: Option<u64>,
+    /// Startup-established runtime bindings snapshot. Every invocation of one
+    /// run receives the same snapshot; workload drivers must treat it as
+    /// read-only and never mutate topology bindings through it.
+    pub bindings: RuntimeBindings,
     /// Cancellation token for this invocation.
     pub cancellation: CancellationToken,
     /// Runner safety deadline.
@@ -481,15 +487,16 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 None,
                 origin,
             );
-            match execute_invocation(
+            match execute_invocation(InvocationRequest {
                 executor,
                 cancel,
                 run_id,
                 resolved,
-                InvocationKind::Warmup { ordinal },
-                config.warmup_timeout,
+                bindings: session.runtime_bindings(),
+                kind: InvocationKind::Warmup { ordinal },
+                limit: config.warmup_timeout,
                 origin,
-            )
+            })
             .await
             {
                 InvocationResult::Completed(output, elapsed, _) => {
@@ -569,15 +576,16 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 Some(trial_id),
                 origin,
             );
-            match execute_invocation(
+            match execute_invocation(InvocationRequest {
                 executor,
                 cancel,
                 run_id,
                 resolved,
-                InvocationKind::Measured { trial_id },
-                config.measurement_timeout,
+                bindings: session.runtime_bindings(),
+                kind: InvocationKind::Measured { trial_id },
+                limit: config.measurement_timeout,
                 origin,
-            )
+            })
             .await
             {
                 InvocationResult::Completed(output, elapsed, start_offset_ns) => {
@@ -864,6 +872,14 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     {
         state.staging_error = Some(error);
     }
+    // Runtime-topology evidence stages from retained session state after
+    // teardown, so topology staging failure still preserves the evidence
+    // cause without rewriting cleanup or workload outcomes.
+    if state.staging_error.is_none()
+        && let Err(error) = stage_runtime_topology(session, &mut state.writer)
+    {
+        state.staging_error = Some(error);
+    }
 
     // ===========================================================
     // Finalization phase: the in-memory finalization event is
@@ -938,21 +954,38 @@ enum InvocationResult {
     Failure(FailureCategory, Duration, u64),
 }
 
-async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
-    executor: &mut E,
-    cancel: &CancellationToken,
+/// Explicit parameters for one workload invocation.
+struct InvocationRequest<'a, E: ?Sized> {
+    executor: &'a mut E,
+    cancel: &'a CancellationToken,
     run_id: RunId,
-    resolved: &eggbench_core::ResolvedPlan,
+    resolved: &'a eggbench_core::ResolvedPlan,
+    bindings: &'a RuntimeBindings,
     kind: InvocationKind,
     limit: Duration,
     origin: Instant,
+}
+
+async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
+    request: InvocationRequest<'_, E>,
 ) -> InvocationResult {
+    let InvocationRequest {
+        executor,
+        cancel,
+        run_id,
+        resolved,
+        bindings,
+        kind,
+        limit,
+        origin,
+    } = request;
     let child = cancel.child_token();
     let context = InvocationContext {
         run_id,
         kind,
         workload: resolved.workload.clone(),
         seed: resolved.seed.map(|seed| derive_seed(seed, kind)),
+        bindings: bindings.clone(),
         cancellation: child.clone(),
         timeout: limit,
     };
@@ -1037,6 +1070,41 @@ fn preflight(
     })
 }
 
+/// Byte bound for the `lifecycle/lifecycle.json` evidence artifact.
+fn lifecycle_byte_bound(identities: &[String]) -> Result<u64, OrchestrationError> {
+    u64::try_from(identities.len())
+        .ok()
+        .and_then(|count| count.checked_mul(512))
+        .and_then(|bytes| {
+            u64::try_from(identities.iter().map(String::len).sum::<usize>())
+                .ok()
+                .and_then(|identity_bytes| identity_bytes.checked_mul(8))
+                .and_then(|identity_bytes| bytes.checked_add(identity_bytes))
+        })
+        .and_then(|bytes| bytes.checked_add(2_048))
+        .ok_or(OrchestrationError::Preflight(
+            "lifecycle artifact bound overflow",
+        ))
+}
+
+/// Byte bound for the `lifecycle/runtime-topology.json` evidence artifact:
+/// one entry per managed identity plus the startup-established bindings.
+fn topology_byte_bound(identities: &[String]) -> Result<u64, OrchestrationError> {
+    u64::try_from(identities.len())
+        .ok()
+        .and_then(|count| count.checked_mul(1_024))
+        .and_then(|bytes| {
+            u64::try_from(identities.iter().map(String::len).sum::<usize>())
+                .ok()
+                .and_then(|identity_bytes| identity_bytes.checked_mul(8))
+                .and_then(|identity_bytes| bytes.checked_add(identity_bytes))
+        })
+        .and_then(|bytes| bytes.checked_add(2_048))
+        .ok_or(OrchestrationError::Preflight(
+            "runtime-topology artifact bound overflow",
+        ))
+}
+
 fn preflight_evidence_capacity(
     writer: &BundleWriter,
     session: &LocalSession,
@@ -1061,7 +1129,7 @@ fn preflight_evidence_capacity(
                     "evidence artifact count overflow",
                 ))?,
         )
-        .and_then(|count| count.checked_add(2)) // phase timeline and lifecycle metadata
+        .and_then(|count| count.checked_add(3)) // phase timeline, lifecycle metadata, runtime topology
         .and_then(|count| count.checked_add(log_artifact_count))
         .ok_or(OrchestrationError::Preflight(
             "evidence artifact count overflow",
@@ -1079,20 +1147,16 @@ fn preflight_evidence_capacity(
         .ok_or(OrchestrationError::Preflight(
             "phase artifact bound overflow",
         ))?;
-    let lifecycle_bytes = u64::try_from(identities.len())
-        .ok()
-        .and_then(|count| count.checked_mul(512))
-        .and_then(|bytes| {
-            u64::try_from(identities.iter().map(String::len).sum::<usize>())
-                .ok()
-                .and_then(|identity_bytes| identity_bytes.checked_mul(8))
-                .and_then(|identity_bytes| bytes.checked_add(identity_bytes))
-        })
-        .and_then(|bytes| bytes.checked_add(2_048))
-        .ok_or(OrchestrationError::Preflight(
-            "lifecycle artifact bound overflow",
-        ))?;
-    if writer.max_artifact_bytes() < phase_bytes.max(lifecycle_bytes).max(512) {
+    let lifecycle_bytes = lifecycle_byte_bound(&identities)?;
+    // Runtime-topology evidence carries one entry per identity plus the
+    // startup-established non-secret bindings.
+    let topology_bytes = topology_byte_bound(&identities)?;
+    if writer.max_artifact_bytes()
+        < phase_bytes
+            .max(lifecycle_bytes)
+            .max(topology_bytes)
+            .max(512)
+    {
         return Err(OrchestrationError::Preflight(
             "per-artifact bound cannot hold mandatory runner metadata",
         ));
@@ -1100,6 +1164,7 @@ fn preflight_evidence_capacity(
 
     let mut required_bytes = phase_bytes
         .checked_add(lifecycle_bytes)
+        .and_then(|bytes| bytes.checked_add(topology_bytes))
         .and_then(|bytes| bytes.checked_add(u64::try_from(warmups).ok()?.checked_mul(512)?))
         .and_then(|bytes| {
             // `result.json` plus normalized `metrics.json` per measured trial.

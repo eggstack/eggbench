@@ -3,8 +3,8 @@
 //! Production driver inventory is owned by `eggbench-drivers`
 //! ([`eggbench_drivers::DriverCatalog`]); this module is a thin CLI-facing
 //! compatibility view over that catalog. [`WorkloadRegistry::production`]
-//! (and the legacy [`WorkloadRegistry::with_builtin`] alias) return an empty
-//! registry, so `run` fails before managed startup with a stable
+//! returns the catalog workload drivers (empty without the `eggstack-http`
+//! feature), so feature-off `run` fails before managed startup with a stable
 //! `missing_driver`/`unsupported_workload` category.
 //!
 //! Deterministic qualification uses [`WorkloadRegistry::with_qualification_fake`]
@@ -16,7 +16,8 @@
 use eggbench_core::{DriverCategory, DriverDescriptor, LoadMode, Name};
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
-    DrainContext, FailureCategory, InvocationContext, WorkloadExecutor, WorkloadOutput,
+    DrainContext, FailureCategory, InvocationContext, ServiceAdapterRegistry, WorkloadExecutor,
+    WorkloadOutput,
 };
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -33,11 +34,35 @@ pub struct WorkloadDescriptor {
     pub adapter_version: String,
     /// Upstream name reported to users.
     pub upstream_name: String,
+    /// Upstream version or revision, when known. Display-only; resolution
+    /// uses the canonical descriptor.
+    pub upstream_version: Option<String>,
+    /// Advertised capability labels in stable order. Display-only.
+    pub capabilities: Vec<String>,
     /// Whether this is the default driver for its category.
     pub default: bool,
 }
 
 impl WorkloadDescriptor {
+    /// Project a catalog workload descriptor into the CLI inventory view.
+    #[must_use]
+    pub fn from_driver_descriptor(descriptor: &DriverDescriptor) -> Self {
+        let mut capabilities: Vec<String> = descriptor
+            .capabilities
+            .iter()
+            .map(|capability| format!("{capability:?}"))
+            .collect();
+        capabilities.sort();
+        Self {
+            name: descriptor.name.as_str().to_owned(),
+            adapter_version: descriptor.adapter_version.clone(),
+            upstream_name: descriptor.upstream_name.clone(),
+            upstream_version: descriptor.upstream_version.clone(),
+            capabilities,
+            default: descriptor.default,
+        }
+    }
+
     /// Convert to the canonical [`DriverDescriptor`].
     #[must_use]
     pub fn to_descriptor(&self) -> DriverDescriptor {
@@ -84,12 +109,12 @@ pub struct WorkloadRegistry {
 
 /// Minimal workload-runtime seam separating production and qualification.
 ///
-/// Production returns only real compiled/registered adapters (empty at this
-/// milestone). Qualification registers the deterministic fake descriptor and
-/// can build its executor. A smaller injection seam with the same invariant
-/// would also satisfy the corrective.
+/// Production returns the compiled/registered catalog adapters (empty without
+/// the `eggstack-http` feature). Qualification registers the deterministic
+/// fake descriptor and can build its executor. A smaller injection seam with
+/// the same invariant would also satisfy the corrective.
 pub trait WorkloadRuntime {
-    /// Stable inventory view of registered drivers.
+    /// Stable inventory view of registered workload drivers.
     fn inventory(&self) -> Vec<DriverInventoryEntry>;
     /// Canonical descriptors used for plan resolution.
     fn driver_descriptors(&self) -> Vec<eggbench_core::DriverDescriptor>;
@@ -97,19 +122,32 @@ pub trait WorkloadRuntime {
     fn has_workload_driver(&self) -> bool;
 }
 
-/// Production runtime: no synthetic driver unless a real adapter is compiled
-/// in (none at this milestone).
+/// Production runtime: the compiled catalog adapters.
+///
+/// Without `eggstack-http` the catalog is empty and `run` fails before
+/// managed startup; with the feature it carries the `EggServe` origin service
+/// descriptor and the `Eggfetch` workload descriptor.
 #[derive(Debug, Default, Clone)]
 pub struct ProductionRuntime {
     registry: WorkloadRegistry,
+    descriptors: Vec<DriverDescriptor>,
 }
 
 impl ProductionRuntime {
-    /// Empty production registry.
+    /// Production registry state from the authoritative catalog.
     #[must_use]
     pub fn new() -> Self {
+        let descriptors = eggbench_drivers::production_catalog().descriptors();
+        let mut registry = WorkloadRegistry::default();
+        for descriptor in descriptors
+            .iter()
+            .filter(|descriptor| descriptor.category == DriverCategory::Workload)
+        {
+            registry.register(WorkloadDescriptor::from_driver_descriptor(descriptor));
+        }
         Self {
-            registry: WorkloadRegistry::production(),
+            registry,
+            descriptors,
         }
     }
 }
@@ -120,7 +158,7 @@ impl WorkloadRuntime for ProductionRuntime {
     }
 
     fn driver_descriptors(&self) -> Vec<eggbench_core::DriverDescriptor> {
-        self.registry.descriptors()
+        self.descriptors.clone()
     }
 
     fn has_workload_driver(&self) -> bool {
@@ -168,17 +206,24 @@ impl WorkloadRuntime for QualificationRuntime {
 }
 
 impl WorkloadRegistry {
-    /// Production registry state: no synthetic workload driver.
+    /// Production registry state: the catalog workload drivers.
     ///
     /// Delegates to the authoritative [`eggbench_drivers::DriverCatalog`]
-    /// production inventory, which is empty after External Oracles M001.
-    /// `doctor` reports `has_workload_driver=false` and `run` fails before
-    /// managed startup.
+    /// production inventory, which is empty without the `eggstack-http`
+    /// feature. `doctor` reports `has_workload_driver=false` and `run` fails
+    /// before managed startup in that configuration.
     #[must_use]
     pub fn production() -> Self {
         let catalog = eggbench_drivers::production_catalog();
-        debug_assert!(catalog.is_empty(), "M001 production catalog is empty");
-        Self::default()
+        let mut registry = Self::default();
+        for descriptor in catalog
+            .descriptors()
+            .iter()
+            .filter(|descriptor| descriptor.category == DriverCategory::Workload)
+        {
+            registry.register(WorkloadDescriptor::from_driver_descriptor(descriptor));
+        }
+        registry
     }
 
     /// Legacy constructor preserved for call-site compatibility.
@@ -203,6 +248,8 @@ impl WorkloadRegistry {
             name: "fake-load".to_owned(),
             adapter_version: env!("CARGO_PKG_VERSION").to_owned(),
             upstream_name: "fake-load".to_owned(),
+            upstream_version: None,
+            capabilities: vec!["LoadMode { mode: ClosedLoop }".to_owned()],
             default: true,
         });
         registry
@@ -298,6 +345,45 @@ impl WorkloadExecutor for BuiltinWorkloadExecutor {
     }
 }
 
+/// Build the production named-service adapter registry.
+///
+/// With `eggstack-http` this registers the `EggServe` controlled-origin
+/// adapter; without the feature the registry is empty and named services
+/// fail preparation with `unsupported_service`.
+#[must_use]
+pub fn production_service_adapters() -> ServiceAdapterRegistry {
+    #[cfg(feature = "eggstack-http")]
+    return eggbench_drivers::eggstack_service_adapters();
+    #[cfg(not(feature = "eggstack-http"))]
+    return ServiceAdapterRegistry::new();
+}
+
+/// Build the production workload executor for the resolved driver name.
+///
+/// The factory lives here, not in `main.rs`, so adapter selection stays
+/// behind the registry seam. Only catalog-registered drivers resolve.
+///
+/// # Errors
+/// Returns a human-readable reason when no production executor exists for
+/// the driver (feature disabled or unknown driver name).
+pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExecutor>, String> {
+    #[cfg(feature = "eggstack-http")]
+    {
+        if driver.as_str() == eggbench_drivers::EGGFETCH_HTTP_DRIVER_NAME {
+            return Ok(Box::new(eggbench_drivers::eggfetch_workload()));
+        }
+        Err(format!(
+            "no production executor for workload driver {}",
+            driver.as_str()
+        ))
+    }
+    #[cfg(not(feature = "eggstack-http"))]
+    {
+        let _ = driver;
+        Err("no production workload adapter is compiled in".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,9 +391,18 @@ mod tests {
     #[test]
     fn production_registry_contains_no_fake_driver() {
         let registry = WorkloadRegistry::production();
-        assert!(!registry.has_workload_driver());
-        assert!(registry.default_workload().is_none());
-        assert!(registry.inventory().is_empty());
+        #[cfg(not(feature = "eggstack-http"))]
+        {
+            assert!(!registry.has_workload_driver());
+            assert!(registry.default_workload().is_none());
+            assert!(registry.inventory().is_empty());
+        }
+        #[cfg(feature = "eggstack-http")]
+        {
+            assert!(registry.has_workload_driver());
+            assert_eq!(registry.default_workload().unwrap().name, "eggfetch-http");
+            assert_eq!(registry.inventory().len(), 1);
+        }
         assert!(
             !registry
                 .inventory()
@@ -319,7 +414,10 @@ mod tests {
     #[test]
     fn legacy_builtin_constructor_is_production_empty() {
         let registry = WorkloadRegistry::with_builtin();
+        #[cfg(not(feature = "eggstack-http"))]
         assert!(!registry.has_workload_driver());
+        #[cfg(feature = "eggstack-http")]
+        assert!(registry.has_workload_driver());
         assert!(
             !registry
                 .inventory()
@@ -339,9 +437,18 @@ mod tests {
     #[test]
     fn production_runtime_reports_no_driver() {
         let runtime = ProductionRuntime::new();
-        assert!(!runtime.has_workload_driver());
-        assert!(runtime.inventory().is_empty());
-        assert!(runtime.driver_descriptors().is_empty());
+        #[cfg(not(feature = "eggstack-http"))]
+        {
+            assert!(!runtime.has_workload_driver());
+            assert!(runtime.inventory().is_empty());
+            assert!(runtime.driver_descriptors().is_empty());
+        }
+        #[cfg(feature = "eggstack-http")]
+        {
+            assert!(runtime.has_workload_driver());
+            assert_eq!(runtime.inventory().len(), 1);
+            assert_eq!(runtime.driver_descriptors().len(), 2);
+        }
     }
 
     #[test]
@@ -365,6 +472,8 @@ mod tests {
             name: "fake-load".into(),
             adapter_version: "0".into(),
             upstream_name: "fake-load".into(),
+            upstream_version: None,
+            capabilities: Vec::new(),
             default: true,
         };
         let driver = descriptor.to_descriptor();
