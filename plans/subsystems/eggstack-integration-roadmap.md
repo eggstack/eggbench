@@ -121,23 +121,20 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ### M001 — Controlled origin, native HTTP workload, host telemetry
 
-Status: M001 closed (M001a `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`).
+Status: M001 implementation-closed; hosted qualification pending C001 (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). The combined hosted gate is `plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md`.
 
 Implementation plans:
 
 - `plans/implementation/eggstack-integration/001a-eggserve-controlled-origin-and-eggfetch-http.md`
 - `plans/implementation/eggstack-integration/001b-gregg-host-telemetry.md`
 
-Unblocked:
+Qualification note:
 
-- External Oracles M001 has landed the shared `crates/eggbench-drivers` crate and production catalog ownership. M001a and M001b may proceed in parallel if they preserve the shared runner/driver interfaces.
+- M001a and M001b are landed. Their original closure records explicitly left four-lane hosted qualification outstanding. C001 supplies that current-tip qualification without reopening Eggstack semantics.
 
 ### M002 — Route and stream-fault topology
 
-Status: unblocked by M001 closure; ready for plan authoring. Plan-time
-input for the author: Eggress 1.0.10 is present locally (roadmap §2 cited
-1.0.8 — re-audit the seam), while Eggchaos/EggReplay/Eggprobe have no
-locally available crate, CLI, or HTTP seam as of 2026-09-24.
+Status: ready for plan authoring/research, but implementation is blocked on post-M003 hosted qualification corrective C001. Plan-time input for the author: Eggress 1.0.10 is present locally (roadmap §2 cited 1.0.8 — re-audit the seam), while Eggchaos/EggReplay/Eggprobe have no locally available crate, CLI, or HTTP seam as of 2026-09-24.
 
 ### M003 — Replay and diagnostics
 
