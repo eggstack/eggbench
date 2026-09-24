@@ -1,6 +1,6 @@
 # Measurement and Comparison Roadmap
 
-Status: closed (M001 qualified, M002 closed, M003 closed 2026-09-24)
+Status: conditionally closed pending post-M003 hosted qualification corrective C001
 
 Long-term references:
 
@@ -111,8 +111,8 @@ Status: closed for qualification. Implementation plan: `plans/implementation/mea
 
 ### M002 — Baselines, comparability, and statistical gates
 
-Status: closed. Implementation commit `80ff6d1`, closure record at `plans/closure/measurement-comparison/002-status.md`. Immutable bundle identities, digest-pinned aliases, three observably distinct environment policies, deterministic trial-level bootstrap policy v1, per-metric/aggregate verdicts, standalone receipts, `eggbench compare` with additive exits 6/7/8, and golden fixtures are landed and regression-tested.
+Status: implementation-closed; hosted qualification pending C001. Implementation commit `80ff6d1`, historical closure record at `plans/closure/measurement-comparison/002-status.md`. Immutable bundle identities, digest-pinned aliases, three observably distinct environment policies, deterministic trial-level bootstrap policy v1, per-metric/aggregate verdicts, standalone receipts, `eggbench compare` with additive exits 6/7/8, and golden fixtures are landed and regression-tested. The combined hosted qualification is tracked by `plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md`.
 
 ### M003 — Paired/interleaved experiment qualification
 
-Status: closed. Implementation commit `49a4105`, closure record at `plans/closure/measurement-comparison/003-status.md`. Predeclared paired designs (plan schema v2), deterministic alternating runner schedule with arm/pair evidence, paired trial-level bootstrap policy v2, descriptive drift diagnostics, `eggbench compare --paired`, and methodology documentation are landed and regression-tested with v1 behavior proven unchanged. The measurement/comparison roadmap is complete: M001 closed (qualified), M002 closed, M003 closed.
+Status: conditionally closed pending C001 hosted qualification. Implementation commit `49a4105`, historical closure record at `plans/closure/measurement-comparison/003-status.md`. Predeclared paired designs (plan schema v2), deterministic alternating runner schedule with arm/pair evidence, paired trial-level bootstrap policy v2, descriptive drift diagnostics, `eggbench compare --paired`, and methodology documentation are landed and locally regression-tested with v1 behavior proven unchanged. CI run `36014465034` exposed narrow Clippy/Windows fixture defects; closure qualification is tracked by `plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md`.
