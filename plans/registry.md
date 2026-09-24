@@ -40,9 +40,9 @@ Canonical direction remains in:
 | Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
 | Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
 | post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
-| post-M003 combined hosted qualification corrective | active | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 ready | CI run 36014465034 failed Linux/macOS Clippy and Windows schema-v2 fixture compilation |
+| post-M003 combined hosted qualification corrective | active | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped for planning review (§20) | Implementation 808c35f fixed the three known defects; rerun 36017662684 fails Linux/macOS/Windows all-feature Clippy on pre-existing eggbench-drivers findings in frozen oracle-adapter code; follow-up corrective required before any unblocking |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | conditionally closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 implementation-closed; M003 conditionally closed | Current-tip hosted qualification C001 must close; red run 36014465034 |
+| Measurement/comparison | conditionally closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 implementation-closed; M003 conditionally closed | Current-tip hosted qualification C001 must close; C001 stopped per §20 (implementation 808c35f; rerun 36017662684 exposed frozen-code drivers lints); follow-up corrective required |
 | Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 implementation-closed; M002 plan-authorable | M001 hosted qualification pending cross-cutting C001; M002 implementation blocked until C001 closes |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 implementation-closed; M003 future | M001/M002 hosted qualification pending cross-cutting C001; M003 implementation blocked until C001 closes |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
@@ -67,7 +67,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| post-M003 combined hosted qualification corrective | C001 Current-tip CI repair and closure reconciliation | ready | plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md | Only implementation-ready handoff; must restore a four-lane green current tip before new capability implementation |
+| post-M003 combined hosted qualification corrective | C001 Current-tip CI repair and closure reconciliation | stopped for planning review (§20) | plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md | Implementation landed at 808c35f; rerun 36017662684 exposed frozen-code drivers lints that C001 may not absorb; see §22 stop notice; do not re-execute without a follow-up corrective plan |
 
 ## Authored but dependency-blocked implementation plans
 
@@ -190,3 +190,9 @@ The only dependency-ready implementation handoff is:
 `plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md`
 
 Eggstack M002 may be researched/planned in parallel, but no new capability implementation should land until C001 restores a four-lane green current tip and reconciles the accumulated closure qualification.
+
+2026-09-24 stop note: C001 implementation ran once (808c35f) and stopped per §20 — rerun
+36017662684 exposed frozen-code `eggbench-drivers` Clippy debt that C001 may not absorb. The plan
+above is the stop record, not a re-executable handoff: no capability implementation is unblocked,
+and all gates in this registry stay closed until a follow-up corrective closes the drivers lint
+class and a later run restores four green lanes.

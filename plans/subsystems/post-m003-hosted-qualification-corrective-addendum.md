@@ -1,6 +1,6 @@
 # Post-M003 Combined Hosted Qualification Corrective Addendum
 
-Status: active
+Status: active — C001 implementation attempted at 808c35f; stopped for planning review (§20): rerun 36017662684 fixed the three known defects but exposed frozen-code eggbench-drivers stable-Clippy findings
 
 Repository audit baseline: `5ffe87ba9bb352822f85b7780cd15745097dc230`
 
@@ -121,7 +121,7 @@ Implementation handoff:
 
 - `plans/implementation/post-m003-hosted-qualification-corrective/001-current-tip-ci-and-closure-reconciliation.md`
 
-Status: ready for handoff.
+Status: implementation attempted at `808c35f`; stopped for planning review — see the §22 stop notice in the implementation plan. Rerun CI `36017662684` (2026-09-24) confirms the three known defects fixed (fmt/check green all lanes, MSRV green) but fails all-feature Clippy on pre-existing `eggbench-drivers` findings in frozen oracle-adapter code (lib 20/21 errors, lib test 32/33 errors; includes `float_cmp` parser goldens, `cast_precision_loss` parser math, and one Windows-only `needless_return` at `resolver.rs:279`). These cannot be folded into C001 per §20; a follow-up corrective must disposition them first.
 
 ## 6. Qualification disposition
 
@@ -151,6 +151,10 @@ C001 closes only when:
 
 ## 8. Dependency disposition
 
-C001 is the only dependency-ready implementation handoff.
+C001 is the only dependency-ready implementation handoff. 2026-09-24: C001 implementation ran
+once (`808c35f`) and stopped per §20 of the implementation plan — rerun `36017662684` exposed
+frozen-code `eggbench-drivers` Clippy debt the corrective may not absorb. No handoff is executable
+until a follow-up corrective dispositions that debt; see the §22 stop notice in the implementation
+plan.
 
 Eggstack M002 route/stream-fault topology remains the next capability milestone, but implementation should begin only after this qualification corrective closes.

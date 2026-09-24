@@ -1,6 +1,6 @@
 # Post-M003 Hosted Qualification Corrective C001 — Current-Tip CI Repair and Closure Reconciliation
 
-Status: ready for handoff
+Status: stopped for planning review (§20) — implementation 808c35f landed; rerun 36017662684 fixed the three known defects but exposed frozen-code drivers lints
 
 Repository baseline: 29e70e78cf29d05a755a79450c222b5aad8653c2
 
@@ -437,3 +437,61 @@ Record:
 - registry/roadmap reconciliation commit;
 - unresolved findings/severity;
 - final disposition.
+
+## 22. Rerun outcome and §20 stop notice (recorded 2026-09-24, additive; §§1–21 unchanged)
+
+Corrective implementation `808c35f` (`fix(qualification): repair current-tip CI portability defects (C001)`)
+landed work packages A–C with no frozen-contract change (3 files, +37/−12):
+
+- `crates/eggbench-runner/src/orchestration.rs`: `(number + 1) / 2` → `number.div_ceil(2)` plus a
+  direct `paired_assignment` unit test (trials 1–6 mapping and `u32::MAX` no-wrap boundary);
+- `crates/eggbench-runner/tests/platform.rs`: Windows-only `ResolvedPlan` fixture gains `paired: None`;
+- `crates/eggbench-cli/src/workload_registry.rs`: `mut` expected counts → cfg-aware additive
+  `usize::from(cfg!(feature = ...))` expressions (default 3/3, all-features 4/6, meaning unchanged).
+
+Local evidence on the corrective tree: `cargo fmt --check` clean; `cargo check` clean (default and
+all-features, stable and `+1.89.0`); `cargo test` 297 passed / 0 failed (default) and 337 passed /
+0 failed (all-features, sentinel set); `cargo +1.89.0 test -p eggbench-core --all-features` 90
+passed; focused paired/comparison goldens, exit codes 6/7/8, driver catalog, oracle parser fixtures,
+and Eggstack loopback/telemetry suites green; `git diff --check` clean; no schema-version or
+dependency change.
+
+Fresh hosted run `36017662684` on corrective HEAD `808c35f` (2026-09-24, stable rustc 1.98.1):
+
+- Linux stable: fmt success; workspace check success; all-feature Clippy failure;
+  all-feature tests skipped.
+- Linux Rust 1.89: check success; core tests success.
+- macOS stable: workspace check success; all-feature Clippy failure; tests skipped.
+- Windows stable: workspace all-target check success (E0063 gone); all-feature Clippy failure;
+  remaining steps skipped.
+
+The three known defects are therefore fixed. The rerun instead exposes pre-existing stable-Clippy
+findings in frozen External Oracles adapter code, previously masked because cargo stops the Clippy
+unit graph at the first failing crate (`eggbench-runner` failed before `eggbench-drivers` was
+checked on every earlier run):
+
+- `eggbench-drivers` lib: 20 errors (Linux/macOS), 21 errors (Windows);
+- `eggbench-drivers` lib test: 32 errors (Linux/macOS), 33 errors (Windows);
+- locations, all frozen by §4: `src/external/common.rs:47,93`, `h2load.rs:171,227,305,308,462,546`,
+  `iperf3.rs:132,209,217,249,337,351,372`, `oha.rs:139,197,305,313`, plus test golden assertions
+  (`h2load.rs:691-693,700,721`, `iperf3.rs:517-518`, `oha.rs:634-637,673,682`) and one
+  Windows-only `needless_return` at `src/external/resolver.rs:279` (cfg(windows), invisible to Unix
+  local verification — the same masking class as the original `platform.rs` defect);
+- classes: `float_cmp` (correctness group, parser golden assertions), `cast_precision_loss`
+  (production parser math), `needless_pass_by_value` (public `failure_category` API),
+  `debug_struct` missing fields, `doc_markdown`, `manual_is_multiple_of`, `map_unwrap_or`,
+  `map_identity`, `redundant_closure`, `uninlined_format_args`, `manual_div_ceil`, `needless_return`.
+
+This triggers §20 stop conditions: the rerun exposes failures in driver parsers, and reaching green
+would require either changing frozen parser/math/API semantics or broad lint suppression — both
+explicitly excluded from C001. The newly exposed defects are not narrow cfg/test-hygiene defects
+(they span production parser code with correctness-group lints), so they cannot be folded into C001.
+
+Disposition: C001 does NOT close. No corrective closure record is created (work package I requires
+four green lanes, which do not exist). No registry/roadmap reconciliation is performed (work package
+J requires green hosted evidence). All dependency gates stay closed: Measurement M003 remains
+conditionally closed; M002, External Oracles M001/M002, and Eggstack M001a/M001b remain
+implementation-complete with hosted qualification outstanding; Eggstack M002 and External Oracles
+M003 implementation remain blocked. A follow-up corrective plan must disposition the
+`eggbench-drivers` stable-Clippy debt (a frozen-semantics-safe lint strategy or a governance
+decision) before C001 — or its successor — can supply the combined hosted qualification.
