@@ -4,6 +4,7 @@
 mod comparison;
 mod evidence;
 mod metrics;
+mod network_path;
 mod plan;
 mod resolved;
 mod types;
@@ -11,6 +12,7 @@ mod types;
 pub use comparison::*;
 pub use evidence::*;
 pub use metrics::*;
+pub use network_path::*;
 pub use plan::*;
 pub use resolved::*;
 pub use types::*;
@@ -21,3 +23,5 @@ pub const CORE_SCHEMA_NAMESPACE: &str = "org.eggstack.eggbench.core";
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 /// Paired-design experiment-plan schema version (adds `paired`).
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);
+/// Network-path experiment-plan schema version (adds `network_path`).
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_3: SchemaVersion = SchemaVersion(3);

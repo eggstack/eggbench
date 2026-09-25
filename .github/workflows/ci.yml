@@ -21,8 +21,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --all-targets --locked
+      - name: Check Eggstack feature isolation
+        shell: bash
+        run: |
+          set -eux
+          cargo check -p eggbench-drivers --no-default-features --locked
+          cargo check -p eggbench-drivers --no-default-features --features eggstack-http --locked
+          cargo check -p eggbench-drivers --no-default-features --features gregg --locked
+          cargo check -p eggbench-drivers --no-default-features --features eggstack-path --locked
+          cargo check -p eggbench-drivers --no-default-features --features eggstack-path,gregg --locked
+          cargo check -p eggbench-cli --no-default-features --features eggstack-path --locked
+          if cargo tree -p eggbench-drivers --no-default-features --edges normal | grep -E 'eggress|eggchaos'; then exit 1; fi
+          if cargo tree -p eggbench-drivers --no-default-features --features eggstack-http --edges normal | grep -E 'eggress|eggchaos'; then exit 1; fi
+          cargo run -p eggbench-cli --features eggstack-path --locked -- validate examples/eggstack-path.json
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --all-features --locked
+      - run: cargo test --workspace --all-targets --all-features --locked
+      - run: cargo test -p eggbench-cli --no-default-features --test cli --locked
 
   linux-msrv:
     runs-on: ubuntu-24.04
@@ -31,7 +45,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
       - run: cargo test -p eggbench-core --all-features --locked
+      - run: cargo test -p eggbench-drivers --all-features --locked
 
   macos-stable:
     runs-on: macos-14
@@ -43,7 +59,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --all-features --locked
+      - run: cargo test --workspace --all-targets --all-features --locked
       - name: Qualify macOS process-group cleanup
         run: cargo test -p eggbench-runner --test lifecycle descendant_cleanup_reaches_process_group --locked
       - name: Qualify filesystem symlink confinement
@@ -73,3 +89,5 @@ jobs:
           fi
           exit "$result"
       - run: cargo test -p eggbench-runner --test platform --locked
+      - name: Qualify portable Eggress route and no-fallback path
+        run: cargo test -p eggbench-drivers --all-features --test eggstack_path --locked

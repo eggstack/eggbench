@@ -47,6 +47,8 @@ impl DriverCatalog {
         let mut descriptors = Vec::new();
         #[cfg(feature = "eggstack-http")]
         descriptors.extend(crate::eggstack::eggstack_descriptors());
+        #[cfg(feature = "eggstack-path")]
+        descriptors.extend(crate::eggstack::path::path_descriptors());
         #[cfg(feature = "gregg")]
         descriptors.push(crate::gregg::gregg_telemetry_descriptor());
         descriptors.extend([
@@ -119,6 +121,8 @@ mod tests {
             vec!["h2load".to_owned(), "iperf3".to_owned(), "oha".to_owned()];
         #[cfg(feature = "eggstack-http")]
         expected.extend(["eggfetch-http".to_owned(), "eggserve-origin".to_owned()]);
+        #[cfg(feature = "eggstack-path")]
+        expected.extend(["eggress-route".to_owned(), "eggchaos-stream".to_owned()]);
         #[cfg(feature = "gregg")]
         expected.extend(["gregg".to_owned()]);
         let mut names: Vec<String> = catalog

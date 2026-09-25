@@ -130,7 +130,7 @@ C001 correctly stopped under its frozen-contract rule. Its successor C002 (imple
 
 External Oracles M001 (7afa054) and M002 (3384a89) are hosted-qualified. Eggstack M001 is hosted-qualified through M001a (8426e08) and M001b (a0ff206). C002 supplied the final four-lane qualification at run 36029547565.
 
-Eggstack M002 is now the dependency-ready capability handoff:
+Eggstack M002 is now implemented and is the dependency-stable capability layer:
 
 plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
 
@@ -144,7 +144,7 @@ Its controlling architecture is:
 - keep M002 stream-only: no UDP/datagram semantics, no netem, and no packet-loss terminology;
 - reject paired + network_path in M002 instead of weakening M003 physical-connection/trial semantics.
 
-The implementation plan re-audited sibling state on 2026-09-24: Eggress main is workspace 1.0.10 while the required public listener-free seam is already present in published v1.0.9; Eggchaos v0.1.0 is a published qualified release and eggchaos-core is the selected fault seam. Implementation must re-check exact published versions before pinning and must not use mutable git main merely for unreleased internals.
+The implementation re-audited sibling state on 2026-09-24: Eggress 1.0.10 is now published with the audited listener-free seam unchanged and is pinned exactly; Eggchaos v0.1.0 is a published qualified release and eggchaos-core is pinned exactly as the selected fault seam. No mutable git main dependency is used.
 
 After M002 closes:
 
@@ -183,7 +183,7 @@ verified live against loopback.
 
 M002 handoff re-audit on 2026-09-24:
 
-- Eggress main reports workspace 1.0.10 / Rust 1.89; published v1.0.9 already exposes eggress-outbound listener-free TCP routing with typed detailed failures and OutboundInfo.
+- Eggress 1.0.10 is published on crates.io with Rust 1.89 and exposes the audited eggress-outbound listener-free TCP routing, typed detailed failures, and OutboundInfo; the implementation pins 1.0.10 exactly.
 - Eggchaos v0.1.0 is published and qualified; eggchaos-core exposes the protocol-neutral deterministic stream fault engine and BidirectionalChaosStream used by the M002 design.
 - eggchaos-eggfetch is deliberately not selected because its dialer owns a direct TCP connection; M002 composes Eggress route first and eggchaos-core second.
 - Eggchaos datagram work on main remains outside M002.
@@ -206,10 +206,10 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The dependency-ready implementation handoff is:
+The implementation handoff is:
 
 plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
 
-Implement Eggstack M002, qualify it on the full default/all-feature/MSRV/four-lane matrix, and close it at plans/closure/eggstack-integration/002-status.md before activating Eggstack M003 replay/diagnostics.
+Implementation and local default/all-feature/MSRV verification are complete; hosted four-lane qualification and the closure record remain before activating Eggstack M003 replay/diagnostics.
 
 External Oracles M003 netem remains a separate later impairment boundary and must not be folded into M002.

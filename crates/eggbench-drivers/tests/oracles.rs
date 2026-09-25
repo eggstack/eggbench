@@ -124,6 +124,7 @@ fn invocation(workload: Workload, url: &str, timeout: Duration) -> InvocationCon
         bindings: bindings_for(url),
         cancellation: CancellationToken::new(),
         timeout,
+        measurement: eggbench_runner::MeasurementSignal::new(),
     }
 }
 
@@ -427,6 +428,7 @@ async fn oracle_execution_honors_cancellation() {
         bindings: bindings_for(&url),
         cancellation: cancel,
         timeout: Duration::from_secs(60),
+        measurement: eggbench_runner::MeasurementSignal::new(),
     };
     let error = workload.execute(context).await.unwrap_err();
     assert_eq!(error, FailureCategory::Cancelled);

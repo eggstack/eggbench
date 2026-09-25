@@ -6,6 +6,7 @@
 //! primary roles. A lifecycle-only run records no trials and finalizes with
 //! execution completed and no comparison verdict.
 
+use crate::RunEvidenceArtifact;
 use crate::session::{LifecycleOutcome, LocalSession};
 use eggbench_core::{ArtifactPath, ArtifactRole, BundleError, BundleWriter, Name, Sensitivity};
 use serde::Serialize;
@@ -65,6 +66,27 @@ pub fn stage_runtime_topology(
         "application/json",
         Sensitivity::Redacted,
         bytes.as_slice(),
+    )?;
+    Ok(path)
+}
+
+/// Stage one protocol-neutral run evidence artifact.
+///
+/// # Errors
+/// Returns [`BundleError`] when the path or artifact violates bundle bounds.
+pub fn stage_run_evidence(
+    writer: &mut BundleWriter,
+    evidence: &RunEvidenceArtifact,
+) -> Result<ArtifactPath, BundleError> {
+    let path = ArtifactPath::new(evidence.name().to_owned())?;
+    writer.add_artifact(
+        path.clone(),
+        ArtifactRole::Other {
+            label: evidence.role_label().clone(),
+        },
+        evidence.media_type(),
+        evidence.sensitivity(),
+        evidence.bytes(),
     )?;
     Ok(path)
 }

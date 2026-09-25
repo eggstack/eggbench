@@ -20,6 +20,16 @@ pub mod external;
 pub mod gregg;
 
 pub use catalog::{DriverCatalog, production_catalog};
+#[cfg(feature = "eggstack-path")]
+pub use eggstack::path::{
+    EGGCHAOS_CORE_VERSION, EGGRESS_OUTBOUND_VERSION, EGGRESS_URI_VERSION, FAULT_DRIVER_NAME,
+    FaultLayer, NETWORK_PATH_EVIDENCE_MAX_BYTES, NETWORK_PATH_EVIDENCE_SCHEMA_VERSION,
+    NetworkPathDriverEvidence, NetworkPathEvidence, PathDiagnosticsSnapshot, PathOrdering,
+    PathPolicyMode, PathSemantics, ROUTE_DRIVER_NAME, StreamDirection, StreamFaultEvidence,
+    build_evidence, build_fault_plan, fault_descriptor, load_network_path_evidence, lower_dialer,
+    network_path_role_label, new_path_diagnostics, path_descriptors, redacted_chain_text,
+    route_descriptor, validate_request,
+};
 #[cfg(feature = "eggstack-http")]
 pub use eggstack::{
     EGGFETCH_CORE_VERSION, EGGFETCH_HTTP_DRIVER_NAME, EGGSERVE_ORIGIN_SERVICE_TYPE,

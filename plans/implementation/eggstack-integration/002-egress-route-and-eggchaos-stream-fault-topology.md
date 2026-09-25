@@ -1,6 +1,6 @@
 # Eggstack Integration M002 — Listener-Free Eggress Route and Eggchaos Stream-Fault Topology
 
-Status: ready for handoff
+Status: implemented; closure pending hosted qualification
 
 Repository baseline: d870512a5a1af16276ff05286ff0b6e2366b7f8f
 
@@ -122,6 +122,8 @@ Version policy at implementation start:
 2. if 1.0.10 has become published and the audited listener-free API remains compatible, pin the exact published 1.0.10 crates;
 3. otherwise pin the exact published 1.0.9 seam already audited here;
 4. do not use mutable git main merely to obtain unreleased internal changes.
+
+Implementation re-check on 2026-09-24 found Eggress 1.0.10 published with the audited listener-free API unchanged; the implementation pins exact 1.0.10 crates and retains 1.0.9 only as the planning-time reference.
 
 Initial feature profile is the base TCP profile only. Do not enable pproxy-compat, extended, ssh, quic, udp, insecure-tls, or full embed features for M002.
 

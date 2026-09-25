@@ -42,13 +42,16 @@ mod spec;
 mod subject;
 mod telemetry;
 
-pub use bundle::{stage_lifecycle_logs, stage_lifecycle_metadata, stage_runtime_topology};
+pub use bundle::{
+    stage_lifecycle_logs, stage_lifecycle_metadata, stage_run_evidence, stage_runtime_topology,
+};
 pub use environment::{EnvironmentError, LocalEnvironmentCollector};
 pub use error::{CleanupFailure, RunnerError};
 pub use orchestration::{
-    DrainContext, FailureCategory, InvocationContext, InvocationKind, OrchestrationError,
-    PhaseEvent, PhaseKind, PhaseOutcome, ResetContext, ResetHook, ResetRegistry, RunOutcome,
-    WorkloadArtifact, WorkloadExecutor, WorkloadOutput, execute_run,
+    DrainContext, FailureCategory, InvocationContext, InvocationKind, MeasurementSignal,
+    OrchestrationError, PhaseEvent, PhaseKind, PhaseOutcome, ResetContext, ResetHook,
+    ResetRegistry, RunEvidenceArtifact, RunEvidenceContract, RunOutcome, WorkloadArtifact,
+    WorkloadExecutor, WorkloadOutput, execute_run,
 };
 pub use platform::{
     PlatformAdapter, PlatformSupport, UnixPlatform, UnsupportedPlatform, is_process_alive,

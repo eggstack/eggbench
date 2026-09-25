@@ -395,7 +395,10 @@ pub fn production_service_adapters() -> ServiceAdapterRegistry {
 /// # Errors
 /// Returns a human-readable reason when no production executor exists for
 /// the driver (feature disabled or unknown driver name).
-pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExecutor>, String> {
+pub fn production_workload_executor(
+    driver: &Name,
+    resolved: Option<&eggbench_core::ResolvedPlan>,
+) -> Result<Box<dyn WorkloadExecutor>, String> {
     if driver.as_str() == eggbench_drivers::OHA_DRIVER_NAME {
         let executable =
             eggbench_drivers::OhaWorkload::resolve().map_err(|error| error.to_string())?;
@@ -420,7 +423,7 @@ pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExe
     #[cfg(feature = "eggstack-http")]
     {
         if driver.as_str() == eggbench_drivers::EGGFETCH_HTTP_DRIVER_NAME {
-            return Ok(Box::new(eggbench_drivers::eggfetch_workload()));
+            return build_eggfetch_executor(resolved);
         }
         Err(format!(
             "no production executor for workload driver {}",
@@ -429,10 +432,48 @@ pub fn production_workload_executor(driver: &Name) -> Result<Box<dyn WorkloadExe
     }
     #[cfg(not(feature = "eggstack-http"))]
     {
+        let _ = resolved;
         Err(format!(
             "no production executor for workload driver {}",
             driver.as_str()
         ))
+    }
+}
+
+/// Build the Eggfetch HTTP workload executor, optionally composing the
+/// listener-free Eggress + Eggchaos path dialer when the resolved plan
+/// declares `network_path`.
+#[cfg(feature = "eggstack-http")]
+fn build_eggfetch_executor(
+    resolved: Option<&eggbench_core::ResolvedPlan>,
+) -> Result<Box<dyn WorkloadExecutor>, String> {
+    #[cfg(feature = "eggstack-path")]
+    {
+        let Some(resolved) = resolved else {
+            return Ok(Box::new(eggbench_drivers::eggfetch_workload()));
+        };
+        let Some(network_path) = &resolved.network_path else {
+            return Ok(Box::new(eggbench_drivers::eggfetch_workload()));
+        };
+        let diagnostics = eggbench_drivers::new_path_diagnostics();
+        let dialer = eggbench_drivers::lower_dialer(
+            network_path,
+            resolved.seed,
+            Arc::clone(&diagnostics),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|error| format!("network_path lower failed: {error}"))?;
+        Ok(Box::new(
+            eggbench_drivers::EggfetchWorkload::with_path_dialer(Arc::new(dialer)),
+        ))
+    }
+    #[cfg(not(feature = "eggstack-path"))]
+    {
+        if resolved.is_some_and(|resolved| resolved.network_path.is_some()) {
+            Err("network_path was resolved but eggstack-path feature is disabled".to_owned())
+        } else {
+            Ok(Box::new(eggbench_drivers::eggfetch_workload()))
+        }
     }
 }
 
@@ -665,6 +706,7 @@ mod tests {
         let expected_workload: usize = 3 + usize::from(cfg!(feature = "eggstack-http"));
         let expected_descriptors: usize = 3
             + 2 * usize::from(cfg!(feature = "eggstack-http"))
+            + 2 * usize::from(cfg!(feature = "eggstack-path"))
             + usize::from(cfg!(feature = "gregg"));
         assert!(runtime.has_workload_driver());
         assert_eq!(runtime.inventory().len(), expected_workload);

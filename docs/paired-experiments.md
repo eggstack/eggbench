@@ -19,10 +19,12 @@ Interleaving controls drift; it does not remove it. Pair effects in
 execution order plus half-split means are recorded as descriptive drift
 diagnostics (see below) so drift stays visible.
 
-## Predeclared design (plan schema v2)
+## Predeclared design (plan schema v2 or v3)
 
 Pairing is declared in the experiment plan before execution and never
-inferred afterward. A paired plan uses schema version 2:
+inferred afterward. A paired plan uses schema version 2 or 3; schema v3 is
+required only when another v3 feature is present, and M002 rejects
+`network_path` together with paired design:
 
 - top-level `subject` is a `label` naming the comparison (for example,
   `"waf-config-a-vs-b"`); the physical variants are services;

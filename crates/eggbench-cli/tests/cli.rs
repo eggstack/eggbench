@@ -89,6 +89,86 @@ async fn validate_rejects_invalid_plan() {
 }
 
 #[tokio::test]
+async fn validate_reports_stable_network_path_preflight_categories() {
+    let raw =
+        std::fs::read_to_string(fixture_dir().join("eggstack-path.json")).expect("path fixture");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    for (case, mutate, category) in [
+        (
+            "missing-seed",
+            Box::new(|value: &mut Value| value["seed"] = Value::Null) as Box<dyn Fn(&mut Value)>,
+            "missing_fault_seed",
+        ),
+        (
+            "credentials",
+            Box::new(|value: &mut Value| {
+                value["network_path"]["route"]["mode"]["chain"] =
+                    Value::from("trojan://secret@proxy.example:443");
+            }),
+            "route_credentials_not_supported",
+        ),
+        (
+            "fault-duration-zero",
+            Box::new(|value: &mut Value| {
+                value["network_path"]["stream_faults"]["upstream"][0]["kind"]["delay_ms"] =
+                    Value::from(0);
+            }),
+            "invalid_fault_plan",
+        ),
+        (
+            "fault-buffer-zero",
+            Box::new(|value: &mut Value| {
+                value["network_path"]["stream_faults"]["upstream"][0]["kind"]["max_buffer_bytes"] =
+                    Value::from(0);
+            }),
+            "invalid_fault_plan",
+        ),
+        (
+            "fault-id-empty",
+            Box::new(|value: &mut Value| {
+                value["network_path"]["stream_faults"]["upstream"][0]["id"] = Value::from("");
+            }),
+            "invalid_fault_plan",
+        ),
+        (
+            "route-length",
+            Box::new(|value: &mut Value| {
+                value["network_path"]["route"]["mode"]["chain"] = Value::from("h".repeat(1025));
+            }),
+            "invalid_route",
+        ),
+        (
+            "route-control",
+            Box::new(|value: &mut Value| {
+                value["network_path"]["route"]["mode"]["chain"] =
+                    Value::from("http://proxy.example:8080\n");
+            }),
+            "invalid_route",
+        ),
+    ] {
+        let mut plan: Value = serde_json::from_str(&raw).expect("fixture JSON");
+        mutate(&mut plan);
+        let path = tmp.path().join(format!("{case}.json"));
+        std::fs::write(&path, serde_json::to_vec_pretty(&plan).expect("serialize"))
+            .expect("write plan");
+        let presented = execute(
+            Command::Validate {
+                plan: path,
+                input_format: None,
+            },
+            CommandOptions::human(),
+        )
+        .await;
+        assert!(!presented.envelope.ok);
+        assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+        assert_eq!(
+            presented.envelope.error.as_ref().expect("error").category,
+            category
+        );
+    }
+}
+
+#[tokio::test]
 async fn doctor_production_reports_no_workload_driver() {
     let plan = fixture_dir().join("minimal.json");
     let presented = execute(
@@ -351,6 +431,7 @@ async fn inspect_verifies_minimal_bundle() {
     let body: Value = serde_json::to_value(&presented.envelope).unwrap();
     assert_eq!(body["result"]["kind"], "inspect");
     assert_eq!(body["result"]["manifest_schema_version"], 2);
+    assert_eq!(body["result"]["network_path"]["artifact_present"], false);
 }
 
 #[tokio::test]
@@ -857,6 +938,287 @@ async fn eggstack_loopback_end_to_end() {
     assert!(http_url.ends_with("/bench"));
 }
 
+#[cfg(feature = "eggstack-path")]
+#[tokio::test]
+async fn credential_gregression_persists_no_path_evidence_or_secret() {
+    let raw = std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json"))
+        .expect("loopback fixture");
+    let mut plan: Value = serde_json::from_str(&raw).expect("fixture JSON");
+    plan["schema_version"] = Value::from(3);
+    let secret = "eggbench-secret-marker";
+    plan["network_path"] = serde_json::json!({
+        "route": {
+            "driver": "eggress-route",
+            "mode": {
+                "kind": "proxy_chain",
+                "chain": format!("trojan://{secret}@proxy.example:443")
+            }
+        }
+    });
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("credential-plan.json");
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec_pretty(&plan).expect("serialize"),
+    )
+    .expect("write plan");
+    let bundle = tmp.path().join("credential.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    assert_eq!(
+        presented.envelope.error.as_ref().expect("error").category,
+        "route_credentials_not_supported"
+    );
+    assert!(
+        !serde_json::to_string(&presented.envelope)
+            .expect("serialize envelope")
+            .contains(secret)
+    );
+    assert!(!bundle.exists(), "preflight must not create a bundle");
+}
+
+#[cfg(feature = "eggstack-path")]
+#[tokio::test]
+async fn eggstack_path_run_stages_and_inspects_network_path_evidence() {
+    let raw = std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json"))
+        .expect("loopback fixture");
+    let mut plan: Value = serde_json::from_str(&raw).expect("fixture JSON");
+    plan["schema_version"] = Value::from(3);
+    plan["network_path"] = serde_json::json!({
+        "route": {
+            "driver": "eggress-route",
+            "mode": { "kind": "direct" }
+        }
+    });
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("path-plan.json");
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec_pretty(&plan).expect("serialize"),
+    )
+    .expect("write plan");
+    let bundle = tmp.path().join("path.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(
+        presented.envelope.ok,
+        "path run failed: {:?}",
+        presented.envelope
+    );
+    assert_eq!(presented.exit_code, ExitCode::Success);
+
+    let reader = eggbench_core::BundleReader::open(&bundle).expect("bundle opens");
+    reader.verify().expect("bundle verifies");
+    assert!(
+        reader
+            .manifest()
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.path.as_str() == "network-path.json")
+    );
+    let evidence = eggbench_drivers::load_network_path_evidence(&reader)
+        .expect("path evidence loads")
+        .expect("path evidence present");
+    assert_eq!(evidence.route_driver.name, "eggress-route");
+    assert_eq!(evidence.configured_hop_count, 0);
+    assert!(evidence.diagnostics.successful_dials > 0);
+    let comparison_input =
+        eggbench_core::load_comparison_input(&reader).expect("path bundle is comparison-ready");
+    let path_identity = comparison_input
+        .network_path_evidence
+        .expect("path evidence identity");
+    assert_eq!(path_identity.chain_config_digest, None);
+    assert_eq!(path_identity.eggress_uri_version, "1.0.10");
+    let metrics = reader
+        .trial_metrics(eggbench_core::TrialId::new(1).expect("trial id"))
+        .expect("metrics load")
+        .expect("metrics present");
+    assert!(metrics.observations.iter().all(|observation| {
+        !matches!(
+            observation.name.as_str(),
+            "network_path" | "route" | "route_latency" | "fault" | "fault_count"
+        )
+    }));
+
+    let inspected = execute(
+        Command::Inspect {
+            bundle,
+            emit_manifest_json: false,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(inspected.envelope.ok);
+    let body: Value = serde_json::to_value(&inspected.envelope).expect("serialize");
+    assert_eq!(body["result"]["network_path"]["artifact_present"], true);
+    assert_eq!(body["result"]["network_path"]["route_mode"], "direct");
+    assert_eq!(
+        body["result"]["network_path"]["route_driver"],
+        "eggress-route"
+    );
+}
+
+#[cfg(feature = "eggstack-path")]
+#[tokio::test]
+async fn doctor_reports_compiled_path_drivers_without_starting_a_route() {
+    let raw = std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json"))
+        .expect("loopback fixture");
+    let mut plan: Value = serde_json::from_str(&raw).expect("fixture JSON");
+    plan["schema_version"] = Value::from(3);
+    plan["network_path"] = serde_json::json!({
+        "route": {
+            "driver": "eggress-route",
+            "mode": { "kind": "direct" }
+        },
+        "stream_faults": {
+            "driver": "eggchaos-stream",
+            "upstream": [],
+            "downstream": []
+        }
+    });
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("doctor-path.json");
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec_pretty(&plan).expect("serialize"),
+    )
+    .expect("write plan");
+    let presented = execute(
+        Command::Doctor {
+            plan: plan_path,
+            input_format: None,
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(presented.envelope.ok);
+    let body: Value = serde_json::to_value(&presented.envelope).expect("serialize");
+    assert_eq!(body["result"]["network_path"]["feature_enabled"], true);
+    assert_eq!(
+        body["result"]["network_path"]["route_driver"],
+        "eggress-route"
+    );
+    assert_eq!(
+        body["result"]["network_path"]["fault_driver"],
+        "eggchaos-stream"
+    );
+    assert_eq!(
+        body["result"]["network_path"]["route_upstream_version"],
+        "1.0.10"
+    );
+}
+
+#[cfg(feature = "eggstack-path")]
+#[tokio::test]
+async fn external_oracle_workload_is_rejected_for_network_path() {
+    let raw =
+        std::fs::read_to_string(fixture_dir().join("eggstack-path.json")).expect("path fixture");
+    let mut plan: Value = serde_json::from_str(&raw).expect("fixture JSON");
+    plan["network_path"]["route"]["mode"] = serde_json::json!({ "kind": "direct" });
+    plan["network_path"]["stream_faults"] = serde_json::Value::Null;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("external-oracle-path.json");
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec_pretty(&plan).expect("serialize"),
+    )
+    .expect("write plan");
+    let bundle = tmp.path().join("path.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path,
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: Some("oha".to_owned()),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    assert_eq!(
+        presented.envelope.error.as_ref().expect("error").category,
+        "workload_path_incompatible"
+    );
+    assert!(!bundle.exists());
+}
+
+#[cfg(not(feature = "eggstack-path"))]
+#[tokio::test]
+async fn path_validation_and_run_fail_closed_without_the_feature() {
+    let raw = std::fs::read_to_string(fixture_dir().join("eggstack-loopback.json"))
+        .expect("loopback fixture");
+    let mut plan: Value = serde_json::from_str(&raw).expect("fixture JSON");
+    plan["schema_version"] = Value::from(3);
+    plan["network_path"] = serde_json::json!({
+        "route": {
+            "driver": "eggress-route",
+            "mode": { "kind": "direct" }
+        }
+    });
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan_path = tmp.path().join("path-plan.json");
+    std::fs::write(
+        &plan_path,
+        serde_json::to_vec_pretty(&plan).expect("serialize"),
+    )
+    .expect("write plan");
+    let bundle = tmp.path().join("path.eggb");
+    let presented = execute(
+        Command::Run {
+            plan: plan_path.clone(),
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    assert_eq!(
+        presented.envelope.error.as_ref().expect("error").category,
+        "unsupported_network_path"
+    );
+    assert!(!bundle.exists());
+
+    let doctor = execute(
+        Command::Doctor {
+            plan: plan_path,
+            input_format: None,
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!doctor.envelope.ok);
+    assert_eq!(doctor.exit_code, ExitCode::CapabilityPreflight);
+    assert_eq!(
+        doctor.envelope.error.as_ref().expect("error").category,
+        "unsupported_network_path"
+    );
+}
+
 /// Methodological guard: per-trial request volume must not change the
 /// trial-level observation count exposed to Measurement M002.
 ///
@@ -881,7 +1243,7 @@ async fn trial_observation_count_is_independent_of_request_volume() {
         let bundle = tmp.path().join("run.eggb");
         let presented = execute(
             Command::Run {
-                plan: plan_path,
+                plan: plan_path.clone(),
                 input_format: None,
                 bundle: bundle.clone(),
                 workload_driver: None,

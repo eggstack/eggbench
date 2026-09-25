@@ -41,6 +41,7 @@ impl ExitCode {
 }
 
 /// Successful command payload variants.
+#[allow(clippy::large_enum_variant)] // Comparison receipts are intentionally boxed within their variant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CliOutput {
@@ -66,6 +67,9 @@ pub enum CliOutput {
         /// Predeclared paired design, when the plan carries one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         paired: Option<DoctorPairedDesign>,
+        /// Network-path feature and selection summary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        network_path: Option<Box<NetworkPathDoctorSummary>>,
     },
     /// `run` summary with finalized bundle path and execution status.
     Run {
@@ -124,6 +128,9 @@ pub enum CliOutput {
         artifact_bytes: u64,
         /// Normalized manifest JSON when emitted.
         manifest_json: Option<String>,
+        /// Verified network-path evidence summary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        network_path: Option<NetworkPathInspectSummary>,
     },
 }
 
@@ -422,6 +429,70 @@ pub struct DoctorPairedDesign {
     pub baseline_service: String,
     /// Candidate arm service name.
     pub candidate_service: String,
+}
+
+/// Network-path feature and selection summary used by `doctor`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPathDoctorSummary {
+    /// Whether the binary contains the `eggstack-path` feature.
+    pub feature_enabled: bool,
+    /// Whether the source plan requested a network path.
+    pub requested: bool,
+    /// Requested route mode.
+    pub route_mode: Option<String>,
+    /// Selected route driver name.
+    pub route_driver: Option<String>,
+    /// Selected route sibling version.
+    pub route_upstream_version: Option<String>,
+    /// Selected stream-fault driver name.
+    pub fault_driver: Option<String>,
+    /// Selected stream-fault sibling version.
+    pub fault_upstream_version: Option<String>,
+    /// Capabilities compiled into the route/fault descriptors.
+    pub supported_capabilities: Vec<String>,
+    /// Explicit M002 exclusions.
+    pub unsupported_capabilities: Vec<String>,
+}
+
+/// Verified network-path summary used by `inspect`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPathInspectSummary {
+    /// Whether a manifest-listed path artifact exists.
+    pub artifact_present: bool,
+    /// Whether this binary can decode detailed path evidence.
+    pub detailed_evidence_available: bool,
+    /// Evidence schema version.
+    pub schema_version: Option<u32>,
+    /// Route driver name.
+    pub route_driver: Option<String>,
+    /// Route sibling version.
+    pub route_upstream_version: Option<String>,
+    /// Credential-free route mode.
+    pub route_mode: Option<String>,
+    /// Canonical chain configuration digest.
+    pub chain_config_digest: Option<String>,
+    /// Stream-fault driver name.
+    pub fault_driver: Option<String>,
+    /// Stream-fault sibling version.
+    pub fault_upstream_version: Option<String>,
+    /// Total configured upstream and downstream faults.
+    pub fault_count: Option<usize>,
+    /// Stable ordering semantics.
+    pub ordering: Option<String>,
+    /// Stable fault-layer semantics.
+    pub fault_layer: Option<String>,
+    /// Static-policy marker.
+    pub policy_mode: Option<String>,
+    /// Aggregate physical dial attempts.
+    pub physical_dial_attempts: Option<u64>,
+    /// Aggregate successful routed dials.
+    pub successful_dials: Option<u64>,
+    /// Aggregate successful fault-wrapped connections.
+    pub fault_wrapped_connections: Option<u64>,
+    /// Configured proxy hop count.
+    pub configured_hop_count: Option<u16>,
 }
 
 /// Environment fingerprint summary used by `doctor` and `inspect`.

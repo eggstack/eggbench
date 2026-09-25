@@ -18,7 +18,7 @@
 
 use crate::envelope::{CliOutput, ExitCode, PathBufPayload, PresentedCommandResult};
 use crate::error::{CliError, CliFailure};
-use crate::plan_input::load_plan;
+use crate::plan_input::{PlanInput, load_plan};
 use crate::workload_registry::{
     BuiltinWorkloadExecutor, ProductionRuntime, QualificationRuntime, WorkloadRuntime,
     production_service_adapters, production_telemetry_registry, production_workload_executor,
@@ -26,7 +26,7 @@ use crate::workload_registry::{
 use crate::{CommandOptions, InputFormat};
 use eggbench_core::{
     DefaultDriverPolicy, DriverCategory, DriverDescriptor, ExecutionStatus, LoadMode, Name,
-    ResolutionOptions,
+    ResolutionOptions, ResolvedPlan,
 };
 use eggbench_runner::{
     BundlePreparation, MapSecretProvider, PlatformAdapter, ResetRegistry, RunnerOptions,
@@ -86,6 +86,30 @@ pub async fn run(
     let descriptors = runtime.driver_descriptors();
 
     let input = load_plan(plan, input_format)?;
+    if input.plan.network_path.is_some() && !cfg!(feature = "eggstack-path") {
+        return Ok(PresentedCommandResult::failure(
+            "run",
+            &CliFailure::new(
+                "unsupported_network_path",
+                "network_path requires the eggstack-path feature",
+                ExitCode::CapabilityPreflight,
+            ),
+        ));
+    }
+    if input.plan.network_path.is_some()
+        && driver_selection
+            .as_ref()
+            .is_some_and(eggbench_drivers::is_external_workload)
+    {
+        return Ok(PresentedCommandResult::failure(
+            "run",
+            &CliFailure::new(
+                "workload_path_incompatible",
+                "external workload drivers cannot own an Eggbench network path",
+                ExitCode::CapabilityPreflight,
+            ),
+        ));
+    }
     let options = resolution_options(platform_name()?, &input.plan, driver_selection.as_ref());
     let resolved = eggbench_core::resolve_plan(&input.plan, &descriptors, &options)
         .map_err(CliError::Resolution)?;
@@ -96,17 +120,26 @@ pub async fn run(
         .drivers
         .get(&eggbench_core::DriverCategory::Workload);
     let executor_result = match workload_driver {
-        Some(driver) => production_workload_executor(&driver.descriptor.name),
+        Some(driver) => production_workload_executor(&driver.descriptor.name, Some(&resolved)),
         None => Err("no workload driver is registered".to_owned()),
     };
     let mut executor = match executor_result {
         Ok(executor) => executor,
         Err(message) => {
-            let failure = CliFailure::new(
-                "unsupported_workload",
-                message,
-                ExitCode::CapabilityPreflight,
-            );
+            let category = if resolved.network_path.is_some() {
+                if message.contains("missing_fault_seed") {
+                    "missing_fault_seed"
+                } else if message.contains("credential") {
+                    "route_credentials_not_supported"
+                } else if message.contains("fault") {
+                    "invalid_fault_plan"
+                } else {
+                    "invalid_route"
+                }
+            } else {
+                "unsupported_workload"
+            };
+            let failure = CliFailure::new(category, message, ExitCode::CapabilityPreflight);
             return Ok(PresentedCommandResult::failure("run", &failure));
         }
     };
@@ -131,15 +164,12 @@ pub async fn run(
     }
 
     run_impl(
-        RunPlan {
-            plan,
-            input_format,
-            bundle,
-        },
+        RunPlan { input, bundle },
         &descriptors,
         &mut *executor,
         production_service_adapters(),
         driver_selection.as_ref(),
+        Some(resolved),
         wait_for_ctrl_c(),
     )
     .await
@@ -165,25 +195,22 @@ pub async fn run_with_qualification(
     // and external-lifecycle services spawn nothing.
     descriptors.push(QualificationRuntime::service_descriptor());
     let mut executor = QualificationRuntime::workload_executor(fake);
+    let input = load_plan(plan, input_format)?;
     run_impl(
-        RunPlan {
-            plan,
-            input_format,
-            bundle,
-        },
+        RunPlan { input, bundle },
         &descriptors,
         &mut executor,
         ServiceAdapterRegistry::new(),
+        None,
         None,
         signal,
     )
     .await
 }
 
-/// Plan-input triple shared by production and qualification run paths.
+/// Parsed plan input shared by production and qualification run paths.
 struct RunPlan<'a> {
-    plan: &'a Path,
-    input_format: Option<InputFormat>,
+    input: PlanInput,
     bundle: &'a Path,
 }
 
@@ -193,21 +220,23 @@ async fn run_impl(
     executor: &mut dyn WorkloadExecutor,
     service_adapters: ServiceAdapterRegistry,
     workload_driver: Option<&Name>,
+    pre_resolved: Option<ResolvedPlan>,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
-    let loaded = load_plan(input.plan, input.input_format)?;
-    let plan = loaded.plan;
-    let plan_bytes = loaded.bytes;
-    let plan_media_type = match loaded.format {
+    let plan = input.input.plan;
+    let plan_bytes = input.input.bytes;
+    let plan_media_type = match input.input.format {
         InputFormat::Toml => "application/toml",
         InputFormat::Json => "application/json",
     };
 
-    let platform = platform_name()?;
-    let options = resolution_options(platform, &plan, workload_driver);
-
-    let resolved =
-        eggbench_core::resolve_plan(&plan, descriptors, &options).map_err(CliError::Resolution)?;
+    let resolved = if let Some(resolved) = pre_resolved {
+        resolved
+    } else {
+        let platform = platform_name()?;
+        let options = resolution_options(platform, &plan, workload_driver);
+        eggbench_core::resolve_plan(&plan, descriptors, &options).map_err(CliError::Resolution)?
+    };
 
     let resolved_executable_path = match &resolved.subject {
         eggbench_core::Subject::ManagedCommand { .. } => {

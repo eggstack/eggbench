@@ -256,6 +256,7 @@ fn invocation(workload: Workload, bindings: eggbench_runner::RuntimeBindings) ->
         bindings,
         cancellation: CancellationToken::new(),
         timeout: Duration::from_secs(60),
+        measurement: eggbench_runner::MeasurementSignal::new(),
     }
 }
 

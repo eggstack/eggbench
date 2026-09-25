@@ -571,6 +571,7 @@ fn h2load_output(outcome: &ExternalCommandOutcome, report: &H2loadReport) -> Wor
         metrics,
         histograms: Vec::new(),
         error_counts,
+        measurement_elapsed: None,
     }
 }
 

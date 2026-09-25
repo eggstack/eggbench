@@ -35,8 +35,8 @@ Versions are planning evidence, not eternal pins. Every implementation plan must
 
 The M002 implementation handoff re-audited the sibling public surfaces after C002 closure:
 
-- Eggress default branch is workspace 1.0.10 / Rust 1.89; the latest published GitHub release inspected is v1.0.9. The required listener-free TCP route seam already exists in published v1.0.9 through eggress-outbound: OutboundConnector, typed detailed connection errors, OutboundInfo, and native chain execution with no listener.
-- M002 therefore targets eggress-outbound directly rather than eggress-embed. Implementation must pin the newest published compatible 1.0.x after re-audit and must not depend on mutable main solely for unreleased internals.
+- Eggress 1.0.10 is published on crates.io with Rust 1.89. The required listener-free TCP route seam remains available through eggress-outbound: OutboundConnector, typed detailed connection errors, OutboundInfo, and native chain execution with no listener.
+- M002 targets eggress-outbound directly rather than eggress-embed and pins exact 1.0.10 crates; it does not depend on mutable main solely for unreleased internals.
 - Eggchaos v0.1.0 is now a published qualified release; eggchaos-core is the M002 production seam. Its BidirectionalChaosStream composes over an existing AsyncRead + AsyncWrite stream and owns deterministic directional byte-stream faults.
 - eggchaos-eggfetch is not the M002 composition seam because its ChaosDialer establishes a direct TCP connection itself. Eggbench needs Eggress route establishment first, then eggchaos-core wrapping of the returned logical stream.
 - Eggchaos has newer datagram work on main, but M002 remains explicitly stream-only. UDP/datagram impairment is not pulled into this milestone.

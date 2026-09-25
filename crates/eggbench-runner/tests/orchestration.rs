@@ -3,16 +3,17 @@
 
 use eggbench_core::{
     ArtifactBounds, ArtifactPath, ArtifactRole, BundleError, BundleReader, BundleWriter,
-    DurationMs, ExecutionStatus, Lifecycle, Name, PositiveCount, ResetPolicy, ResolvedPairedArm,
-    ResolvedPairedDesign, ResolvedPlan, RunId, Sensitivity, Service, ServiceKind, Subject,
-    TrialArm, TrialExecutionResult, TrialPolicy, Workload,
+    DriverCategory, DurationMs, ExecutionStatus, Lifecycle, Name, PositiveCount, ResetPolicy,
+    ResolvedPairedArm, ResolvedPairedDesign, ResolvedPlan, RunId, Sensitivity, Service,
+    ServiceKind, Subject, TrialArm, TrialExecutionResult, TrialPolicy, Workload,
 };
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
-    FailureCategory, InvocationKind, LocalSession, MapSecretProvider, OrchestrationError,
-    PhaseEvent, PhaseKind, PlatformAdapter, PlatformSupport, ResetContext, ResetHook,
-    ResetRegistry, RunnerOptions, ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform,
-    WorkloadArtifact, execute_run,
+    DrainContext, FailureCategory, InvocationContext, InvocationKind, LocalSession,
+    MapSecretProvider, OrchestrationError, PhaseEvent, PhaseKind, PlatformAdapter, PlatformSupport,
+    ResetContext, ResetHook, ResetRegistry, RunEvidenceArtifact, RunnerOptions,
+    ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform, WorkloadArtifact, WorkloadExecutor,
+    WorkloadOutput, execute_run,
 };
 use std::{
     collections::BTreeMap,
@@ -20,7 +21,10 @@ use std::{
     io::{BufReader, Read},
     path::Path,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -69,6 +73,7 @@ fn plan() -> ResolvedPlan {
         },
         seed: Some(42),
         paired: None,
+        network_path: None,
         warnings: Vec::new(),
     }
 }
@@ -151,6 +156,150 @@ fn writer_with_bounds(
     writer
 }
 
+fn attach_network_path(resolved: &mut ResolvedPlan) {
+    let path: eggbench_core::ResolvedNetworkPath = serde_json::from_value(serde_json::json!({
+        "route": {
+            "driver": "eggress-route",
+            "mode": { "kind": "direct" }
+        },
+        "route_driver": {
+            "descriptor": {
+                "name": "eggress-route",
+                "adapter_version": "0.1.0",
+                "upstream_name": "eggress-outbound",
+                "upstream_version": "1.0.10",
+                "category": "route",
+                "capabilities": [{ "kind": "proxy_routing" }],
+                "supported_platforms": [],
+                "machine_output_schema": null,
+                "external_process": false,
+                "default": true,
+                "compatible_service_types": []
+            },
+            "executable_path": null
+        },
+        "semantics_version": "route-first-fault-second-v1"
+    }))
+    .expect("resolved network path");
+    resolved.source_plan_schema_version = eggbench_core::EXPERIMENT_PLAN_SCHEMA_VERSION_3;
+    let workload: eggbench_core::ResolvedDriver = serde_json::from_value(serde_json::json!({
+        "descriptor": {
+            "name": "eggfetch-http",
+            "adapter_version": "0.1.0",
+            "upstream_name": "eggfetch-core",
+            "upstream_version": "0.2.0",
+            "category": "workload",
+            "capabilities": [
+                { "kind": "network_path" },
+                { "kind": "load_mode", "mode": "closed_loop" }
+            ],
+            "supported_platforms": [],
+            "machine_output_schema": null,
+            "external_process": false,
+            "default": true,
+            "compatible_service_types": []
+        },
+        "executable_path": null
+    }))
+    .expect("path workload");
+    resolved.drivers.insert(DriverCategory::Workload, workload);
+    resolved
+        .drivers
+        .insert(DriverCategory::Route, path.route_driver.clone());
+    resolved.network_path = Some(path);
+}
+
+#[derive(serde::Serialize)]
+struct TestNetworkPathEvidence {
+    schema_version: u32,
+    route: serde_json::Value,
+    route_driver: serde_json::Value,
+    eggress_outbound_version: serde_json::Value,
+    semantics: serde_json::Value,
+    diagnostics: serde_json::Value,
+    policy_mode: serde_json::Value,
+}
+
+impl eggbench_runner::RunEvidenceContract for TestNetworkPathEvidence {
+    const SCHEMA_VERSION: eggbench_core::SchemaVersion = eggbench_core::SchemaVersion(1);
+
+    fn validate_contract(&self) -> Result<(), BundleError> {
+        Ok(())
+    }
+}
+
+struct EvidenceWorkload {
+    emit: bool,
+    executions: Arc<AtomicUsize>,
+    drained: Arc<AtomicBool>,
+}
+
+impl WorkloadExecutor for EvidenceWorkload {
+    fn execute<'a>(
+        &'a mut self,
+        _context: InvocationContext,
+    ) -> Pin<Box<dyn Future<Output = Result<WorkloadOutput, FailureCategory>> + Send + 'a>> {
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(WorkloadOutput::default()) })
+    }
+
+    fn drain<'a>(
+        &'a mut self,
+        _context: DrainContext,
+    ) -> Pin<Box<dyn Future<Output = Result<(), FailureCategory>> + Send + 'a>> {
+        self.drained.store(true, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
+
+    fn run_evidence(&mut self) -> Result<Option<RunEvidenceArtifact>, BundleError> {
+        self.emit
+            .then(|| {
+                RunEvidenceArtifact::from_contract(
+                    "network-path.json",
+                    name("network-path"),
+                    "application/json",
+                    Sensitivity::Redacted,
+                    &TestNetworkPathEvidence {
+                        schema_version: 1,
+                        route: serde_json::json!({
+                            "driver": "eggress-route",
+                            "mode": { "kind": "direct" }
+                        }),
+                        route_driver: serde_json::json!({
+                            "name": "eggress-route",
+                            "adapter_version": "0.1.0",
+                            "upstream_name": "eggress-outbound",
+                            "upstream_version": "1.0.10"
+                        }),
+                        eggress_outbound_version: serde_json::json!("1.0.10"),
+                        semantics: serde_json::json!({
+                            "ordering_version": "route-first-fault-second-v1",
+                            "ordering": "route_first_fault_second",
+                            "fault_layer": "user_space_stream",
+                            "upstream": "client_to_target",
+                            "downstream": "target_to_client"
+                        }),
+                        diagnostics: serde_json::json!({
+                            "physical_dial_attempts": 0,
+                            "successful_dials": 0,
+                            "fault_wrapped_connections": 0,
+                            "fault_wrapper_construction_failures": 0,
+                            "route_failure_buckets_dropped": 0,
+                            "route_failures": {},
+                            "hop_count_distribution": {},
+                            "max_observed_hop_count": 0,
+                            "connection_ordinal_min": 0,
+                            "connection_ordinal_max": 0,
+                            "connection_ordinal_count": 0
+                        }),
+                        policy_mode: serde_json::json!("static"),
+                    },
+                )
+            })
+            .transpose()
+    }
+}
+
 #[derive(Clone)]
 struct FakeReset(Arc<Mutex<Vec<String>>>);
 impl ResetHook for FakeReset {
@@ -186,6 +335,103 @@ impl ResetHook for FailedReset {
     ) -> Pin<Box<dyn Future<Output = Result<(), FailureCategory>> + Send + 'a>> {
         Box::pin(async { Err(FailureCategory::ResetFailed) })
     }
+}
+
+#[tokio::test]
+async fn run_evidence_is_staged_after_drain_and_before_finalization() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    attach_network_path(&mut resolved);
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let executions = Arc::new(AtomicUsize::new(0));
+    let drained = Arc::new(AtomicBool::new(false));
+    let mut workload = EvidenceWorkload {
+        emit: true,
+        executions: Arc::clone(&executions),
+        drained: Arc::clone(&drained),
+    };
+    let outcome = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(executions.load(Ordering::SeqCst), 3);
+    assert!(drained.load(Ordering::SeqCst));
+    let record = outcome
+        .manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path.as_str() == "network-path.json")
+        .expect("path evidence");
+    assert!(matches!(
+        &record.role,
+        ArtifactRole::Other { label } if label.as_str() == "network-path"
+    ));
+    assert_eq!(record.media_type, "application/json");
+    assert_eq!(record.sensitivity, Sensitivity::Redacted);
+    BundleReader::open(&outcome.bundle_path)
+        .unwrap()
+        .verify()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn path_plan_without_run_evidence_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    attach_network_path(&mut resolved);
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = EvidenceWorkload {
+        emit: false,
+        executions: Arc::new(AtomicUsize::new(0)),
+        drained: Arc::new(AtomicBool::new(false)),
+    };
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("missing required path evidence must fail");
+    assert!(matches!(error, OrchestrationError::Evidence { .. }));
+    assert!(!temp.path().join("out.eggb").exists());
+}
+
+#[tokio::test]
+async fn path_evidence_capacity_is_reserved_before_workload_entry() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    attach_network_path(&mut resolved);
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let executions = Arc::new(AtomicUsize::new(0));
+    let mut workload = EvidenceWorkload {
+        emit: true,
+        executions: Arc::clone(&executions),
+        drained: Arc::new(AtomicBool::new(false)),
+    };
+    let error = execute_run(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        writer_with_bounds(temp.path(), 64, 64 * 1024, 1024 * 1024),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect_err("undersized path artifact bound must fail");
+    assert!(matches!(error, OrchestrationError::Preflight(_)));
+    assert_eq!(executions.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

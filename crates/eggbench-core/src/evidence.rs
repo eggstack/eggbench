@@ -1609,6 +1609,132 @@ fn sync_directory(_path: &Path) -> Result<(), BundleError> {
     Ok(())
 }
 
+fn validate_resolved_network_path(
+    plan: &ResolvedPlan,
+    path: &crate::ResolvedNetworkPath,
+) -> Result<(), BundleError> {
+    if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        || plan.source_plan_schema_version != crate::EXPERIMENT_PLAN_SCHEMA_VERSION_3
+        || plan.paired.is_some()
+        || matches!(plan.subject, crate::Subject::External { .. })
+    {
+        return Err(BundleError::InvalidManifest(
+            "resolved network path requires an unpaired schema-v3 transport-owning plan",
+        ));
+    }
+    let transport_workload_matches = plan
+        .drivers
+        .get(&crate::DriverCategory::Workload)
+        .is_some_and(|workload| {
+            workload.descriptor.category == crate::DriverCategory::Workload
+                && workload.descriptor.name.as_str() == "eggfetch-http"
+                && !workload.descriptor.adapter_version.is_empty()
+                && workload.descriptor.adapter_version.len() <= 128
+                && workload.descriptor.upstream_name == "eggfetch-core"
+                && workload
+                    .descriptor
+                    .upstream_version
+                    .as_deref()
+                    .is_some_and(|version| !version.is_empty())
+                && workload
+                    .descriptor
+                    .capabilities
+                    .contains(&crate::Capability::NetworkPath)
+                && !workload.descriptor.external_process
+                && workload.executable_path.is_none()
+        });
+    if !transport_workload_matches {
+        return Err(BundleError::InvalidManifest(
+            "resolved network path requires a transport-owning NetworkPath workload",
+        ));
+    }
+    let request = crate::NetworkPathRequest {
+        route: path.route.clone(),
+        stream_faults: path
+            .stream_faults
+            .as_ref()
+            .map(|faults| faults.request.clone()),
+    };
+    crate::validate_network_path_contract(&request)
+        .map_err(|_| BundleError::InvalidManifest("resolved network path contract is invalid"))?;
+    validate_resolved_network_path_drivers(plan, path, &request)
+}
+
+fn validate_resolved_network_path_drivers(
+    plan: &ResolvedPlan,
+    path: &crate::ResolvedNetworkPath,
+    request: &crate::NetworkPathRequest,
+) -> Result<(), BundleError> {
+    let route_descriptor = &path.route_driver.descriptor;
+    let route_driver_matches = path.route_driver.executable_path.is_none()
+        && route_descriptor.category == crate::DriverCategory::Route
+        && route_descriptor.name.as_str() == "eggress-route"
+        && !route_descriptor.adapter_version.is_empty()
+        && route_descriptor.adapter_version.len() <= 128
+        && route_descriptor.name == path.route.driver
+        && route_descriptor.upstream_name == "eggress-outbound"
+        && route_descriptor
+            .upstream_version
+            .as_deref()
+            .is_some_and(|version| !version.is_empty())
+        && route_descriptor
+            .capabilities
+            .contains(&crate::Capability::ProxyRouting)
+        && !route_descriptor.external_process
+        && plan
+            .drivers
+            .get(&crate::DriverCategory::Route)
+            .is_some_and(|selected| selected.executable_path.is_none())
+        && plan
+            .drivers
+            .get(&crate::DriverCategory::Route)
+            .is_some_and(|selected| &selected.descriptor == route_descriptor);
+    let fault_count = request
+        .stream_faults
+        .as_ref()
+        .map_or(0, |faults| faults.upstream.len() + faults.downstream.len());
+    let fault_driver_matches = path.stream_faults.as_ref().is_none_or(|faults| {
+        let descriptor = &faults.fault_driver.descriptor;
+        faults.fault_driver.executable_path.is_none()
+            && descriptor.category == crate::DriverCategory::Fault
+            && descriptor.name.as_str() == "eggchaos-stream"
+            && !descriptor.adapter_version.is_empty()
+            && descriptor.adapter_version.len() <= 128
+            && descriptor.name == faults.request.driver
+            && descriptor.upstream_name == "eggchaos-core"
+            && descriptor
+                .upstream_version
+                .as_deref()
+                .is_some_and(|version| !version.is_empty())
+            && descriptor
+                .capabilities
+                .contains(&crate::Capability::StreamFaultPlan)
+            && !descriptor.external_process
+            && plan
+                .drivers
+                .get(&crate::DriverCategory::Fault)
+                .is_some_and(|selected| {
+                    &selected.descriptor == descriptor && selected.executable_path.is_none()
+                })
+    });
+    let semantics_match = path.semantics_version == crate::NETWORK_PATH_SEMANTICS_VERSION
+        && path
+            .stream_faults
+            .as_ref()
+            .is_none_or(|faults| faults.rng_version == crate::NETWORK_PATH_RNG_VERSION);
+    if route_driver_matches
+        && fault_driver_matches
+        && semantics_match
+        && (fault_count == 0 || plan.seed.is_some())
+    {
+        Ok(())
+    } else {
+        Err(BundleError::InvalidManifest(
+            "resolved network path failed route, driver, seed, or semantics validation",
+        ))
+    }
+}
+
 /// Extract the typed resolved-plan schema version from JSON bytes for bundle callers.
 ///
 /// This helper rejects invalid `ResolvedPlan` snapshots before they are registered under the role.
@@ -1619,10 +1745,20 @@ pub fn validate_resolved_plan_bytes(bytes: &[u8]) -> Result<ResolvedPlan, Bundle
     let plan: ResolvedPlan = serde_json::from_slice(bytes)
         .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
     if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_2
         && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_1
     {
         return Err(BundleError::InvalidManifest(
             "unsupported resolved-plan schema version",
+        ));
+    }
+    if let Some(path) = &plan.network_path {
+        validate_resolved_network_path(&plan, path)?;
+    } else if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        && plan.source_plan_schema_version >= crate::EXPERIMENT_PLAN_SCHEMA_VERSION_3
+    {
+        return Err(BundleError::InvalidManifest(
+            "legacy resolved plan cannot omit required schema-v3 network path",
         ));
     }
     Ok(plan)

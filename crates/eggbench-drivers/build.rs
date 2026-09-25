@@ -18,6 +18,9 @@ const TARGETS: &[(&str, &str)] = &[
         "EGGBENCH_EGGSERVE_PRIMITIVES_VERSION",
     ),
     ("gregg-protocol", "EGGBENCH_GREGG_PROTOCOL_VERSION"),
+    ("eggress-outbound", "EGGBENCH_EGGRESS_OUTBOUND_VERSION"),
+    ("eggress-uri", "EGGBENCH_EGGRESS_URI_VERSION"),
+    ("eggchaos-core", "EGGBENCH_EGGCHAOS_CORE_VERSION"),
 ];
 
 fn main() {

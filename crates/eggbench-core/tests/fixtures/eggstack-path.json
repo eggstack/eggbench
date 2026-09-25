@@ -1,0 +1,42 @@
+{
+  "schema_version": 3,
+  "experiment": "eggstack-path",
+  "subject": { "kind": "label", "label": "eggstack-path" },
+  "services": [
+    {
+      "name": "origin",
+      "kind": { "kind": "named", "service_type": "eggserve-origin" },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": { "path": "/bench", "body_bytes": "64", "status": "200" },
+      "readiness": null,
+      "shutdown": { "grace_ms": 5000, "method": null },
+      "working_directory": null,
+      "log_limit_bytes": 4096
+    }
+  ],
+  "workload": { "kind": "closed_loop", "target": "origin", "concurrency": 2, "requests": 10, "duration_ms": null },
+  "trials": { "measured": 1, "warmup": 0, "cooldown_ms": 1, "reset": { "kind": "none" }, "timeouts": { "measurement": 30000, "drain": 5000 } },
+  "telemetry": [],
+  "metrics": [
+    { "name": "throughput", "unit": "rps", "direction": { "kind": "higher_is_better" }, "intent": "primary", "gate": { "kind": "absolute", "value": 1.0 } }
+  ],
+  "environment_policy": { "kind": "strict_same_testbed" },
+  "seed": 19,
+  "network_path": {
+    "route": {
+      "driver": "eggress-route",
+      "mode": { "kind": "proxy_chain", "chain": "http://127.0.0.1:18080__socks5://127.0.0.1:11080" }
+    },
+    "stream_faults": {
+      "driver": "eggchaos-stream",
+      "upstream": [
+        { "id": "upstream-latency", "kind": { "kind": "latency", "delay_ms": 1, "jitter_ms": 1, "max_buffer_bytes": 4096 } }
+      ],
+      "downstream": [
+        { "id": "downstream-slow-close", "kind": { "kind": "slow_close", "delay_ms": 1 } }
+      ]
+    }
+  },
+  "bounds": { "artifact_count": 128, "artifact_bytes": 4194304, "total_bytes": 67108864 }
+}

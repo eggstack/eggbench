@@ -26,13 +26,14 @@
 //!   timestamp enters the canonical receipt.
 
 use crate::{
-    ArtifactRole, BundleError, BundleReader, DriverCategory, EnvironmentFieldClass,
+    ArtifactRecord, ArtifactRole, BundleError, BundleReader, DriverCategory, EnvironmentFieldClass,
     EnvironmentFingerprint, EnvironmentPolicy, Gate, MetricDirection, MetricIntent, MetricRequest,
     Name, ObservationState, ResolvedPlan, RunId, SchemaVersion, Subject, TrialArm,
     TrialExecutionResult, TrialExecutionStatus, TrialId, TrialMetrics, Workload,
     validate_resolved_plan_bytes,
 };
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -45,6 +46,9 @@ pub const COMPARISON_RECEIPT_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
 
 /// Immutable comparison-policy identifier for trial-level bootstrap v1.
 pub const COMPARISON_POLICY_V1: &str = "eggbench.trial-bootstrap.v1";
+
+/// Immutable comparison-policy identifier for network-path-aware bootstrap v1.
+pub const COMPARISON_POLICY_NETWORK_PATH_V1: &str = "eggbench.trial-bootstrap-network-path.v1";
 
 /// Immutable comparison-policy identifier for paired trial-level bootstrap
 /// v1: pairs are the resampling unit; per-pair oriented log-differences are
@@ -483,6 +487,17 @@ pub struct ComparisonInput {
     pub trials: Vec<InputTrial>,
     /// Paired-run summary, present only for paired bundles.
     pub paired: Option<PairedRunSummary>,
+    /// Verified network-path evidence identity, present only for path runs.
+    pub network_path_evidence: Option<NetworkPathEvidenceIdentity>,
+}
+
+/// Comparison-critical identity loaded from `network-path.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkPathEvidenceIdentity {
+    /// Canonical credential-free route-chain digest.
+    pub chain_config_digest: Option<String>,
+    /// Exact Eggress URI parser version.
+    pub eggress_uri_version: String,
 }
 
 /// Paired-run summary carried from the bundle manifest.
@@ -527,6 +542,305 @@ pub struct ComparisonRequest<'a> {
     pub baseline: Option<BaselineSide<'a>>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredNetworkPathEvidence {
+    schema_version: SchemaVersion,
+    adapter_version: String,
+    route_driver: StoredNetworkPathDriver,
+    eggress_outbound_version: String,
+    eggress_uri_version: String,
+    fault_driver: Option<StoredNetworkPathDriver>,
+    semantics: StoredNetworkPathSemantics,
+    route: crate::RouteRequest,
+    redacted_chain: Option<String>,
+    chain_config_digest: Option<String>,
+    configured_hop_count: u16,
+    stream_faults: Option<StoredNetworkPathFaults>,
+    diagnostics: StoredNetworkPathDiagnostics,
+    policy_mode: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredNetworkPathDriver {
+    name: String,
+    adapter_version: String,
+    upstream_name: String,
+    upstream_version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredNetworkPathSemantics {
+    ordering_version: String,
+    ordering: String,
+    fault_layer: String,
+    upstream: String,
+    downstream: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredNetworkPathFaults {
+    request: crate::StreamFaultPlanRequest,
+    seed_namespace: Option<u64>,
+    rng_version: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredNetworkPathDiagnostics {
+    physical_dial_attempts: u64,
+    successful_dials: u64,
+    fault_wrapped_connections: u64,
+    fault_wrapper_construction_failures: u64,
+    route_failure_buckets_dropped: u64,
+    route_failures: BTreeMap<String, u64>,
+    hop_count_distribution: BTreeMap<u64, u64>,
+    max_observed_hop_count: u64,
+    connection_ordinal_min: u64,
+    connection_ordinal_max: u64,
+    connection_ordinal_count: u64,
+}
+
+fn network_path_evidence_record(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<ArtifactRecord>, ComparisonError> {
+    let mut record = None;
+    for artifact in &reader.manifest().artifacts {
+        let has_path = artifact.path.as_str() == "network-path.json";
+        let has_role = matches!(
+            &artifact.role,
+            ArtifactRole::Other { label } if label.as_str() == "network-path"
+        );
+        if has_path || has_role {
+            if record.is_some() || has_path != has_role {
+                return Err(BundleError::InvalidManifest(
+                    "network-path evidence path and role must occur exactly once",
+                )
+                .into());
+            }
+            record = Some(artifact);
+        }
+    }
+    let Some(record) = record else {
+        if resolved.network_path.is_some() {
+            return Err(BundleError::InvalidManifest(
+                "comparison-ready path bundle lacks network-path evidence",
+            )
+            .into());
+        }
+        return Ok(None);
+    };
+    if record.media_type != "application/json"
+        || record.sensitivity != crate::Sensitivity::Redacted
+        || record.byte_size > 128 * 1024
+    {
+        return Err(
+            BundleError::InvalidManifest("network-path evidence metadata is invalid").into(),
+        );
+    }
+    Ok(Some(record.clone()))
+}
+
+fn read_stored_network_path_evidence(
+    reader: &BundleReader,
+    record: &ArtifactRecord,
+) -> Result<StoredNetworkPathEvidence, ComparisonError> {
+    let mut file = reader.open_artifact(&record.path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| BundleError::Io {
+            path: PathBuf::from(record.path.as_str()),
+            source: error,
+        })?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()).into())
+}
+
+fn stored_network_path_request_is_valid(evidence: &StoredNetworkPathEvidence) -> bool {
+    let request = crate::NetworkPathRequest {
+        route: evidence.route.clone(),
+        stream_faults: evidence
+            .stream_faults
+            .as_ref()
+            .map(|faults| faults.request.clone()),
+    };
+    crate::validate_network_path_contract(&request).is_ok()
+}
+
+fn stored_route_matches(
+    evidence: &StoredNetworkPathEvidence,
+    path: &crate::ResolvedNetworkPath,
+) -> bool {
+    let driver = &path.route_driver.descriptor;
+    evidence.schema_version == SchemaVersion(1)
+        && evidence.adapter_version == driver.adapter_version
+        && evidence.route == path.route
+        && evidence.route_driver.name == driver.name.to_string()
+        && evidence.route_driver.adapter_version == driver.adapter_version
+        && evidence.route_driver.upstream_name == driver.upstream_name
+        && evidence.route_driver.upstream_version == driver.upstream_version
+        && evidence.eggress_outbound_version == driver.upstream_version.clone().unwrap_or_default()
+        && !evidence.eggress_uri_version.is_empty()
+        && evidence.semantics.ordering_version == path.semantics_version
+        && evidence.semantics.ordering == "route_first_fault_second"
+        && evidence.semantics.fault_layer == "user_space_stream"
+        && evidence.semantics.upstream == "client_to_target"
+        && evidence.semantics.downstream == "target_to_client"
+        && evidence.policy_mode == "static"
+}
+
+fn stored_canonical_route_matches(evidence: &StoredNetworkPathEvidence) -> bool {
+    let (expected_chain, expected_digest, expected_hops) = match &evidence.route.mode {
+        crate::RouteMode::Direct => (None, None, 0),
+        crate::RouteMode::ProxyChain { chain } => {
+            let canonical = crate::plan::canonical_proxy_chain_text(chain);
+            let digest = format!("{:x}", sha2::Sha256::digest(canonical.as_bytes()));
+            let hops = u16::try_from(canonical.split("__").count()).unwrap_or(u16::MAX);
+            (Some(canonical), Some(digest), hops)
+        }
+    };
+    evidence.redacted_chain == expected_chain
+        && evidence.chain_config_digest == expected_digest
+        && evidence.configured_hop_count == expected_hops
+}
+
+fn stored_faults_match(
+    evidence: &StoredNetworkPathEvidence,
+    path: &crate::ResolvedNetworkPath,
+    seed: Option<u64>,
+) -> bool {
+    let active = evidence.stream_faults.as_ref().is_some_and(|faults| {
+        !faults.request.upstream.is_empty() || !faults.request.downstream.is_empty()
+    });
+    match (
+        &path.stream_faults,
+        &evidence.stream_faults,
+        &evidence.fault_driver,
+    ) {
+        (None, None, None) => true,
+        (Some(resolved), Some(stored), Some(driver)) => {
+            let descriptor = &resolved.fault_driver.descriptor;
+            stored.request == resolved.request
+                && stored.rng_version == resolved.rng_version
+                && stored.seed_namespace == if active { seed } else { None }
+                && driver.name == descriptor.name.to_string()
+                && driver.adapter_version == descriptor.adapter_version
+                && driver.upstream_name == descriptor.upstream_name
+                && driver.upstream_version == descriptor.upstream_version
+        }
+        _ => false,
+    }
+}
+
+fn safe_route_failure_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 256
+        && label.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, ':' | '=' | '_' | '-' | '.')
+        })
+        && !label.to_ascii_lowercase().contains("secret")
+        && !label.to_ascii_lowercase().contains("password")
+        && !label.to_ascii_lowercase().contains("token")
+}
+
+fn stored_diagnostics_match(evidence: &StoredNetworkPathEvidence) -> bool {
+    let diagnostics = &evidence.diagnostics;
+    let total = diagnostics
+        .hop_count_distribution
+        .values()
+        .try_fold(0_u64, |total, count| total.checked_add(*count));
+    let max_hop = diagnostics
+        .hop_count_distribution
+        .keys()
+        .copied()
+        .max()
+        .unwrap_or(0);
+    let faults_active = evidence.stream_faults.as_ref().is_some_and(|faults| {
+        !faults.request.upstream.is_empty() || !faults.request.downstream.is_empty()
+    });
+    diagnostics.route_failure_buckets_dropped <= diagnostics.physical_dial_attempts
+        && diagnostics.route_failures.len() <= 16
+        && diagnostics
+            .route_failures
+            .iter()
+            .all(|(key, count)| safe_route_failure_label(key) && *count > 0)
+        && diagnostics
+            .hop_count_distribution
+            .iter()
+            .all(|(hops, count)| *count > 0 && *hops <= u64::from(evidence.configured_hop_count))
+        && total == Some(diagnostics.successful_dials)
+        && diagnostics.max_observed_hop_count == max_hop
+        && diagnostics.successful_dials <= diagnostics.physical_dial_attempts
+        && diagnostics.fault_wrapped_connections <= diagnostics.successful_dials
+        && diagnostics.fault_wrapper_construction_failures <= diagnostics.successful_dials
+        && diagnostics
+            .fault_wrapped_connections
+            .checked_add(diagnostics.fault_wrapper_construction_failures)
+            == if faults_active {
+                Some(diagnostics.successful_dials)
+            } else {
+                Some(0)
+            }
+        && diagnostics.connection_ordinal_count == diagnostics.successful_dials
+        && (diagnostics.successful_dials == 0
+            || diagnostics.connection_ordinal_min <= diagnostics.connection_ordinal_max)
+        && (diagnostics.successful_dials > 0
+            || (diagnostics.connection_ordinal_min == 0 && diagnostics.connection_ordinal_max == 0))
+}
+
+fn load_network_path_evidence_identity(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<NetworkPathEvidenceIdentity>, ComparisonError> {
+    let Some(record) = network_path_evidence_record(reader, resolved)? else {
+        return Ok(None);
+    };
+    let Some(path) = resolved.network_path.as_ref() else {
+        return Err(BundleError::InvalidManifest(
+            "path-free bundle contains network-path evidence",
+        )
+        .into());
+    };
+    let evidence = read_stored_network_path_evidence(reader, &record)?;
+    if !stored_network_path_request_is_valid(&evidence) {
+        return Err(
+            BundleError::InvalidManifest("network-path request contract is invalid").into(),
+        );
+    }
+    if !stored_route_matches(&evidence, path) {
+        return Err(BundleError::InvalidManifest(
+            "network-path route provenance contradicts the resolved plan",
+        )
+        .into());
+    }
+    if !stored_canonical_route_matches(&evidence) {
+        return Err(BundleError::InvalidManifest(
+            "network-path canonical route contradicts the resolved plan",
+        )
+        .into());
+    }
+    if !stored_faults_match(&evidence, path, resolved.seed) {
+        return Err(BundleError::InvalidManifest(
+            "network-path fault provenance contradicts the resolved plan",
+        )
+        .into());
+    }
+    if !stored_diagnostics_match(&evidence) {
+        return Err(BundleError::InvalidManifest(
+            "network-path diagnostics contradict the resolved plan",
+        )
+        .into());
+    }
+    Ok(Some(NetworkPathEvidenceIdentity {
+        chain_config_digest: evidence.chain_config_digest,
+        eggress_uri_version: evidence.eggress_uri_version,
+    }))
+}
+
 /// Load a verified comparison-ready input from an opened bundle.
 ///
 /// Verifies the bundle before deriving identity or reading evidence.
@@ -569,12 +883,14 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         schedule: record.schedule.clone(),
         pairs: record.pairs,
     });
+    let network_path_evidence = load_network_path_evidence_identity(reader, &resolved)?;
     Ok(ComparisonInput {
         identity,
         resolved,
         environment,
         trials,
         paired,
+        network_path_evidence,
     })
 }
 
@@ -677,6 +993,22 @@ pub fn load_baseline_alias(
     Ok((reference, input))
 }
 
+fn unpaired_policy_id(
+    candidate: &ComparisonInput,
+    baseline: Option<&ComparisonInput>,
+) -> &'static str {
+    if candidate.network_path_evidence.is_some()
+        || candidate.resolved.network_path.is_some()
+        || baseline.is_some_and(|input| {
+            input.network_path_evidence.is_some() || input.resolved.network_path.is_some()
+        })
+    {
+        COMPARISON_POLICY_NETWORK_PATH_V1
+    } else {
+        COMPARISON_POLICY_V1
+    }
+}
+
 /// Compare one candidate against an optional baseline under policy v1.
 ///
 /// Never modifies either bundle. Deterministic for fixed inputs, policy, and
@@ -691,9 +1023,14 @@ pub fn load_baseline_alias(
 #[must_use]
 pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> ComparisonReceipt {
     let candidate = request.candidate;
+    let policy_id = unpaired_policy_id(candidate, request.baseline.as_ref().map(|side| side.input));
     let base_seed = match options.seed {
         Some(seed) => seed,
-        None => derive_base_seed(candidate, request.baseline.as_ref().map(|side| side.input)),
+        None => derive_base_seed(
+            candidate,
+            request.baseline.as_ref().map(|side| side.input),
+            policy_id,
+        ),
     };
     let comparability = match request.baseline.as_ref().map(|side| side.input) {
         Some(baseline) => evaluate_comparability(candidate, baseline),
@@ -771,7 +1108,7 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
     let aggregate_verdict = aggregate(&metrics);
     ComparisonReceipt {
         schema_version: COMPARISON_RECEIPT_SCHEMA_VERSION_1,
-        policy_id: COMPARISON_POLICY_V1.to_owned(),
+        policy_id: policy_id.to_owned(),
         created_by_version: env!("CARGO_PKG_VERSION").to_owned(),
         candidate_identity: candidate.identity.clone(),
         baseline_reference: request.baseline.as_ref().map(|side| side.reference.clone()),
@@ -1423,7 +1760,7 @@ fn evaluate_comparability(
     }
     let (workload_match, workload_detail) =
         compare_workload(&candidate.resolved, &baseline.resolved);
-    let (driver_match, driver_detail) = compare_driver(&candidate.resolved, &baseline.resolved);
+    let (driver_match, driver_detail) = compare_driver(candidate, baseline);
     let (topology_match, topology_detail) =
         compare_topology(&candidate.resolved, &baseline.resolved);
     if !workload_match || !driver_match || !topology_match {
@@ -1514,7 +1851,16 @@ fn compare_workload(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool,
     }
 }
 
-fn compare_driver(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, String) {
+fn compare_driver(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
+    let workload = compare_workload_driver(&candidate.resolved, &baseline.resolved);
+    if candidate.resolved.network_path.is_none() && baseline.resolved.network_path.is_none() {
+        return workload;
+    }
+    let path = compare_network_path(candidate, baseline);
+    (workload.0 && path.0, format!("{}; {}", workload.1, path.1))
+}
+
+fn compare_workload_driver(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, String) {
     let left = candidate.drivers.get(&DriverCategory::Workload);
     let right = baseline.drivers.get(&DriverCategory::Workload);
     match (left, right) {
@@ -1523,24 +1869,8 @@ fn compare_driver(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, S
             (false, "workload driver present on one side only".to_owned())
         }
         (Some(left), Some(right)) => {
-            let summary = |descriptor: &crate::DriverDescriptor| {
-                let mut capabilities: Vec<String> = descriptor
-                    .capabilities
-                    .iter()
-                    .map(|c| format!("{c:?}"))
-                    .collect();
-                capabilities.sort();
-                format!(
-                    "name={} adapter={} upstream={}:{:?} capabilities=[{}]",
-                    descriptor.name,
-                    descriptor.adapter_version,
-                    descriptor.upstream_name,
-                    descriptor.upstream_version,
-                    capabilities.join(","),
-                )
-            };
-            let left_summary = summary(&left.descriptor);
-            let right_summary = summary(&right.descriptor);
+            let left_summary = descriptor_summary(&left.descriptor);
+            let right_summary = descriptor_summary(&right.descriptor);
             if left_summary == right_summary {
                 (
                     true,
@@ -1556,6 +1886,80 @@ fn compare_driver(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, S
             }
         }
     }
+}
+
+fn compare_network_path(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
+    let left = network_path_summary(candidate);
+    let right = network_path_summary(baseline);
+    if left == right {
+        (true, format!("network path semantics match ({left})"))
+    } else {
+        (
+            false,
+            format!("network path differs: candidate {left} vs baseline {right}"),
+        )
+    }
+}
+
+fn descriptor_summary(descriptor: &crate::DriverDescriptor) -> String {
+    let mut capabilities: Vec<String> = descriptor
+        .capabilities
+        .iter()
+        .map(|capability| format!("{capability:?}"))
+        .collect();
+    capabilities.sort();
+    format!(
+        "name={} adapter={} upstream={}:{:?} capabilities=[{}]",
+        descriptor.name,
+        descriptor.adapter_version,
+        descriptor.upstream_name,
+        descriptor.upstream_version,
+        capabilities.join(","),
+    )
+}
+
+fn stable_digest(value: &impl Serialize) -> String {
+    let bytes = serde_json::to_vec(value).expect("resolved path identity serializes");
+    format!("{:x}", sha2::Sha256::digest(bytes))
+}
+
+fn network_path_summary(input: &ComparisonInput) -> String {
+    let resolved = &input.resolved;
+    let Some(path) = &resolved.network_path else {
+        return "absent".to_owned();
+    };
+    let route = input
+        .network_path_evidence
+        .as_ref()
+        .and_then(|evidence| evidence.chain_config_digest.clone())
+        .unwrap_or_else(|| stable_digest(&path.route));
+    let route_driver = descriptor_summary(&path.route_driver.descriptor);
+    let eggress_uri_version = input.network_path_evidence.as_ref().map_or_else(
+        || "unverified".to_owned(),
+        |evidence| evidence.eggress_uri_version.clone(),
+    );
+    let faults = path.stream_faults.as_ref().map_or_else(
+        || "absent".to_owned(),
+        |faults| {
+            let active =
+                !faults.request.upstream.is_empty() || !faults.request.downstream.is_empty();
+            let seed = if active {
+                resolved.seed.unwrap_or_default()
+            } else {
+                0
+            };
+            format!(
+                "request={} driver={} rng={} seed={seed}",
+                stable_digest(&faults.request),
+                descriptor_summary(&faults.fault_driver.descriptor),
+                faults.rng_version
+            )
+        },
+    );
+    format!(
+        "route={route} route_driver={route_driver} eggress_uri={eggress_uri_version} semantics={} faults={faults}",
+        path.semantics_version
+    )
 }
 
 fn compare_topology(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, String) {
@@ -2124,7 +2528,11 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 /// Derive a deterministic base seed from bundle identities and policy.
-fn derive_base_seed(candidate: &ComparisonInput, baseline: Option<&ComparisonInput>) -> u64 {
+fn derive_base_seed(
+    candidate: &ComparisonInput,
+    baseline: Option<&ComparisonInput>,
+    policy_id: &str,
+) -> u64 {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(candidate.identity.manifest_sha256.as_bytes());
     bytes.extend_from_slice(b"|");
@@ -2133,7 +2541,7 @@ fn derive_base_seed(candidate: &ComparisonInput, baseline: Option<&ComparisonInp
         None => bytes.extend_from_slice(b"absolute-only"),
     }
     bytes.extend_from_slice(b"|");
-    bytes.extend_from_slice(COMPARISON_POLICY_V1.as_bytes());
+    bytes.extend_from_slice(policy_id.as_bytes());
     fnv1a64(&bytes)
 }
 
@@ -2249,8 +2657,17 @@ fn load_trial_result(
             path: descriptor.result.to_path_buf(),
             source: error,
         })?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| BundleError::ManifestParse(error.to_string()).into())
+    let result: TrialExecutionResult = serde_json::from_slice(&bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if (result.schema_version != SchemaVersion(1) && result.schema_version != SchemaVersion(2))
+        || result.trial_id != descriptor.id
+    {
+        return Err(BundleError::InvalidManifest(
+            "trial result schema or identity does not match its manifest descriptor",
+        )
+        .into());
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -2390,6 +2807,7 @@ mod tests {
             },
             seed: None,
             paired: None,
+            network_path: None,
             warnings: Vec::new(),
         }
     }
@@ -2460,6 +2878,7 @@ mod tests {
             environment,
             trials,
             paired: None,
+            network_path_evidence: None,
         }
     }
 
@@ -2497,6 +2916,79 @@ mod tests {
             }),
         };
         compare(&request, &ComparisonOptions::default())
+    }
+
+    fn attach_network_path(resolved: &mut ResolvedPlan, proxy: bool, faults: bool) {
+        let route_mode = if proxy {
+            serde_json::json!({
+                "kind": "proxy_chain",
+                "chain": "http://proxy.example:8080"
+            })
+        } else {
+            serde_json::json!({ "kind": "direct" })
+        };
+        let stream_faults = faults.then(|| {
+            serde_json::json!({
+                "driver": "eggchaos-stream",
+                "upstream": [{
+                    "id": "latency",
+                    "kind": {
+                        "kind": "latency",
+                        "delay_ms": 5,
+                        "jitter_ms": 1,
+                        "max_buffer_bytes": 1024
+                    }
+                }],
+                "downstream": []
+            })
+        });
+        let mut value = serde_json::json!({
+            "route": {
+                "driver": "eggress-route",
+                "mode": route_mode
+            },
+            "route_driver": {
+                "descriptor": {
+                    "name": "eggress-route",
+                    "adapter_version": "0.1.0",
+                    "upstream_name": "eggress-outbound",
+                    "upstream_version": "1.0.10",
+                    "category": "route",
+                    "capabilities": [{ "kind": "proxy_routing" }],
+                    "supported_platforms": [],
+                    "machine_output_schema": null,
+                    "external_process": false,
+                    "default": true,
+                    "compatible_service_types": []
+                },
+                "executable_path": null
+            },
+            "semantics_version": "route-first-fault-second-v1"
+        });
+        if let Some(faults) = stream_faults {
+            value["stream_faults"] = serde_json::json!({
+                "request": faults,
+                "fault_driver": {
+                    "descriptor": {
+                        "name": "eggchaos-stream",
+                        "adapter_version": "0.1.0",
+                        "upstream_name": "eggchaos-core",
+                        "upstream_version": "0.1.0",
+                        "category": "fault",
+                        "capabilities": [{ "kind": "stream_fault_plan" }],
+                        "supported_platforms": [],
+                        "machine_output_schema": null,
+                        "external_process": false,
+                        "default": true,
+                        "compatible_service_types": []
+                    },
+                    "executable_path": null
+                },
+                "rng_version": "splitmix64-v1"
+            });
+        }
+        resolved.network_path = Some(serde_json::from_value(value).expect("resolved path"));
+        resolved.seed = Some(19);
     }
 
     fn disposition_of(receipt: &ComparisonReceipt) -> Option<GateDisposition> {
@@ -2839,6 +3331,325 @@ mod tests {
     }
 
     #[test]
+    fn network_path_identity_is_comparison_critical() {
+        let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+        attach_network_path(&mut candidate.resolved, true, true);
+        attach_network_path(&mut baseline.resolved, true, true);
+        let receipt = compare_pair(&candidate, &baseline);
+        assert_eq!(receipt.policy_id, COMPARISON_POLICY_NETWORK_PATH_V1);
+        assert_eq!(disposition_of(&receipt), Some(GateDisposition::Pass));
+
+        baseline
+            .resolved
+            .network_path
+            .as_mut()
+            .expect("path")
+            .route
+            .mode = crate::RouteMode::Direct;
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(!receipt.comparability.driver_match);
+        assert!(receipt.comparability.critical_mismatch);
+        assert_eq!(disposition_of(&receipt), Some(GateDisposition::Invalid));
+
+        let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+        attach_network_path(&mut candidate.resolved, false, true);
+        attach_network_path(&mut baseline.resolved, false, true);
+        baseline.resolved.seed = Some(23);
+        assert_eq!(
+            disposition_of(&compare_pair(&candidate, &baseline)),
+            Some(GateDisposition::Invalid)
+        );
+
+        let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+        attach_network_path(&mut candidate.resolved, false, true);
+        attach_network_path(&mut baseline.resolved, false, false);
+        assert_eq!(
+            disposition_of(&compare_pair(&candidate, &baseline)),
+            Some(GateDisposition::Invalid)
+        );
+    }
+
+    #[test]
+    fn every_network_path_identity_dimension_is_comparison_critical() {
+        type IdentityMutation = fn(&mut ComparisonInput, &mut ComparisonInput);
+        let cases: Vec<(&str, IdentityMutation)> = vec![
+            ("eggress-version", |candidate, baseline| {
+                baseline
+                    .resolved
+                    .network_path
+                    .as_mut()
+                    .expect("baseline path")
+                    .route_driver
+                    .descriptor
+                    .upstream_version = Some("1.0.9".to_owned());
+                let _ = candidate;
+            }),
+            ("eggress-uri-version", |candidate, baseline| {
+                candidate.network_path_evidence = Some(NetworkPathEvidenceIdentity {
+                    chain_config_digest: None,
+                    eggress_uri_version: "1.0.10".to_owned(),
+                });
+                baseline.network_path_evidence = Some(NetworkPathEvidenceIdentity {
+                    chain_config_digest: None,
+                    eggress_uri_version: "1.0.9".to_owned(),
+                });
+            }),
+            ("eggchaos-version", |candidate, baseline| {
+                candidate
+                    .resolved
+                    .network_path
+                    .as_mut()
+                    .expect("candidate path")
+                    .stream_faults
+                    .as_mut()
+                    .expect("candidate faults")
+                    .fault_driver
+                    .descriptor
+                    .upstream_version = Some("0.1.1".to_owned());
+                let _ = baseline;
+            }),
+            ("chain", |candidate, baseline| {
+                candidate
+                    .resolved
+                    .network_path
+                    .as_mut()
+                    .expect("candidate path")
+                    .route
+                    .mode = crate::RouteMode::ProxyChain {
+                    chain: "http://other-proxy.example:8080".to_owned(),
+                };
+                let _ = baseline;
+            }),
+            ("upstream-plan", |candidate, baseline| {
+                candidate
+                    .resolved
+                    .network_path
+                    .as_mut()
+                    .expect("candidate path")
+                    .stream_faults
+                    .as_mut()
+                    .expect("candidate faults")
+                    .request
+                    .upstream[0]
+                    .id = Name::new("other-upstream").expect("fault id");
+                let _ = baseline;
+            }),
+            ("downstream-plan", |candidate, baseline| {
+                candidate
+                    .resolved
+                    .network_path
+                    .as_mut()
+                    .expect("candidate path")
+                    .stream_faults
+                    .as_mut()
+                    .expect("candidate faults")
+                    .request
+                    .downstream = vec![
+                    serde_json::from_value(serde_json::json!({
+                        "id": "downstream",
+                        "kind": { "kind": "blackhole" }
+                    }))
+                    .expect("fault request"),
+                ];
+                let _ = baseline;
+            }),
+        ];
+        for (name, mutate) in cases {
+            let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+            attach_network_path(&mut candidate.resolved, true, true);
+            attach_network_path(&mut baseline.resolved, true, true);
+            mutate(&mut candidate, &mut baseline);
+            let receipt = compare_pair(&candidate, &baseline);
+            assert!(receipt.comparability.critical_mismatch, "{name}");
+            assert_eq!(
+                disposition_of(&receipt),
+                Some(GateDisposition::Invalid),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_evidence_identity_controls_equivalent_route_spellings() {
+        let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+        attach_network_path(&mut candidate.resolved, true, false);
+        attach_network_path(&mut baseline.resolved, true, false);
+        candidate
+            .resolved
+            .network_path
+            .as_mut()
+            .expect("candidate path")
+            .route
+            .mode = crate::RouteMode::ProxyChain {
+            chain: "socks4a://proxy.example:1080".to_owned(),
+        };
+        baseline
+            .resolved
+            .network_path
+            .as_mut()
+            .expect("baseline path")
+            .route
+            .mode = crate::RouteMode::ProxyChain {
+            chain: "socks4://proxy.example:1080".to_owned(),
+        };
+        let identity = NetworkPathEvidenceIdentity {
+            chain_config_digest: Some("canonical-socks4-digest".to_owned()),
+            eggress_uri_version: "1.0.10".to_owned(),
+        };
+        candidate.network_path_evidence = Some(identity.clone());
+        baseline.network_path_evidence = Some(identity);
+        assert_eq!(
+            disposition_of(&compare_pair(&candidate, &baseline)),
+            Some(GateDisposition::Pass)
+        );
+    }
+
+    #[test]
+    fn stored_route_evidence_must_be_bound_to_the_resolved_chain() {
+        let evidence: StoredNetworkPathEvidence = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "adapter_version": "adapter-v1",
+            "route_driver": {
+                "name": "eggress-route",
+                "adapter_version": "adapter-v1",
+                "upstream_name": "eggress-outbound",
+                "upstream_version": "1.0.10"
+            },
+            "eggress_outbound_version": "1.0.10",
+            "eggress_uri_version": "1.0.10",
+            "fault_driver": null,
+            "semantics": {
+                "ordering_version": "route-first-fault-second-v1",
+                "ordering": "route_first_fault_second",
+                "fault_layer": "user_space_stream",
+                "upstream": "client_to_target",
+                "downstream": "target_to_client"
+            },
+            "route": {
+                "driver": "eggress-route",
+                "mode": { "kind": "proxy_chain", "chain": "http://declared.example:8080" }
+            },
+            "redacted_chain": "http://forged.example:8080",
+            "chain_config_digest": format!("{:x}", sha2::Sha256::digest(b"http://forged.example:8080")),
+            "configured_hop_count": 1,
+            "stream_faults": null,
+            "diagnostics": {
+                "physical_dial_attempts": 0,
+                "successful_dials": 0,
+                "fault_wrapped_connections": 0,
+                "fault_wrapper_construction_failures": 0,
+                "route_failure_buckets_dropped": 0,
+                "route_failures": {},
+                "hop_count_distribution": {},
+                "max_observed_hop_count": 0,
+                "connection_ordinal_min": 0,
+                "connection_ordinal_max": 0,
+                "connection_ordinal_count": 0
+            },
+            "policy_mode": "static"
+        }))
+        .expect("stored evidence");
+        assert!(stored_network_path_request_is_valid(&evidence));
+        assert!(!stored_canonical_route_matches(&evidence));
+    }
+
+    #[test]
+    fn seed_matters_only_when_faults_are_active() {
+        let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+        attach_network_path(&mut candidate.resolved, true, false);
+        attach_network_path(&mut baseline.resolved, true, false);
+        baseline.resolved.seed = Some(101);
+        assert_eq!(
+            disposition_of(&compare_pair(&candidate, &baseline)),
+            Some(GateDisposition::Pass)
+        );
+
+        let (mut candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
+        attach_network_path(&mut candidate.resolved, true, true);
+        attach_network_path(&mut baseline.resolved, true, true);
+        baseline.resolved.seed = Some(101);
+        assert_eq!(
+            disposition_of(&compare_pair(&candidate, &baseline)),
+            Some(GateDisposition::Invalid)
+        );
+    }
+
+    #[test]
+    fn warn_policy_preserves_path_effects_but_suppresses_relative_verdict() {
+        let metric = latency_request(relative_gate(500));
+        let mut candidate = input_with_values(
+            &"aa".repeat(32),
+            metric.clone(),
+            EnvironmentPolicy::WarnOnMismatch,
+            &[130.0; 7],
+            standard_environment(),
+        );
+        let mut baseline = input_with_values(
+            &"bb".repeat(32),
+            metric,
+            EnvironmentPolicy::WarnOnMismatch,
+            &[100.0; 7],
+            standard_environment(),
+        );
+        attach_network_path(&mut candidate.resolved, true, true);
+        attach_network_path(&mut baseline.resolved, false, true);
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(receipt.comparability.critical_mismatch);
+        assert!(receipt.metrics[0].degradation.is_some());
+        assert_eq!(disposition_of(&receipt), Some(GateDisposition::Descriptive));
+        assert_eq!(receipt.aggregate_verdict, None);
+    }
+
+    #[test]
+    fn cross_testbed_path_mismatch_remains_descriptive() {
+        let metric = latency_request(statistical_gate(500));
+        let mut candidate = input_with_values(
+            &"aa".repeat(32),
+            metric.clone(),
+            EnvironmentPolicy::CrossTestbedDescriptive,
+            &[130.0; 7],
+            standard_environment(),
+        );
+        let mut baseline = input_with_values(
+            &"bb".repeat(32),
+            metric,
+            EnvironmentPolicy::CrossTestbedDescriptive,
+            &[100.0; 7],
+            standard_environment(),
+        );
+        attach_network_path(&mut candidate.resolved, true, true);
+        attach_network_path(&mut baseline.resolved, false, true);
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(receipt.comparability.critical_mismatch);
+        assert_eq!(disposition_of(&receipt), Some(GateDisposition::Descriptive));
+        assert_eq!(receipt.aggregate_verdict, None);
+    }
+
+    #[test]
+    fn absolute_gate_remains_eligible_when_path_identity_differs() {
+        let metric = latency_request(Gate::Absolute { value: 500.0 });
+        let mut candidate = input_with_values(
+            &"aa".repeat(32),
+            metric.clone(),
+            EnvironmentPolicy::WarnOnMismatch,
+            &[100.0; 3],
+            standard_environment(),
+        );
+        let mut baseline = input_with_values(
+            &"bb".repeat(32),
+            metric,
+            EnvironmentPolicy::WarnOnMismatch,
+            &[100.0; 3],
+            standard_environment(),
+        );
+        attach_network_path(&mut candidate.resolved, true, true);
+        attach_network_path(&mut baseline.resolved, false, true);
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(receipt.comparability.critical_mismatch);
+        assert_eq!(disposition_of(&receipt), Some(GateDisposition::Pass));
+    }
+
+    #[test]
     fn workload_shape_mismatch_invalidates() {
         let (candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
         baseline.resolved.workload = Workload::FiniteCount {
@@ -3139,6 +3950,7 @@ mod tests {
                 schedule: crate::PAIRED_SCHEDULE_V1.to_owned(),
                 pairs: pair_count,
             }),
+            network_path_evidence: None,
         }
     }
 

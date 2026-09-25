@@ -515,6 +515,7 @@ fn oha_output(outcome: &ExternalCommandOutcome, report: &OhaReport) -> WorkloadO
         metrics,
         histograms: Vec::new(),
         error_counts: report.error_counts.clone(),
+        measurement_elapsed: None,
     }
 }
 

@@ -2,6 +2,7 @@
 
 use crate::envelope::{
     CliEnvelope, CliOutput, DoctorPairedDesign, DriverSummary, EnvironmentSummary, ExitCode,
+    NetworkPathDoctorSummary,
 };
 use crate::envelope::{CliFailure, PresentedCommandResult};
 use crate::error::CliError;
@@ -94,6 +95,16 @@ fn run_with_descriptors(
 ) -> Result<PresentedCommandResult, CliError> {
     let input = load_plan(plan, input_format)?;
     let plan = input.plan;
+    if plan.network_path.is_some() && !cfg!(feature = "eggstack-path") {
+        return Ok(PresentedCommandResult::failure(
+            "doctor",
+            &CliFailure::new(
+                "unsupported_network_path",
+                "network_path requires the eggstack-path feature",
+                ExitCode::CapabilityPreflight,
+            ),
+        ));
+    }
     let platform_label = platform_label();
     let platform_supported = platform_support();
 
@@ -120,6 +131,18 @@ fn run_with_descriptors(
         }
     }
 
+    if plan.network_path.is_some()
+        && workload_driver.is_some_and(eggbench_drivers::is_external_workload)
+    {
+        return Ok(PresentedCommandResult::failure(
+            "doctor",
+            &CliFailure::new(
+                "workload_path_incompatible",
+                "external workload drivers cannot own an Eggbench network path",
+                ExitCode::CapabilityPreflight,
+            ),
+        ));
+    }
     let workload_mode = workload_load_mode(&plan);
     let mut required_capabilities = std::collections::BTreeMap::new();
     required_capabilities.insert(
@@ -131,6 +154,7 @@ fn run_with_descriptors(
     options.required_capabilities = required_capabilities;
 
     let resolved = eggbench_core::resolve_plan(&plan, descriptors, &options);
+    let network_path = doctor_network_path_summary(&plan, resolved.as_ref().ok(), descriptors);
 
     let environment = match LocalEnvironmentCollector.collect() {
         Ok(env) => Some(env),
@@ -192,6 +216,7 @@ fn run_with_descriptors(
                 has_workload_driver,
                 environment_fields: env_fields.clone(),
                 paired: paired.clone(),
+                network_path: Some(Box::new(network_path.clone())),
             },
         );
         envelope.ok = false;
@@ -212,6 +237,7 @@ fn run_with_descriptors(
                 has_workload_driver,
                 environment_fields: env_fields,
                 paired,
+                network_path: Some(Box::new(network_path)),
             },
         )),
         Err(error) => Ok(envelope_for_resolution_error(
@@ -221,7 +247,82 @@ fn run_with_descriptors(
             has_workload_driver,
             env_fields,
             paired,
+            network_path,
         )),
+    }
+}
+
+fn doctor_network_path_summary(
+    plan: &eggbench_core::ExperimentPlan,
+    resolved: Option<&eggbench_core::ResolvedPlan>,
+    descriptors: &[eggbench_core::DriverDescriptor],
+) -> NetworkPathDoctorSummary {
+    let request = plan.network_path.as_ref();
+    let mut supported_capabilities = descriptors
+        .iter()
+        .filter(|descriptor| {
+            matches!(
+                descriptor.category,
+                DriverCategory::Route | DriverCategory::Fault
+            )
+        })
+        .flat_map(|descriptor| descriptor.capabilities.iter())
+        .map(|capability| format!("{capability:?}"))
+        .collect::<Vec<_>>();
+    supported_capabilities.sort();
+    supported_capabilities.dedup();
+    let route_descriptor = descriptors.iter().find(|descriptor| {
+        descriptor.category == DriverCategory::Route
+            && request.is_some_and(|path| descriptor.name == path.route.driver)
+    });
+    let fault_descriptor = descriptors.iter().find(|descriptor| {
+        descriptor.category == DriverCategory::Fault
+            && request
+                .and_then(|path| path.stream_faults.as_ref())
+                .is_some_and(|faults| descriptor.name == faults.driver)
+    });
+    NetworkPathDoctorSummary {
+        feature_enabled: cfg!(feature = "eggstack-path"),
+        requested: request.is_some(),
+        route_mode: request.map(|path| match &path.route.mode {
+            eggbench_core::RouteMode::Direct => "direct".to_owned(),
+            eggbench_core::RouteMode::ProxyChain { .. } => "proxy_chain".to_owned(),
+        }),
+        route_driver: resolved
+            .and_then(|resolved| resolved.network_path.as_ref())
+            .map(|path| path.route_driver.descriptor.name.to_string())
+            .or_else(|| route_descriptor.map(|descriptor| descriptor.name.to_string())),
+        route_upstream_version: resolved
+            .and_then(|resolved| resolved.network_path.as_ref())
+            .map_or_else(
+                || route_descriptor.and_then(|descriptor| descriptor.upstream_version.clone()),
+                |path| path.route_driver.descriptor.upstream_version.clone(),
+            ),
+        fault_driver: resolved
+            .and_then(|resolved| resolved.network_path.as_ref())
+            .and_then(|path| path.stream_faults.as_ref())
+            .map(|faults| faults.fault_driver.descriptor.name.to_string())
+            .or_else(|| fault_descriptor.map(|descriptor| descriptor.name.to_string())),
+        fault_upstream_version: resolved
+            .and_then(|resolved| resolved.network_path.as_ref())
+            .and_then(|path| path.stream_faults.as_ref())
+            .map_or_else(
+                || fault_descriptor.and_then(|descriptor| descriptor.upstream_version.clone()),
+                |faults| faults.fault_driver.descriptor.upstream_version.clone(),
+            ),
+        supported_capabilities,
+        unsupported_capabilities: vec![
+            "eggress_extended_protocols".to_owned(),
+            "eggchaos_datagram_faults".to_owned(),
+            "hard_reset_faults".to_owned(),
+            "live_fault_mutation".to_owned(),
+            "packet_loss".to_owned(),
+            "paired_network_path".to_owned(),
+            "quic".to_owned(),
+            "route_credentials".to_owned(),
+            "ssh".to_owned(),
+            "udp".to_owned(),
+        ],
     }
 }
 
@@ -246,6 +347,7 @@ fn envelope_for_resolution_error(
     has_workload_driver: bool,
     environment_fields: Vec<EnvironmentSummary>,
     paired: Option<DoctorPairedDesign>,
+    network_path: NetworkPathDoctorSummary,
 ) -> PresentedCommandResult {
     let failure = cli_failure_from_resolve(error);
     // Retain the doctor payload (including has_workload_driver) alongside the
@@ -259,6 +361,7 @@ fn envelope_for_resolution_error(
             has_workload_driver,
             environment_fields,
             paired,
+            network_path: Some(Box::new(network_path)),
         },
     );
     envelope.ok = false;
@@ -269,22 +372,66 @@ fn envelope_for_resolution_error(
     }
 }
 
+fn is_network_path_category(category: &str) -> bool {
+    matches!(
+        category,
+        "missing_fault_seed"
+            | "route_credentials_not_supported"
+            | "workload_path_incompatible"
+            | "paired_network_path_not_supported"
+            | "unsupported_route"
+            | "invalid_route"
+            | "invalid_fault_plan"
+    )
+}
+
 fn cli_failure_from_resolve(error: &ResolveError) -> CliFailure {
-    use eggbench_core::ResolveError;
+    use eggbench_core::{Capability, DriverCategory, PlanError, ResolveError};
     let category = match error {
+        ResolveError::InvalidPlan(PlanError::Validation {
+            category: validation_category,
+            ..
+        }) if is_network_path_category(validation_category) => *validation_category,
         ResolveError::InvalidPlan(_) => "plan_validation",
+        ResolveError::MissingDriver {
+            category: DriverCategory::Route,
+        } => "missing_route_driver",
+        ResolveError::MissingDriver {
+            category: DriverCategory::Fault,
+        } => "missing_fault_driver",
         ResolveError::MissingDriver { .. } => "missing_driver",
         ResolveError::CategoryMismatch { .. } => "category_mismatch",
         ResolveError::AmbiguousSelection { .. } => "ambiguous_selection",
+        ResolveError::UnsupportedCapability {
+            capability: Capability::NetworkPath,
+            ..
+        } => "unsupported_network_path",
+        ResolveError::UnsupportedCapability {
+            capability: Capability::StreamFaultPlan,
+            ..
+        } => "unsupported_stream_fault_plan",
         ResolveError::UnsupportedCapability { .. } => "unsupported_capability",
         ResolveError::UnsupportedPlatform { .. } => "unsupported_platform",
         ResolveError::MissingExecutablePath(_) => "missing_executable_path",
         ResolveError::IncompatibleService { .. } => "incompatible_service",
         ResolveError::DuplicateDriver(_) => "duplicate_driver",
     };
-    let exit_code = match error {
-        ResolveError::InvalidPlan(_) => ExitCode::ParseValidation,
-        _ => ExitCode::CapabilityPreflight,
+    let exit_code = if matches!(
+        category,
+        "missing_fault_seed"
+            | "route_credentials_not_supported"
+            | "workload_path_incompatible"
+            | "paired_network_path_not_supported"
+            | "unsupported_route"
+            | "invalid_route"
+            | "invalid_fault_plan"
+    ) {
+        ExitCode::CapabilityPreflight
+    } else {
+        match error {
+            ResolveError::InvalidPlan(_) => ExitCode::ParseValidation,
+            _ => ExitCode::CapabilityPreflight,
+        }
     };
     CliFailure::new(category, error.to_string(), exit_code)
 }

@@ -1,8 +1,8 @@
 //! `eggbench inspect <bundle>` command.
 
 use crate::envelope::{
-    CliOutput, DriverSummary, EnvironmentSummary, PresentedCommandResult, SubjectSummary,
-    TrialSummary,
+    CliOutput, DriverSummary, EnvironmentSummary, NetworkPathInspectSummary,
+    PresentedCommandResult, SubjectSummary, TrialSummary,
 };
 use crate::error::CliError;
 use eggbench_core::BundleReader;
@@ -86,12 +86,8 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
     let trials: Vec<TrialSummary> = manifest
         .trials
         .iter()
-        .map(|descriptor| TrialSummary {
-            id: descriptor.id.get(),
-            terminal_status: "completed".to_owned(),
-            measurement_elapsed_ns: None,
-        })
-        .collect();
+        .map(|descriptor| trial_summary(&reader, descriptor))
+        .collect::<Result<_, _>>()?;
 
     let artifact_count = manifest.artifacts.len();
     let artifact_bytes = manifest
@@ -99,6 +95,20 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
         .iter()
         .map(|artifact| artifact.byte_size)
         .sum();
+
+    let network_path_artifact_present = manifest.artifacts.iter().any(|artifact| {
+        artifact.path.as_str() == "network-path.json"
+            || matches!(
+                &artifact.role,
+                eggbench_core::ArtifactRole::Other { label } if label.as_str() == "network-path"
+            )
+    });
+    if network_path_artifact_present {
+        eggbench_core::load_comparison_input(&reader).map_err(|error| {
+            CliError::Bundle(eggbench_core::BundleError::ManifestParse(error.to_string()))
+        })?;
+    }
+    let network_path = network_path_inspect_summary(&reader, network_path_artifact_present)?;
 
     let manifest_json = if emit_manifest_json {
         serde_json::to_string_pretty(manifest).ok()
@@ -127,8 +137,135 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
             artifact_count,
             artifact_bytes,
             manifest_json,
+            network_path: Some(network_path),
         },
     ))
+}
+
+fn trial_summary(
+    reader: &BundleReader,
+    descriptor: &eggbench_core::TrialDescriptor,
+) -> Result<TrialSummary, CliError> {
+    let mut file = reader
+        .open_artifact(&descriptor.result)
+        .map_err(CliError::Bundle)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::Io {
+            path: std::path::PathBuf::from(descriptor.result.as_str()),
+            source: error,
+        })
+    })?;
+    let Ok(result) = serde_json::from_slice::<eggbench_core::TrialExecutionResult>(&bytes) else {
+        return Ok(TrialSummary {
+            id: descriptor.id.get(),
+            terminal_status: "completed".to_owned(),
+            measurement_elapsed_ns: None,
+        });
+    };
+    Ok(TrialSummary {
+        id: descriptor.id.get(),
+        terminal_status: format!("{:?}", result.terminal_status).to_lowercase(),
+        measurement_elapsed_ns: Some(result.measurement_elapsed_ns),
+    })
+}
+
+#[allow(clippy::unnecessary_wraps)] // Feature-off inspection is infallible; feature-on loading is verified.
+fn network_path_inspect_summary(
+    reader: &BundleReader,
+    artifact_present: bool,
+) -> Result<NetworkPathInspectSummary, CliError> {
+    #[cfg(feature = "eggstack-path")]
+    {
+        let evidence =
+            eggbench_drivers::load_network_path_evidence(reader).map_err(CliError::Bundle)?;
+        let Some(evidence) = evidence else {
+            return Ok(NetworkPathInspectSummary {
+                artifact_present,
+                detailed_evidence_available: true,
+                schema_version: None,
+                route_driver: None,
+                route_upstream_version: None,
+                route_mode: None,
+                chain_config_digest: None,
+                fault_driver: None,
+                fault_upstream_version: None,
+                fault_count: None,
+                ordering: None,
+                fault_layer: None,
+                policy_mode: None,
+                physical_dial_attempts: None,
+                successful_dials: None,
+                fault_wrapped_connections: None,
+                configured_hop_count: None,
+            });
+        };
+        let fault_count = evidence
+            .stream_faults
+            .as_ref()
+            .map(|faults| faults.request.upstream.len() + faults.request.downstream.len());
+        let fault_driver = evidence
+            .fault_driver
+            .as_ref()
+            .map(|driver| driver.name.clone());
+        let fault_upstream_version = evidence
+            .fault_driver
+            .as_ref()
+            .and_then(|driver| driver.upstream_version.clone());
+        Ok(NetworkPathInspectSummary {
+            artifact_present,
+            detailed_evidence_available: true,
+            schema_version: Some(evidence.schema_version.0),
+            route_driver: Some(evidence.route_driver.name),
+            route_upstream_version: evidence.route_driver.upstream_version,
+            route_mode: Some(match &evidence.route.mode {
+                eggbench_core::RouteMode::Direct => "direct".to_owned(),
+                eggbench_core::RouteMode::ProxyChain { .. } => "proxy_chain".to_owned(),
+            }),
+            chain_config_digest: evidence.chain_config_digest,
+            fault_driver,
+            fault_upstream_version,
+            fault_count,
+            ordering: Some(match evidence.semantics.ordering {
+                eggbench_drivers::PathOrdering::RouteFirstFaultSecond => {
+                    "route_first_fault_second".to_owned()
+                }
+            }),
+            fault_layer: Some(match evidence.semantics.fault_layer {
+                eggbench_drivers::FaultLayer::UserSpaceStream => "user_space_stream".to_owned(),
+            }),
+            policy_mode: Some(match evidence.policy_mode {
+                eggbench_drivers::PathPolicyMode::Static => "static".to_owned(),
+            }),
+            physical_dial_attempts: Some(evidence.diagnostics.physical_dial_attempts),
+            successful_dials: Some(evidence.diagnostics.successful_dials),
+            fault_wrapped_connections: Some(evidence.diagnostics.fault_wrapped_connections),
+            configured_hop_count: Some(evidence.configured_hop_count),
+        })
+    }
+    #[cfg(not(feature = "eggstack-path"))]
+    {
+        let _ = reader;
+        Ok(NetworkPathInspectSummary {
+            artifact_present,
+            detailed_evidence_available: false,
+            schema_version: None,
+            route_driver: None,
+            route_upstream_version: None,
+            route_mode: None,
+            chain_config_digest: None,
+            fault_driver: None,
+            fault_upstream_version: None,
+            fault_count: None,
+            ordering: None,
+            fault_layer: None,
+            policy_mode: None,
+            physical_dial_attempts: None,
+            successful_dials: None,
+            fault_wrapped_connections: None,
+            configured_hop_count: None,
+        })
+    }
 }
 
 fn subject_label(subject: &eggbench_core::Subject) -> String {

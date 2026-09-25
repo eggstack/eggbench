@@ -13,6 +13,13 @@
 //! requests fail before startup through plan resolution (missing
 //! `LoadMode::OpenLoop` capability) and are rejected defensively here.
 //!
+//! When the `eggstack-path` feature is enabled, the workload can be
+//! constructed with a [`crate::eggstack::path::EggstackPathDialer`] so the
+//! client reaches its target via a listener-free Eggress route composed with
+//! deterministic Eggchaos stream faults. The dialer is queried once per
+//! physical connection (the client owns the pool; warmups reuse dialed
+//! physical connections naturally).
+//!
 //! Ownership recap: `Eggfetch` owns outbound HTTP semantics; Eggbench owns
 //! scheduling, latency measurement (dispatch to full-body consumption),
 //! metric mapping, and evidence.
@@ -20,6 +27,8 @@
 use super::origin::ORIGIN_HTTP_URL_KEY;
 use super::{EGGFETCH_CORE_VERSION, EGGFETCH_HTTP_DRIVER_NAME};
 use eggbench_core::{Aggregation, RawHistogramInput, RawMetricObservation, Workload};
+#[cfg(feature = "eggstack-path")]
+use eggbench_runner::RunEvidenceArtifact;
 use eggbench_runner::{
     DrainContext, FailureCategory, InvocationContext, WorkloadArtifact, WorkloadExecutor,
     WorkloadOutput,
@@ -68,6 +77,8 @@ const CATEGORY_CANCELLED: &str = "cancelled";
 /// Holds one `Eggfetch` client for the executor lifetime (one run).
 pub struct EggfetchWorkload {
     client: eggfetch_core::Client,
+    #[cfg(feature = "eggstack-path")]
+    path_dialer: Option<Arc<super::path::EggstackPathDialer>>,
 }
 
 impl EggfetchWorkload {
@@ -76,7 +87,34 @@ impl EggfetchWorkload {
     pub fn new() -> Self {
         Self {
             client: eggfetch_core::Client::new(),
+            #[cfg(feature = "eggstack-path")]
+            path_dialer: None,
         }
+    }
+
+    /// Create an executor backed by the resolved Eggstack path dialer.
+    #[cfg(feature = "eggstack-path")]
+    #[must_use]
+    pub fn with_path_dialer(dialer: Arc<super::path::EggstackPathDialer>) -> Self {
+        let erased: Arc<dyn eggfetch_core::Dialer> = dialer.clone();
+        let client = eggfetch_core::Client::builder().dialer(erased).build();
+        Self {
+            client,
+            path_dialer: Some(dialer),
+        }
+    }
+
+    /// Underlying client (used by tests that need direct access).
+    #[must_use]
+    pub fn client(&self) -> &eggfetch_core::Client {
+        &self.client
+    }
+
+    /// Optional path dialer retained for evidence.
+    #[cfg(feature = "eggstack-path")]
+    #[must_use]
+    pub fn path_dialer(&self) -> Option<&Arc<super::path::EggstackPathDialer>> {
+        self.path_dialer.as_ref()
     }
 }
 
@@ -134,6 +172,22 @@ impl WorkloadExecutor for EggfetchWorkload {
         // pool state is Eggfetch-owned and needs no explicit close.
         Box::pin(async move { Ok(()) })
     }
+
+    #[cfg(feature = "eggstack-path")]
+    fn run_evidence(&mut self) -> Result<Option<RunEvidenceArtifact>, eggbench_core::BundleError> {
+        let Some(dialer) = &self.path_dialer else {
+            return Ok(None);
+        };
+        let evidence = dialer.network_path_evidence();
+        RunEvidenceArtifact::from_contract(
+            "network-path.json",
+            super::path::network_path_role_label(),
+            "application/json",
+            eggbench_core::Sensitivity::Redacted,
+            &evidence,
+        )
+        .map(Some)
+    }
 }
 
 impl EggfetchWorkload {
@@ -143,6 +197,11 @@ impl EggfetchWorkload {
     ) -> Result<WorkloadOutput, FailureCategory> {
         let (target, plan) = run_plan(&context.workload)?;
         let url = binding_url(&context, target)?;
+        #[cfg(feature = "eggstack-path")]
+        let path_start = self
+            .path_dialer
+            .as_ref()
+            .map(|dialer| dialer.begin_invocation());
         let started = Instant::now();
         let (outcomes, max_in_flight) = run_closed_loop(
             &self.client,
@@ -153,7 +212,33 @@ impl EggfetchWorkload {
         )
         .await;
         let elapsed = started.elapsed();
-        Ok(build_output(&outcomes, &plan, elapsed, max_in_flight))
+        context.measurement.finish(elapsed);
+        #[cfg(feature = "eggstack-path")]
+        let network_path = self
+            .path_dialer
+            .as_ref()
+            .zip(path_start)
+            .map(|(dialer, before)| {
+                let mut value = serde_json::to_value(dialer.invocation_delta(&before))
+                    .expect("path diagnostics serialize");
+                value
+                    .as_object_mut()
+                    .expect("path diagnostics are an object")
+                    .insert(
+                        "faults_active".to_owned(),
+                        serde_json::json!(dialer.faults_active()),
+                    );
+                value
+            });
+        #[cfg(not(feature = "eggstack-path"))]
+        let network_path: Option<serde_json::Value> = None;
+        Ok(build_output(
+            &outcomes,
+            &plan,
+            elapsed,
+            max_in_flight,
+            network_path.as_ref(),
+        ))
     }
 }
 
@@ -386,7 +471,7 @@ async fn issue_timed(shared: &Shared) -> RequestOutcome {
                 latency: None,
                 status: None,
                 bytes: 0,
-                error: Some(if failure.is_timeout() {
+                error: Some(if is_timeout_failure(&failure) {
                     CATEGORY_TIMEOUT
                 } else {
                     CATEGORY_TRANSPORT
@@ -435,6 +520,14 @@ async fn issue_timed(shared: &Shared) -> RequestOutcome {
         bytes,
         error,
     }
+}
+
+fn is_timeout_failure(failure: &eggfetch_core::RequestFailure) -> bool {
+    failure.is_timeout()
+        || failure
+            .error()
+            .custom_transport_error()
+            .is_some_and(|error| error.kind() == eggfetch_core::DialErrorKind::Timeout)
 }
 
 fn is_timeout_error(error: &eggfetch_core::Error) -> bool {
@@ -586,6 +679,7 @@ fn build_output(
     plan: &RunPlan,
     elapsed: Duration,
     max_in_flight: usize,
+    network_path: Option<&serde_json::Value>,
 ) -> WorkloadOutput {
     let attempted = outcomes.len() as u64;
     let folded = fold_outcomes(outcomes);
@@ -622,6 +716,7 @@ fn build_output(
         elapsed,
         max_in_flight,
         outcomes,
+        network_path,
     );
     let method_bytes = serde_json::to_vec_pretty(&method).expect("method evidence serializes");
     WorkloadOutput {
@@ -640,6 +735,7 @@ fn build_output(
         metrics,
         histograms,
         error_counts,
+        measurement_elapsed: Some(elapsed),
     }
 }
 
@@ -675,6 +771,7 @@ fn serialize_histogram(histogram: &hdrhistogram::Histogram<u64>) -> Vec<u8> {
 }
 
 /// Diagnostic method evidence retained per invocation.
+#[allow(clippy::too_many_arguments)] // Keep the method-evidence inputs explicit at the call site.
 fn method_evidence(
     plan: &RunPlan,
     attempted: u64,
@@ -683,6 +780,7 @@ fn method_evidence(
     elapsed: Duration,
     max_in_flight: usize,
     outcomes: &[RequestOutcome],
+    network_path: Option<&serde_json::Value>,
 ) -> serde_json::Value {
     let (requested_concurrency, mode) = match plan {
         RunPlan::Count { concurrency, .. } => (*concurrency, "count"),
@@ -694,7 +792,7 @@ fn method_evidence(
             *status_counts.entry(status).or_default() += 1;
         }
     }
-    serde_json::json!({
+    let mut evidence = serde_json::json!({
         "driver": EGGFETCH_HTTP_DRIVER_NAME,
         "eggfetch_core_version": EGGFETCH_CORE_VERSION,
         "http_method": "GET",
@@ -718,5 +816,12 @@ fn method_evidence(
             "saturation": "clamped",
             "coordinated_omission_correction": "none (closed-loop only)",
         },
-    })
+    });
+    if let Some(network_path) = network_path {
+        evidence
+            .as_object_mut()
+            .expect("method evidence is an object")
+            .insert("network_path".to_owned(), network_path.clone());
+    }
+    evidence
 }

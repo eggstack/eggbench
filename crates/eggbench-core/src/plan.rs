@@ -1,6 +1,7 @@
 use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
-    Name, PositiveCount, RateMilliRps, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_3, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
+    RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,6 +37,13 @@ pub struct ExperimentPlan {
     /// Optional paired baseline/candidate design (schema v2 only).
     #[serde(default)]
     pub paired: Option<PairedDesign>,
+    /// Optional first-class listener-free network path (schema v3 only).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_optional"
+    )]
+    pub network_path: Option<NetworkPathRequest>,
     /// Upper bounds for later evidence creation.
     pub bounds: ArtifactBounds,
 }
@@ -388,16 +396,158 @@ pub enum PlanError {
     },
 }
 
+pub(crate) fn deserialize_present_optional<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+fn raw_faults_invalid(value: Option<&serde_json::Value>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    let Some(faults) = value.as_object() else {
+        return true;
+    };
+    if faults
+        .get("driver")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return true;
+    }
+    ["upstream", "downstream"].iter().any(|direction| {
+        let Some(requests) = faults.get(*direction).and_then(serde_json::Value::as_array) else {
+            return true;
+        };
+        requests.iter().any(raw_fault_request_invalid)
+    })
+}
+
+fn raw_fault_request_invalid(value: &serde_json::Value) -> bool {
+    let Some(request) = value.as_object() else {
+        return true;
+    };
+    if request
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return true;
+    }
+    let Some(kind) = request.get("kind").and_then(serde_json::Value::as_object) else {
+        return true;
+    };
+    let positive = |key: &str| {
+        kind.get(key)
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|value| (1..=1_000_000).contains(&value))
+    };
+    let duration = |key: &str| {
+        kind.get(key)
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|value| (1..=31_536_000_000).contains(&value))
+    };
+    match kind.get("kind").and_then(serde_json::Value::as_str) {
+        Some("latency") => {
+            !(duration("delay_ms") && duration("jitter_ms") && positive("max_buffer_bytes"))
+        }
+        Some("bandwidth") => !(positive("bytes_per_second") && positive("burst_bytes")),
+        Some("blackhole") => kind
+            .get("close_after_ms")
+            .is_some_and(|value| !value.is_null() && duration_value_invalid(value)),
+        Some("limit_data") => !positive("bytes"),
+        Some("slow_close") => !duration("delay_ms"),
+        Some("slice") => {
+            let average = kind
+                .get("average_size")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|value| (1..=1_000_000).contains(value));
+            let variation = kind.get("variation").and_then(serde_json::Value::as_u64);
+            !(average.is_some()
+                && duration("delay_ms")
+                && variation.is_some_and(|value| value < average.unwrap_or(0)))
+        }
+        Some("disconnect") => !duration("after_ms"),
+        _ => true,
+    }
+}
+
+fn duration_value_invalid(value: &serde_json::Value) -> bool {
+    value
+        .as_u64()
+        .is_none_or(|value| !(1..=31_536_000_000).contains(&value))
+}
+
+fn raw_route_invalid(value: Option<&serde_json::Value>) -> bool {
+    let Some(route) = value.and_then(serde_json::Value::as_object) else {
+        return true;
+    };
+    let driver_invalid = route
+        .get("driver")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(str::is_empty);
+    let mode_invalid = route
+        .get("mode")
+        .and_then(serde_json::Value::as_object)
+        .is_none_or(|mode| {
+            !matches!(
+                mode.get("kind").and_then(serde_json::Value::as_str),
+                Some("direct" | "proxy_chain")
+            ) || (mode.get("kind").and_then(serde_json::Value::as_str) == Some("proxy_chain")
+                && mode
+                    .get("chain")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(str::is_empty))
+        });
+    driver_invalid || mode_invalid
+}
+
+fn map_deserialize_error(
+    format: &'static str,
+    input: &str,
+    error: impl std::fmt::Display,
+) -> PlanError {
+    let message = error.to_string();
+    if message.contains("network_path.stream_faults")
+        || serde_json::from_str::<serde_json::Value>(input)
+            .ok()
+            .as_ref()
+            .and_then(|value| value.get("network_path"))
+            .is_some_and(|path| raw_faults_invalid(path.get("stream_faults")))
+    {
+        return PlanError::Validation {
+            category: "invalid_fault_plan",
+            detail: message,
+        };
+    }
+    if message.contains("network_path")
+        || serde_json::from_str::<serde_json::Value>(input)
+            .ok()
+            .as_ref()
+            .and_then(|value| value.get("network_path"))
+            .is_some_and(|path| raw_route_invalid(path.get("route")))
+    {
+        return PlanError::Validation {
+            category: "invalid_route",
+            detail: message,
+        };
+    }
+    PlanError::Parse { format, message }
+}
+
 impl ExperimentPlan {
     /// Parse JSON, enforce schema version, and validate semantics.
     ///
     /// # Errors
     /// Returns a parse, unsupported-version, or semantic validation error.
     pub fn from_json(input: &str) -> Result<Self, PlanError> {
-        let plan: Self = serde_json::from_str(input).map_err(|e| PlanError::Parse {
-            format: "JSON",
-            message: e.to_string(),
-        })?;
+        let plan: Self = serde_json::from_str(input)
+            .map_err(|error| map_deserialize_error("JSON", input, error))?;
         plan.validate()?;
         Ok(plan)
     }
@@ -406,10 +556,8 @@ impl ExperimentPlan {
     /// # Errors
     /// Returns a parse, unsupported-version, or semantic validation error.
     pub fn from_toml(input: &str) -> Result<Self, PlanError> {
-        let plan: Self = toml::from_str(input).map_err(|e| PlanError::Parse {
-            format: "TOML",
-            message: e.to_string(),
-        })?;
+        let plan: Self =
+            toml::from_str(input).map_err(|error| map_deserialize_error("TOML", input, error))?;
         plan.validate()?;
         Ok(plan)
     }
@@ -443,8 +591,39 @@ impl ExperimentPlan {
     pub fn validate(&self) -> Result<(), PlanError> {
         if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_2
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_3
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
+        }
+        // Schema-v3 is the only schema where `network_path` is permitted.
+        if self.network_path.is_some() && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_3 {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "network_path requires schema version 3 (got {})",
+                    self.schema_version.0
+                ),
+            );
+        }
+        if let Some(network_path) = &self.network_path {
+            validate_network_path_contract(network_path)?;
+            validate_path_service_configs(&self.services)?;
+            if matches!(self.subject, Subject::External { .. }) {
+                return invalid(
+                    "workload_path_incompatible",
+                    "network_path requires a transport-owning workload and is incompatible with an external subject",
+                );
+            }
+            let fault_count = network_path
+                .stream_faults
+                .as_ref()
+                .map_or(0, |faults| faults.upstream.len() + faults.downstream.len());
+            if fault_count > 0 && self.seed.is_none() {
+                return invalid(
+                    "missing_fault_seed",
+                    "network_path stream faults require an explicit experiment seed",
+                );
+            }
         }
         if let Subject::ManagedCommand { argv, .. } = &self.subject
             && (argv.is_empty() || argv[0].trim().is_empty())
@@ -709,8 +888,14 @@ fn validate_paired(
     let Some(paired) = &plan.paired else {
         return Ok(());
     };
-    if plan.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_2 {
+    if plan.schema_version == EXPERIMENT_PLAN_SCHEMA_VERSION {
         return Err(PlanError::UnsupportedVersion(plan.schema_version.0));
+    }
+    if plan.network_path.is_some() {
+        return invalid(
+            "paired_network_path_not_supported",
+            "network_path is not supported together with paired experiments in M002",
+        );
     }
     if !matches!(plan.subject, Subject::Label { .. }) {
         return invalid(
@@ -797,6 +982,260 @@ fn invalid<T>(category: &'static str, detail: impl Into<String>) -> Result<T, Pl
     })
 }
 
+/// Validate the bounded schema-v3 `network_path` request.
+///
+/// Bounds enforced here stay aligned with §6.4 / §13.3 / §22 of the M002
+/// implementation plan: bounded route text, no control characters, ≤128
+/// faults per direction, unique fault identities, and `slice.variation <
+/// slice.average_size`.
+///
+/// # Errors
+/// Returns a stable [`PlanError::Validation`] category for unsafe routes or
+/// malformed fault plans.
+pub fn validate_network_path_contract(path: &NetworkPathRequest) -> Result<(), PlanError> {
+    let chain_len_bound = 1024usize;
+    match &path.route.mode {
+        RouteMode::Direct => {}
+        RouteMode::ProxyChain { chain } => {
+            if chain.is_empty() || chain.len() > chain_len_bound {
+                return invalid(
+                    "invalid_route",
+                    format!(
+                        "route chain must be 1..={chain_len_bound} bytes (got {})",
+                        chain.len()
+                    ),
+                );
+            }
+            if chain.chars().any(char::is_control) {
+                return invalid(
+                    "invalid_route",
+                    "route chain must not contain control characters",
+                );
+            }
+            if chain.contains(['@', '%', '?', '#']) {
+                return invalid(
+                    "route_credentials_not_supported",
+                    "route chain must not contain userinfo, encoded credentials, query, or fragment data",
+                );
+            }
+            validate_proxy_chain_shape(chain)?;
+        }
+    }
+    if let Some(faults) = &path.stream_faults {
+        validate_stream_fault_plan(&faults.upstream, "upstream").map_err(|error| {
+            PlanError::Validation {
+                category: "invalid_fault_plan",
+                detail: error.to_string(),
+            }
+        })?;
+        validate_stream_fault_plan(&faults.downstream, "downstream").map_err(|error| {
+            PlanError::Validation {
+                category: "invalid_fault_plan",
+                detail: error.to_string(),
+            }
+        })?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_proxy_chain_shape(chain: &str) -> Result<(), PlanError> {
+    for hop in chain.split("__") {
+        let Some((scheme, endpoint)) = hop.split_once("://") else {
+            return invalid(
+                "invalid_route",
+                "each route hop must use an explicit protocol://host:port form",
+            );
+        };
+        if !matches!(scheme, "http" | "socks4" | "socks4a" | "socks5") {
+            return invalid(
+                "unsupported_route",
+                "M002 route hops support only HTTP, SOCKS4, or SOCKS5",
+            );
+        }
+        if endpoint.is_empty()
+            || !endpoint
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || ".-:[]".contains(character))
+        {
+            return invalid(
+                "invalid_route",
+                "route endpoints must be credential-free ASCII host:port values",
+            );
+        }
+        validate_route_endpoint(endpoint)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn canonical_proxy_chain_text(chain: &str) -> String {
+    chain
+        .split("__")
+        .map(|hop| {
+            let (scheme, endpoint) = hop.split_once("://").expect("validated proxy hop");
+            let canonical_scheme = if scheme == "socks4a" {
+                "socks4"
+            } else {
+                scheme
+            };
+            let (host, port) = if let Some(bracketed) = endpoint.strip_prefix('[') {
+                let close = bracketed
+                    .find(']')
+                    .expect("validated bracketed proxy endpoint");
+                (&bracketed[..close], &bracketed[close + 2..])
+            } else {
+                endpoint.rsplit_once(':').expect("validated proxy endpoint")
+            };
+            let port = port.parse::<u16>().expect("validated proxy port");
+            let host = if host.contains(':') {
+                format!("[{host}]")
+            } else {
+                host.to_owned()
+            };
+            format!("{canonical_scheme}://{host}:{port}")
+        })
+        .collect::<Vec<_>>()
+        .join("__")
+}
+
+fn validate_route_endpoint(endpoint: &str) -> Result<(), PlanError> {
+    let (host, port) = if let Some(bracketed) = endpoint.strip_prefix('[') {
+        let Some(close) = bracketed.find(']') else {
+            return invalid("invalid_route", "bracketed route IPv6 host is incomplete");
+        };
+        let host = &bracketed[..close];
+        let suffix = &bracketed[close + 1..];
+        let Some(port) = suffix.strip_prefix(':') else {
+            return invalid("invalid_route", "bracketed route host requires a port");
+        };
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return invalid("invalid_route", "bracketed route host must be IPv6");
+        }
+        (host, port)
+    } else {
+        let Some((host, port)) = endpoint.rsplit_once(':') else {
+            return invalid("invalid_route", "route host requires an explicit port");
+        };
+        if host.is_empty() || host.contains(':') {
+            return invalid(
+                "invalid_route",
+                "route host must be a non-empty DNS name or IPv4 address",
+            );
+        }
+        (host, port)
+    };
+    let port = port.parse::<u16>().ok().filter(|port| *port > 0);
+    if port.is_none() {
+        return invalid("invalid_route", "route port must be between 1 and 65535");
+    }
+    if host.contains(':') {
+        return Ok(());
+    }
+    if !host
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || ".-".contains(character))
+    {
+        return invalid(
+            "invalid_route",
+            "route host contains unsupported characters",
+        );
+    }
+    Ok(())
+}
+
+fn validate_path_service_configs(services: &[Service]) -> Result<(), PlanError> {
+    for service in services {
+        for (key, value) in &service.config {
+            if !matches!(key.as_str(), "path" | "body_bytes" | "status") {
+                return invalid(
+                    "route_credentials_not_supported",
+                    format!(
+                        "network_path service {} config key {key} is not an approved non-secret key",
+                        service.name
+                    ),
+                );
+            }
+            let normalized_key = key
+                .as_str()
+                .to_ascii_lowercase()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>();
+            let normalized_value = value.to_ascii_lowercase();
+            let sensitive_key = [
+                "password",
+                "passwd",
+                "secret",
+                "token",
+                "credential",
+                "privatekey",
+                "apikey",
+                "authorization",
+            ]
+            .iter()
+            .any(|marker| normalized_key.contains(marker));
+            let sensitive_value = (normalized_value.contains("://")
+                && normalized_value.contains('@'))
+                || normalized_value.contains("bearer ")
+                || normalized_value.contains("basic ")
+                || (normalized_value.contains('?')
+                    && ["password", "secret", "token", "credential", "apikey"]
+                        .iter()
+                        .any(|marker| normalized_value.contains(marker)));
+            if sensitive_key || sensitive_value {
+                return invalid(
+                    "route_credentials_not_supported",
+                    format!(
+                        "network_path service {} config key {key} must not contain credentials",
+                        service.name
+                    ),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_stream_fault_plan(
+    faults: &[crate::network_path::StreamFaultRequest],
+    direction: &'static str,
+) -> Result<(), PlanError> {
+    let bound = 128usize;
+    if faults.len() > bound {
+        return invalid(
+            "invalid_bound",
+            format!(
+                "{direction} faults exceed bound {bound} (got {})",
+                faults.len()
+            ),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    for fault in faults {
+        if !seen.insert(fault.id.clone()) {
+            return invalid(
+                "duplicate_identity",
+                format!("{direction} fault id {} is duplicated", fault.id),
+            );
+        }
+        if let crate::network_path::StreamFaultKind::Slice {
+            average_size,
+            variation,
+            ..
+        } = &fault.kind
+            && *variation >= u64::from(average_size.get())
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "slice variation {variation} must be strictly less than average_size {}",
+                    average_size.get()
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -824,6 +1263,14 @@ mod tests {
             other => panic!("expected validation error, got {other}"),
         }
     }
+    #[test]
+    fn proxy_chain_canonicalization_matches_native_alias_rules() {
+        assert_eq!(
+            canonical_proxy_chain_text("socks4a://proxy.example:1080"),
+            "socks4://proxy.example:1080"
+        );
+    }
+
     #[test]
     fn json_round_trip_and_version() {
         let plan = ExperimentPlan::from_json(VALID).unwrap();

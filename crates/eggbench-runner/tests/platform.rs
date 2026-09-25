@@ -70,6 +70,7 @@ fn plan() -> ResolvedPlan {
         },
         seed: None,
         paired: None,
+        network_path: None,
         warnings: Vec::new(),
     }
 }

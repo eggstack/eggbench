@@ -1,15 +1,18 @@
 //! Driver capability contracts and deterministic plan resolution.
 use crate::{
-    EnvironmentPolicy, ExperimentPlan, LoadMode, Name, PAIRED_SCHEDULE_V1, PairedArm, PlanError,
-    SchemaVersion, ServiceKind, Subject, Workload,
+    EnvironmentPolicy, ExperimentPlan, LoadMode, NETWORK_PATH_RNG_VERSION,
+    NETWORK_PATH_SEMANTICS_VERSION, Name, PAIRED_SCHEDULE_V1, PairedArm, PlanError, RouteRequest,
+    SchemaVersion, ServiceKind, StreamFaultPlanRequest, Subject, Workload,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-/// Current resolved-plan schema version (v2 adds `paired`).
-pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+/// Current resolved-plan schema version (v3 adds `network_path`).
+pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
 /// Previous resolved-plan schema version, still accepted on read.
+pub const RESOLVED_PLAN_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);
+/// Oldest resolved-plan schema version, still accepted on read.
 pub const RESOLVED_PLAN_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
 
 /// Independent adapter category; categories do not share a universal driver trait.
@@ -28,6 +31,8 @@ pub enum DriverCategory {
     Diagnostic,
     /// Local or future remote execution provider descriptor.
     ExecutionProvider,
+    /// Listener-free Eggress TCP route driver (Eggstack M002).
+    Route,
 }
 
 /// HTTP protocol version capability.
@@ -74,6 +79,11 @@ pub enum Capability {
     },
     /// Requires/uses an external binary.
     ExternalBinary,
+    /// Driver owns a custom dialer for the HTTP transport (Eggstack M002).
+    NetworkPath,
+    /// Driver produces a static, deterministic stream-fault plan
+    /// (Eggstack M002).
+    StreamFaultPlan,
 }
 
 /// Stable identity and advertised capabilities of one adapter.
@@ -194,8 +204,48 @@ pub struct ResolvedPlan {
     /// Resolved paired design; present only for paired plans.
     #[serde(default)]
     pub paired: Option<ResolvedPairedDesign>,
+    /// Resolved network path for schema-v3 plans; absent when not requested.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::plan::deserialize_present_optional"
+    )]
+    pub network_path: Option<ResolvedNetworkPath>,
     /// Non-fatal resolution diagnostics.
     pub warnings: Vec<ResolutionWarning>,
+}
+
+/// Resolved network path: the selected route/fault drivers and the
+/// credential-free request they lower from. Re-emitted in evidence as a
+/// first-class descriptor, not as a managed service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedNetworkPath {
+    /// Original schema-v3 route request (credential-free).
+    pub route: RouteRequest,
+    /// Selected route descriptor (e.g. `eggress-route`).
+    pub route_driver: ResolvedDriver,
+    /// Stable route/fault ordering semantics identity.
+    pub semantics_version: String,
+    /// Original schema-v3 stream-fault request, when present.
+    #[serde(default)]
+    pub stream_faults: Option<ResolvedStreamFaults>,
+}
+
+/// Resolved stream-fault composition.
+///
+/// Carries the fault driver identity plus the redaction-safe original
+/// request so per-invocation evidence can roll it forward without
+/// reconstructing the plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedStreamFaults {
+    /// Original schema-v3 stream-fault request.
+    pub request: StreamFaultPlanRequest,
+    /// Selected fault descriptor (e.g. `eggchaos-stream`).
+    pub fault_driver: ResolvedDriver,
+    /// Stable Eggchaos RNG identity.
+    pub rng_version: String,
 }
 
 /// Resolved paired baseline/candidate design.
@@ -336,6 +386,39 @@ pub fn resolve_plan(
         .insert(Capability::LoadMode {
             mode: workload_mode(&plan.workload),
         });
+    if plan.network_path.is_some() {
+        // Network-path requests require a workload driver that owns a
+        // custom dialer so route/fault plumbing lives in the executor.
+        required
+            .entry(DriverCategory::Workload)
+            .or_default()
+            .insert(Capability::NetworkPath);
+        required
+            .entry(DriverCategory::Route)
+            .or_default()
+            .insert(Capability::ProxyRouting);
+        if plan
+            .network_path
+            .as_ref()
+            .and_then(|path| path.stream_faults.as_ref())
+            .is_some()
+        {
+            required
+                .entry(DriverCategory::Fault)
+                .or_default()
+                .insert(Capability::StreamFaultPlan);
+        }
+        // External targets do not own a workload-side dialer; network-path
+        // assertions must live with a driver that owns transport.
+        if matches!(plan.subject, Subject::External { .. }) {
+            return Err(ResolveError::InvalidPlan(PlanError::Validation {
+                category: "workload_path_incompatible",
+                detail:
+                    "network_path is not compatible with a Subject::External experiment in M002"
+                        .to_owned(),
+            }));
+        }
+    }
     if !plan.services.is_empty() || matches!(plan.subject, Subject::ManagedCommand { .. }) {
         required.entry(DriverCategory::Service).or_default();
     }
@@ -351,7 +434,10 @@ pub fn resolve_plan(
     for (category, capabilities) in &required {
         let descriptor = select_driver(*category, &registry, options)?;
         validate_driver(descriptor, capabilities, options)?;
-        let path = options.executable_paths.get(&descriptor.name).cloned();
+        let path = descriptor
+            .external_process
+            .then(|| options.executable_paths.get(&descriptor.name).cloned())
+            .flatten();
         if descriptor.external_process && path.as_deref().is_none_or(str::is_empty) {
             return Err(ResolveError::MissingExecutablePath(descriptor.name.clone()));
         }
@@ -362,6 +448,10 @@ pub fn resolve_plan(
                 executable_path: path,
             },
         );
+    }
+
+    if let Some(path) = &plan.network_path {
+        validate_network_path_driver_contract(path, &drivers)?;
     }
 
     if !plan.telemetry.is_empty() {
@@ -385,7 +475,10 @@ pub fn resolve_plan(
         } else {
             let descriptor = select_driver(DriverCategory::Telemetry, &registry, options)?;
             validate_driver(descriptor, &BTreeSet::new(), options)?;
-            let path = options.executable_paths.get(&descriptor.name).cloned();
+            let path = descriptor
+                .external_process
+                .then(|| options.executable_paths.get(&descriptor.name).cloned())
+                .flatten();
             if descriptor.external_process && path.as_deref().is_none_or(str::is_empty) {
                 return Err(ResolveError::MissingExecutablePath(descriptor.name.clone()));
             }
@@ -462,6 +555,46 @@ pub fn resolve_plan(
         pairs: plan.trials.measured.get() / 2,
     });
 
+    let network_path = if let Some(network_path) = &plan.network_path {
+        let route_descriptor =
+            drivers
+                .get(&DriverCategory::Route)
+                .ok_or(ResolveError::MissingDriver {
+                    category: DriverCategory::Route,
+                })?;
+        if route_descriptor.descriptor.name != network_path.route.driver {
+            return Err(ResolveError::MissingDriver {
+                category: DriverCategory::Route,
+            });
+        }
+        let stream_faults = network_path.stream_faults.as_ref().map(|request| {
+            let fault_descriptor =
+                drivers
+                    .get(&DriverCategory::Fault)
+                    .ok_or(ResolveError::MissingDriver {
+                        category: DriverCategory::Fault,
+                    })?;
+            if fault_descriptor.descriptor.name != request.driver {
+                return Err(ResolveError::MissingDriver {
+                    category: DriverCategory::Fault,
+                });
+            }
+            Ok::<_, ResolveError>(ResolvedStreamFaults {
+                request: request.clone(),
+                fault_driver: fault_descriptor.clone(),
+                rng_version: NETWORK_PATH_RNG_VERSION.to_owned(),
+            })
+        });
+        Some(ResolvedNetworkPath {
+            route: network_path.route.clone(),
+            route_driver: route_descriptor.clone(),
+            semantics_version: NETWORK_PATH_SEMANTICS_VERSION.to_owned(),
+            stream_faults: stream_faults.transpose()?,
+        })
+    } else {
+        None
+    };
+
     Ok(ResolvedPlan {
         schema_version: RESOLVED_PLAN_SCHEMA_VERSION,
         source_plan_schema_version: plan.schema_version,
@@ -482,6 +615,7 @@ pub fn resolve_plan(
         artifact_bounds: plan.bounds,
         seed: plan.seed,
         paired,
+        network_path,
         warnings,
     })
 }
@@ -572,6 +706,108 @@ fn workload_target(workload: &Workload) -> &Name {
         | Workload::FiniteCount { target, .. }
         | Workload::TimeBounded { target, .. } => target,
     }
+}
+
+fn validate_network_path_driver_contract(
+    path: &crate::NetworkPathRequest,
+    drivers: &BTreeMap<DriverCategory, ResolvedDriver>,
+) -> Result<(), ResolveError> {
+    let invalid = |driver: &Name, detail: String| {
+        Err(ResolveError::InvalidPlan(PlanError::Validation {
+            category: "unsupported_network_path",
+            detail: format!("network-path driver {driver} {detail}"),
+        }))
+    };
+    let workload = drivers.get(&DriverCategory::Workload);
+    let Some(workload) = workload else {
+        return invalid(&path.route.driver, "has no transport workload".to_owned());
+    };
+    let workload_descriptor = &workload.descriptor;
+    if workload_descriptor.name.as_str() != "eggfetch-http"
+        || workload_descriptor.adapter_version.is_empty()
+        || workload_descriptor.adapter_version.len() > 128
+        || workload_descriptor.upstream_name != "eggfetch-core"
+        || workload_descriptor
+            .upstream_version
+            .as_deref()
+            .is_none_or(str::is_empty)
+        || !workload_descriptor
+            .capabilities
+            .contains(&Capability::NetworkPath)
+        || workload_descriptor.external_process
+        || workload.executable_path.is_some()
+    {
+        return invalid(
+            &workload_descriptor.name,
+            "must be the native Eggfetch NetworkPath workload".to_owned(),
+        );
+    }
+
+    let route = drivers.get(&DriverCategory::Route);
+    let Some(route) = route else {
+        return invalid(
+            &path.route.driver,
+            "has no selected route driver".to_owned(),
+        );
+    };
+    let route_descriptor = &route.descriptor;
+    if path.route.driver != route_descriptor.name {
+        return Err(ResolveError::MissingDriver {
+            category: DriverCategory::Route,
+        });
+    }
+    if route_descriptor.name.as_str() != "eggress-route"
+        || route_descriptor.adapter_version.is_empty()
+        || route_descriptor.adapter_version.len() > 128
+        || route_descriptor.upstream_name != "eggress-outbound"
+        || route_descriptor
+            .upstream_version
+            .as_deref()
+            .is_none_or(str::is_empty)
+        || !route_descriptor
+            .capabilities
+            .contains(&Capability::ProxyRouting)
+        || route_descriptor.external_process
+        || route.executable_path.is_some()
+    {
+        return invalid(
+            &route_descriptor.name,
+            "does not satisfy the canonical native Eggress route contract".to_owned(),
+        );
+    }
+
+    if let Some(faults) = &path.stream_faults {
+        let fault = drivers.get(&DriverCategory::Fault);
+        let Some(fault) = fault else {
+            return invalid(&faults.driver, "has no selected fault driver".to_owned());
+        };
+        let fault_descriptor = &fault.descriptor;
+        if faults.driver != fault_descriptor.name {
+            return Err(ResolveError::MissingDriver {
+                category: DriverCategory::Fault,
+            });
+        }
+        if fault_descriptor.name.as_str() != "eggchaos-stream"
+            || fault_descriptor.adapter_version.is_empty()
+            || fault_descriptor.adapter_version.len() > 128
+            || fault_descriptor.upstream_name != "eggchaos-core"
+            || fault_descriptor
+                .upstream_version
+                .as_deref()
+                .is_none_or(str::is_empty)
+            || !fault_descriptor
+                .capabilities
+                .contains(&Capability::StreamFaultPlan)
+            || fault_descriptor.external_process
+            || fault.executable_path.is_some()
+        {
+            return invalid(
+                &fault_descriptor.name,
+                "does not satisfy the canonical native Eggchaos stream contract".to_owned(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn workload_mode(workload: &Workload) -> LoadMode {

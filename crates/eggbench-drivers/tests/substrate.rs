@@ -231,6 +231,8 @@ fn production_catalog_registers_oracles_unconditionally() {
     expected.extend(["h2load".to_owned(), "iperf3".to_owned(), "oha".to_owned()]);
     #[cfg(feature = "eggstack-http")]
     expected.extend(["eggfetch-http".to_owned(), "eggserve-origin".to_owned()]);
+    #[cfg(feature = "eggstack-path")]
+    expected.extend(["eggress-route".to_owned(), "eggchaos-stream".to_owned()]);
     #[cfg(feature = "gregg")]
     expected.push("gregg".to_owned());
     expected.sort_unstable();

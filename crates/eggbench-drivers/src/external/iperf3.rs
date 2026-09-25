@@ -432,6 +432,7 @@ fn iperf3_output(outcome: &ExternalCommandOutcome, report: &Iperf3Report) -> Wor
         metrics,
         histograms: Vec::new(),
         error_counts: Vec::new(),
+        measurement_elapsed: None,
     }
 }
 

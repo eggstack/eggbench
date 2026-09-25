@@ -8,7 +8,7 @@
 use crate::{LocalEnvironmentCollector, SubjectSnapshot};
 use eggbench_core::{
     ArtifactBounds, ArtifactPath, ArtifactRole, BundleError, BundleWriter, EnvironmentFingerprint,
-    PairedRunRecord, ResolvedPlan, RunId, Sensitivity, Subject,
+    ExperimentPlan, PairedRunRecord, ResolvedPlan, RunId, Sensitivity, Subject,
 };
 use std::path::Path;
 
@@ -32,10 +32,75 @@ pub struct BundlePreparation<'a> {
     pub bounds: ArtifactBounds,
 }
 
+fn validate_source_plan(
+    bytes: &[u8],
+    media_type: &str,
+    resolved: &ResolvedPlan,
+) -> Result<ExperimentPlan, BundleError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    let source = match media_type {
+        "application/json" => ExperimentPlan::from_json(text),
+        "application/toml" => ExperimentPlan::from_toml(text),
+        _ => {
+            return Err(BundleError::InvalidManifest(
+                "unsupported source plan media type",
+            ));
+        }
+    }
+    .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    let source_path = &source.network_path;
+    let resolved_path = &resolved.network_path;
+    let path_matches = match (source_path, resolved_path) {
+        (None, None) => true,
+        (Some(source), Some(resolved)) => {
+            source.route == resolved.route
+                && source.stream_faults.as_ref()
+                    == resolved
+                        .stream_faults
+                        .as_ref()
+                        .map(|faults| &faults.request)
+        }
+        _ => false,
+    };
+    let paired_matches = match (&source.paired, &resolved.paired) {
+        (None, None) => true,
+        (Some(source), Some(resolved)) => {
+            source.baseline.service == resolved.baseline.service
+                && source.baseline.subject == resolved.baseline.subject
+                && source.candidate.service == resolved.candidate.service
+                && source.candidate.subject == resolved.candidate.subject
+                && resolved.schedule == eggbench_core::PAIRED_SCHEDULE_V1
+        }
+        _ => false,
+    };
+    if source.schema_version != resolved.source_plan_schema_version
+        || source.experiment != resolved.experiment
+        || source.subject != resolved.subject
+        || source.services != resolved.topology
+        || source.workload != resolved.workload
+        || source.trials != resolved.trials
+        || source.telemetry != resolved.telemetry
+        || source.metrics != resolved.metrics
+        || source.environment_policy != resolved.environment_policy
+        || source.seed != resolved.seed
+        || !paired_matches
+        || source.bounds != resolved.artifact_bounds
+        || !path_matches
+    {
+        return Err(BundleError::InvalidManifest(
+            "source plan contradicts the resolved plan",
+        ));
+    }
+    Ok(source)
+}
+
 /// Serialize the resolved plan to canonical JSON for artifact staging.
 fn resolved_plan_bytes(resolved: &ResolvedPlan) -> Result<Vec<u8>, BundleError> {
-    serde_json::to_vec_pretty(resolved)
-        .map_err(|error| BundleError::ManifestParse(error.to_string()))
+    let bytes = serde_json::to_vec_pretty(resolved)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    eggbench_core::validate_resolved_plan_bytes(&bytes)?;
+    Ok(bytes)
 }
 
 fn environment_bytes(environment: &EnvironmentFingerprint) -> Result<Vec<u8>, BundleError> {
@@ -52,6 +117,11 @@ fn environment_bytes(environment: &EnvironmentFingerprint) -> Result<Vec<u8>, Bu
 pub fn prepare_bundle(preparation: &BundlePreparation<'_>) -> Result<BundleWriter, BundleError> {
     preparation.environment.validate()?;
     preparation.subject_snapshot.validate()?;
+    validate_source_plan(
+        preparation.source_plan_bytes,
+        preparation.source_plan_media_type,
+        preparation.resolved_plan,
+    )?;
 
     let mut writer = BundleWriter::create(
         preparation.destination,
@@ -238,6 +308,28 @@ mod tests {
         }
     }
 
+    fn source_plan_bytes() -> Vec<u8> {
+        let bounds = bounds();
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "experiment": "smoke",
+            "subject": { "kind": "external", "target": "api", "revision": null, "digest": null },
+            "services": [],
+            "workload": { "kind": "finite_count", "target": "api", "requests": 1, "concurrency": 1 },
+            "trials": { "measured": 1, "warmup": 0, "cooldown_ms": null, "reset": { "kind": "none" }, "timeouts": {} },
+            "telemetry": [],
+            "metrics": [],
+            "environment_policy": { "kind": "strict_same_testbed" },
+            "seed": null,
+            "bounds": {
+                "artifact_count": bounds.artifact_count.get(),
+                "artifact_bytes": bounds.artifact_bytes,
+                "total_bytes": bounds.total_bytes
+            }
+        }))
+        .expect("source plan")
+    }
+
     fn environment() -> EnvironmentFingerprint {
         let mut fields = BTreeMap::new();
         fields.insert(
@@ -285,6 +377,7 @@ mod tests {
             artifact_bounds: bounds(),
             seed: None,
             paired: None,
+            network_path: None,
             warnings: Vec::new(),
         }
     }
@@ -300,11 +393,11 @@ mod tests {
         let resolved = resolved_plan_for_external_subject();
         let snapshot = subject_snapshot_for(&resolved);
         let environment = environment();
-        let plan_bytes = br#"{"experiment":"smoke"}"#;
+        let plan_bytes = source_plan_bytes();
         let preparation = BundlePreparation {
             destination: &destination,
             run_id: RunId::new(),
-            source_plan_bytes: plan_bytes,
+            source_plan_bytes: &plan_bytes,
             source_plan_media_type: "application/json",
             resolved_plan: &resolved,
             environment: &environment,
@@ -333,10 +426,11 @@ mod tests {
             },
         );
         let environment = EnvironmentFingerprint::new(fields);
+        let plan_bytes = source_plan_bytes();
         let preparation = BundlePreparation {
             destination: &destination,
             run_id: RunId::new(),
-            source_plan_bytes: br#"{"experiment":"smoke"}"#,
+            source_plan_bytes: &plan_bytes,
             source_plan_media_type: "application/json",
             resolved_plan: &resolved,
             environment: &environment,
@@ -365,10 +459,11 @@ mod tests {
         let environment = environment();
         let mut written = snapshot.clone();
         written.executable_sha256 = Some("deadbeef".repeat(8));
+        let plan_bytes = source_plan_bytes();
         let preparation = BundlePreparation {
             destination: &destination,
             run_id: RunId::new(),
-            source_plan_bytes: br#"{"experiment":"smoke"}"#,
+            source_plan_bytes: &plan_bytes,
             source_plan_media_type: "application/json",
             resolved_plan: &resolved,
             environment: &environment,

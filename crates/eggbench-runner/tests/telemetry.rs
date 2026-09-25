@@ -73,6 +73,7 @@ fn plan_with_telemetry(
         },
         seed: Some(7),
         paired: None,
+        network_path: None,
         warnings: Vec::new(),
     }
 }

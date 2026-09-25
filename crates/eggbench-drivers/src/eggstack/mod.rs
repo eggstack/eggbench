@@ -23,6 +23,8 @@
 
 mod fetch;
 mod origin;
+#[cfg(feature = "eggstack-path")]
+pub mod path;
 
 pub use fetch::EggfetchWorkload;
 pub use origin::EggServeOriginAdapter;
@@ -89,6 +91,8 @@ pub fn eggfetch_http_descriptor() -> DriverDescriptor {
     capabilities.insert(Capability::LoadMode {
         mode: LoadMode::ClosedLoop,
     });
+    #[cfg(feature = "eggstack-path")]
+    capabilities.insert(Capability::NetworkPath);
     let mut compatible = BTreeSet::new();
     compatible.insert(Name::new(EGGSERVE_ORIGIN_SERVICE_TYPE).expect("static service name"));
     DriverDescriptor {

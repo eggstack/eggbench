@@ -8,7 +8,7 @@ use crate::telemetry::{
 };
 use crate::{
     CleanupFailure, LifecycleOutcome, LocalSession, stage_lifecycle_logs, stage_lifecycle_metadata,
-    stage_runtime_topology,
+    stage_run_evidence, stage_runtime_topology,
 };
 use eggbench_core::{
     ArtifactPath, ArtifactRole, BundleError, BundleManifest, BundleWriter, ComparisonVerdict,
@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_PHASE_EVENTS: usize = 10_000;
 const MAX_WORKLOAD_ARTIFACTS_PER_INVOCATION: usize = 256;
+const NETWORK_PATH_EVIDENCE_BYTE_BOUND: u64 = 128 * 1024;
 const TRIAL_RESULT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
 /// Warmup record schema version (warmup records carry no arm/pair tags).
 const WARMUP_RECORD_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
@@ -54,6 +55,45 @@ pub enum InvocationKind {
     },
 }
 
+/// Signals the end of the timed workload portion of an invocation.
+#[derive(Clone)]
+pub struct MeasurementSignal {
+    sender: tokio::sync::watch::Sender<Option<Duration>>,
+}
+
+impl Default for MeasurementSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for MeasurementSignal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MeasurementSignal")
+            .finish_non_exhaustive()
+    }
+}
+
+impl MeasurementSignal {
+    /// Construct an unsignaled measurement boundary.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            sender: tokio::sync::watch::channel(None).0,
+        }
+    }
+
+    /// Mark the timed workload portion complete.
+    pub fn finish(&self, elapsed: Duration) {
+        self.sender.send_replace(Some(elapsed));
+    }
+
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<Option<Duration>> {
+        self.sender.subscribe()
+    }
+}
+
 /// Context passed to one workload invocation.
 #[derive(Debug, Clone)]
 pub struct InvocationContext {
@@ -73,6 +113,8 @@ pub struct InvocationContext {
     pub cancellation: CancellationToken,
     /// Runner safety deadline.
     pub timeout: Duration,
+    /// Completion signal for adapter post-processing outside measurement.
+    pub measurement: MeasurementSignal,
 }
 
 /// Context passed to workload cleanup.
@@ -97,6 +139,96 @@ pub struct WorkloadArtifact {
     pub bytes: Vec<u8>,
 }
 
+/// Optional run-level evidence returned after workload drain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunEvidenceArtifact {
+    name: String,
+    role_label: Name,
+    media_type: String,
+    sensitivity: Sensitivity,
+    bytes: Vec<u8>,
+    schema_version: SchemaVersion,
+}
+
+/// A typed run-evidence payload that validates itself before staging.
+pub trait RunEvidenceContract: Serialize {
+    /// Exact evidence schema version.
+    const SCHEMA_VERSION: SchemaVersion;
+
+    /// Validate all schema and cross-field invariants.
+    ///
+    /// # Errors
+    /// Returns a redaction-safe validation error.
+    fn validate_contract(&self) -> Result<(), BundleError>;
+}
+
+impl RunEvidenceArtifact {
+    /// Validate and serialize one typed run-evidence payload.
+    ///
+    /// # Errors
+    /// Returns contract validation or serialization failure.
+    pub fn from_contract<T: RunEvidenceContract>(
+        name: impl Into<String>,
+        role_label: Name,
+        media_type: impl Into<String>,
+        sensitivity: Sensitivity,
+        contract: &T,
+    ) -> Result<Self, BundleError> {
+        contract.validate_contract()?;
+        let bytes = serde_json::to_vec_pretty(contract)
+            .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+        if bytes.len() > 128 * 1024 {
+            return Err(BundleError::InvalidManifest(
+                "run evidence exceeds the 128 KiB artifact bound",
+            ));
+        }
+        Ok(Self {
+            name: name.into(),
+            role_label,
+            media_type: media_type.into(),
+            sensitivity,
+            bytes,
+            schema_version: T::SCHEMA_VERSION,
+        })
+    }
+
+    /// Bundle-relative artifact path.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Stable manifest role label.
+    #[must_use]
+    pub const fn role_label(&self) -> &Name {
+        &self.role_label
+    }
+
+    /// Artifact media type.
+    #[must_use]
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    /// Declared sensitivity.
+    #[must_use]
+    pub const fn sensitivity(&self) -> Sensitivity {
+        self.sensitivity
+    }
+
+    /// Serialized artifact bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Validated evidence schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> SchemaVersion {
+        self.schema_version
+    }
+}
+
 /// Result from a workload invocation: diagnostic files plus protocol-neutral
 /// raw metric inputs for post-measurement normalization.
 ///
@@ -114,6 +246,8 @@ pub struct WorkloadOutput {
     pub histograms: Vec<RawHistogramInput>,
     /// Raw error-category counts `(category, count)`.
     pub error_counts: Vec<(String, u64)>,
+    /// Adapter-measured workload duration excluding post-processing.
+    pub measurement_elapsed: Option<Duration>,
 }
 
 /// Redaction-safe operation failure category.
@@ -151,6 +285,14 @@ pub trait WorkloadExecutor: Send {
         &'a mut self,
         context: DrainContext,
     ) -> Pin<Box<dyn Future<Output = Result<(), FailureCategory>> + Send + 'a>>;
+
+    /// Return optional run-level evidence after drain and service teardown.
+    ///
+    /// # Errors
+    /// Returns [`BundleError`] when the adapter cannot serialize truthful evidence.
+    fn run_evidence(&mut self) -> Result<Option<RunEvidenceArtifact>, BundleError> {
+        Ok(None)
+    }
 }
 
 /// Context passed to a registered reset hook.
@@ -673,6 +815,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 kind: InvocationKind::Warmup { ordinal },
                 workload_override,
                 limit: config.warmup_timeout,
+                postprocess_limit: config.drain_timeout,
                 origin,
             })
             .await
@@ -832,11 +975,13 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 kind: InvocationKind::Measured { trial_id, arm },
                 workload_override,
                 limit: config.measurement_timeout,
+                postprocess_limit: config.drain_timeout,
                 origin,
             })
             .await
             {
                 InvocationResult::Completed(output, elapsed, start_offset_ns) => {
+                    let measurement_elapsed = output.measurement_elapsed.unwrap_or(elapsed);
                     state.workload_entered = true;
                     // Telemetry closes after the captured elapsed, even on
                     // later failure paths below.
@@ -858,7 +1003,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                             schema_version: TRIAL_RESULT_SCHEMA_VERSION,
                             trial_id,
                             measurement_start_offset_ns: start_offset_ns,
-                            measurement_elapsed_ns: nanos(elapsed),
+                            measurement_elapsed_ns: nanos(measurement_elapsed),
                             terminal_status: TrialExecutionStatus::Completed,
                             failure_category: None,
                             arm,
@@ -1270,6 +1415,26 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     {
         state.staging_error = Some(error);
     }
+    if state.staging_error.is_none() {
+        match executor.run_evidence() {
+            Ok(Some(evidence)) => {
+                if let Err(error) =
+                    validate_run_evidence_contract(&evidence, resolved.network_path.is_some())
+                {
+                    state.staging_error = Some(error);
+                } else if let Err(error) = stage_run_evidence(&mut state.writer, &evidence) {
+                    state.staging_error = Some(error);
+                }
+            }
+            Ok(None) if resolved.network_path.is_some() => {
+                state.staging_error = Some(BundleError::InvalidManifest(
+                    "network-path plan did not produce required network-path evidence",
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => state.staging_error = Some(error),
+        }
+    }
 
     // ===========================================================
     // Finalization phase: the in-memory finalization event is
@@ -1357,6 +1522,7 @@ struct InvocationRequest<'a, E: ?Sized> {
     /// selects the resolved workload unchanged.
     workload_override: Option<Workload>,
     limit: Duration,
+    postprocess_limit: Duration,
     origin: Instant,
 }
 
@@ -1372,9 +1538,12 @@ async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
         kind,
         workload_override,
         limit,
+        postprocess_limit,
         origin,
     } = request;
     let child = cancel.child_token();
+    let measurement = MeasurementSignal::new();
+    let mut measurement_receiver = measurement.subscribe();
     let context = InvocationContext {
         run_id,
         kind,
@@ -1383,15 +1552,33 @@ async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
         bindings: bindings.clone(),
         cancellation: child.clone(),
         timeout: limit,
+        measurement,
     };
     let start = Instant::now();
     let start_offset_ns = nanos(start.duration_since(origin));
-    let result = tokio::select! {
-        () = cancel.cancelled() => Err(FailureCategory::Cancelled),
-        result = timeout(limit, executor.execute(context)) => match result { Ok(result) => result, Err(_) => Err(FailureCategory::TimedOut) },
+    let mut execution = Box::pin(executor.execute(context));
+    let deadline = tokio::time::sleep(limit);
+    tokio::pin!(deadline);
+    let (result, reported_elapsed) = tokio::select! {
+        () = cancel.cancelled() => (Err(FailureCategory::Cancelled), None),
+        () = &mut deadline => (Err(FailureCategory::TimedOut), None),
+        result = &mut execution => (result, None),
+        changed = measurement_receiver.changed() => {
+            let snapshot = measurement_receiver.borrow();
+            let reported_elapsed = *snapshot;
+            let result = tokio::select! {
+                () = cancel.cancelled() => Err(FailureCategory::Cancelled),
+                result = timeout(postprocess_limit, &mut execution) => match result {
+                    Ok(result) => result,
+                    Err(_) => Err(FailureCategory::TimedOut),
+                },
+            };
+            let _ = changed;
+            (result, reported_elapsed)
+        }
     };
     child.cancel();
-    let elapsed = start.elapsed();
+    let elapsed = reported_elapsed.unwrap_or_else(|| start.elapsed());
     match result {
         Ok(output) => InvocationResult::Completed(output, elapsed, start_offset_ns),
         Err(category) => InvocationResult::Failure(category, elapsed, start_offset_ns),
@@ -1601,6 +1788,52 @@ fn telemetry_byte_estimate(
     })
 }
 
+fn validate_run_evidence_contract(
+    evidence: &RunEvidenceArtifact,
+    network_path_required: bool,
+) -> Result<(), BundleError> {
+    let is_network_path = evidence.name() == "network-path.json";
+    if network_path_required {
+        if !is_network_path
+            || evidence.role_label().as_str() != "network-path"
+            || evidence.media_type() != "application/json"
+            || evidence.sensitivity() != Sensitivity::Redacted
+            || evidence.schema_version() != SchemaVersion(1)
+        {
+            return Err(BundleError::InvalidManifest(
+                "network-path run evidence metadata is invalid",
+            ));
+        }
+        let value: serde_json::Value = serde_json::from_slice(&evidence.bytes)
+            .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+        if value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1_u64)
+            || !value.is_object()
+            || [
+                "route",
+                "route_driver",
+                "eggress_outbound_version",
+                "semantics",
+                "diagnostics",
+                "policy_mode",
+            ]
+            .iter()
+            .any(|key| value.get(*key).is_none())
+        {
+            return Err(BundleError::InvalidManifest(
+                "network-path run evidence schema is unsupported",
+            ));
+        }
+    } else if is_network_path {
+        return Err(BundleError::InvalidManifest(
+            "network-path evidence is not allowed for a path-free plan",
+        ));
+    }
+    Ok(())
+}
+
 /// Byte bound for the `lifecycle/lifecycle.json` evidence artifact.
 fn lifecycle_byte_bound(identities: &[String]) -> Result<u64, OrchestrationError> {
     u64::try_from(identities.len())
@@ -1636,6 +1869,7 @@ fn topology_byte_bound(identities: &[String]) -> Result<u64, OrchestrationError>
         ))
 }
 
+#[allow(clippy::too_many_lines)] // Keep mandatory artifact reservations auditable in one pass.
 fn preflight_evidence_capacity(
     writer: &BundleWriter,
     session: &LocalSession,
@@ -1654,6 +1888,7 @@ fn preflight_evidence_capacity(
     // Each measured trial stages `result.json` plus normalized `metrics.json`.
     // Requested telemetry adds per-trial collector artifacts on top.
     let telemetry_artifact_count = telemetry_artifact_count(measured, resolved)?;
+    let network_path_artifact_count = usize::from(resolved.network_path.is_some());
     let required_count = warmups
         .checked_add(
             measured
@@ -1663,6 +1898,7 @@ fn preflight_evidence_capacity(
                 ))?,
         )
         .and_then(|count| count.checked_add(3)) // phase timeline, lifecycle metadata, runtime topology
+        .and_then(|count| count.checked_add(network_path_artifact_count))
         .and_then(|count| count.checked_add(log_artifact_count))
         .and_then(|count| count.checked_add(telemetry_artifact_count))
         .ok_or(OrchestrationError::Preflight(
@@ -1685,11 +1921,16 @@ fn preflight_evidence_capacity(
     // Runtime-topology evidence carries one entry per identity plus the
     // startup-established non-secret bindings.
     let topology_bytes = topology_byte_bound(&identities)?;
+    let network_path_bytes = resolved
+        .network_path
+        .as_ref()
+        .map_or(0, |_| NETWORK_PATH_EVIDENCE_BYTE_BOUND);
     let telemetry_bytes = telemetry_byte_estimate(resolved)?;
     if writer.max_artifact_bytes()
         < phase_bytes
             .max(lifecycle_bytes)
             .max(topology_bytes)
+            .max(network_path_bytes)
             .max(telemetry_bytes.floor)
             .max(512)
     {
@@ -1701,6 +1942,7 @@ fn preflight_evidence_capacity(
     let mut required_bytes = phase_bytes
         .checked_add(lifecycle_bytes)
         .and_then(|bytes| bytes.checked_add(topology_bytes))
+        .and_then(|bytes| bytes.checked_add(network_path_bytes))
         .and_then(|bytes| bytes.checked_add(u64::try_from(warmups).ok()?.checked_mul(512)?))
         .and_then(|bytes| {
             // `result.json` plus normalized `metrics.json` per measured trial.
@@ -2200,6 +2442,7 @@ impl WorkloadExecutor for FakeWorkload {
                     metrics,
                     histograms,
                     error_counts,
+                    measurement_elapsed: None,
                 })
             }
         })

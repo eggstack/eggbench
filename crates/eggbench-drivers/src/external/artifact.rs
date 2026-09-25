@@ -44,6 +44,7 @@ pub fn workload_output_from_outcome(
         metrics: Vec::new(),
         histograms: Vec::new(),
         error_counts: Vec::new(),
+        measurement_elapsed: None,
     }
 }
 
