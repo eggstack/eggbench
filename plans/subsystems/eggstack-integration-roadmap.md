@@ -148,7 +148,7 @@ Status: closed. Implementation plan: `plans/implementation/eggstack-integration/
 
 ### M003 — Replay and diagnostics
 
-Status: ready for handoff; M001/M002 integration seams are closed and hosted-qualified.
+Status: ready for plan authoring/research; M001/M002 integration seams are closed and hosted-qualified. No M003 implementation plan is registered yet.
 
 ### M004 — Eggsec workload/correctness adapter
 
