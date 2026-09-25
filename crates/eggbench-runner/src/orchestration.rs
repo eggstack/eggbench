@@ -1,6 +1,10 @@
 //! Local run phase orchestration above the process-owning [`LocalSession`].
 
 use crate::DEFAULT_SUBJECT_LOG_LIMIT_BYTES;
+use crate::diagnostics::{
+    DiagnosticContext, DiagnosticDisposition, DiagnosticExecutionRecord, DiagnosticRegistry,
+    DiagnosticsIndex,
+};
 use crate::service::RuntimeBindings;
 use crate::telemetry::{
     TelemetryError, TelemetryOutput, TelemetryPreflightContext, TelemetryRegistry,
@@ -18,6 +22,7 @@ use eggbench_core::{
     Workload, normalize_trial_metrics, trial_metrics_path,
 };
 use serde::{Deserialize, Serialize};
+use sha2::Digest as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -270,6 +275,10 @@ pub enum FailureCategory {
     TeardownFailed,
     /// Trial telemetry collection failed outside measured workload timing.
     TelemetryFailed,
+    /// A required pre/post workload diagnostic reported a negative outcome
+    /// or operational failure. Optional diagnostic negatives never take this
+    /// category; they are recorded as warnings/evidence only.
+    DiagnosticFailed,
 }
 
 /// Object-safe asynchronous workload adapter.
@@ -510,6 +519,10 @@ pub enum PhaseKind {
     Reset,
     /// Configured post-reset stabilization delay.
     Cooldown,
+    /// Pre-workload one-shot diagnostics (after readiness, before warmups).
+    DiagnosticsPre,
+    /// Post-workload one-shot diagnostics (after drain, before teardown).
+    DiagnosticsPost,
     /// Workload-adapter cleanup.
     Drain,
     /// Managed-service teardown.
@@ -637,6 +650,8 @@ struct RunState {
     cleanup_failures: Vec<CleanupFailure>,
     /// Completed measured-trial descriptors ready for the manifest.
     trials: Vec<TrialDescriptor>,
+    /// Staged diagnostic execution records for the run-level index.
+    diagnostics: Vec<DiagnosticExecutionRecord>,
     /// Identities in spawn order.
     started: Vec<String>,
     /// Whether managed startup created at least one owned process.
@@ -657,6 +672,7 @@ impl RunState {
             primary_failure: None,
             cleanup_failures: Vec::new(),
             trials: Vec::new(),
+            diagnostics: Vec::new(),
             started: Vec::new(),
             services_started: false,
             workload_entered: false,
@@ -677,7 +693,14 @@ impl RunState {
 /// evidence failure plus any secondary cleanup failures observed while attempting mandatory
 /// drain and `LocalSession::shutdown`; the primary cause is never replaced by cleanup
 /// diagnostics. No failed evidence publication is represented as a valid finalized bundle.
-#[allow(clippy::too_many_lines)] // Keep the canonical phase transition order auditable in one place.
+/// Run resolved work through startup, warmups, measured trials, and cleanup.
+///
+/// See [`execute_run_with_diagnostics`]; this entry point runs with an empty
+/// diagnostic registry (plans requesting diagnostics fail closed at
+/// preflight).
+///
+/// # Errors
+/// Returns an error for preflight or evidence finalization failures.
 pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     session: &mut LocalSession,
     resolved: &eggbench_core::ResolvedPlan,
@@ -687,15 +710,53 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     writer: BundleWriter,
     cancel: &CancellationToken,
 ) -> Result<RunOutcome, OrchestrationError> {
+    let mut diagnostics = DiagnosticRegistry::new();
+    execute_run_with_diagnostics(
+        session,
+        resolved,
+        executor,
+        resets,
+        telemetry,
+        &mut diagnostics,
+        writer,
+        cancel,
+    )
+    .await
+}
+
+/// Run resolved work with one-shot pre/post workload diagnostics.
+///
+/// Lifecycle: startup/readiness → pre diagnostics → warmups → measured
+/// trials → drain → post diagnostics → teardown → evidence. Diagnostics run
+/// outside every measured interval and never enter `TrialMetrics`.
+///
+/// # Errors
+/// Returns an error for preflight or evidence finalization failures.
+#[allow(clippy::too_many_lines)] // Keep the canonical phase transition order auditable in one place.
+#[allow(clippy::too_many_arguments)] // The diagnostic registry joins the established run context.
+pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
+    session: &mut LocalSession,
+    resolved: &eggbench_core::ResolvedPlan,
+    executor: &mut E,
+    resets: &ResetRegistry,
+    telemetry: &mut TelemetryRegistry,
+    diagnostics: &mut DiagnosticRegistry,
+    writer: BundleWriter,
+    cancel: &CancellationToken,
+) -> Result<RunOutcome, OrchestrationError> {
     let config = preflight(resolved, resets)?;
     let trial_count = resolved.trials.measured.get();
     let warmup_count = resolved.trials.warmup;
+    let diagnostic_executions = diagnostic_execution_count(resolved);
     let phase_bound = usize::try_from(warmup_count)
         .ok()
         .and_then(|warmups| {
-            usize::try_from(trial_count)
-                .ok()
-                .and_then(|trials| warmups.checked_add(trials.checked_mul(3)?)?.checked_add(2))
+            usize::try_from(trial_count).ok().and_then(|trials| {
+                warmups
+                    .checked_add(trials.checked_mul(3)?)?
+                    .checked_add(2)?
+                    .checked_add(diagnostic_executions)
+            })
         })
         .ok_or(OrchestrationError::Preflight("phase event bound overflow"))?;
     if phase_bound > MAX_PHASE_EVENTS {
@@ -717,6 +778,14 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     } else {
         preflight_telemetry(telemetry, resolved, run_id, &config, cancel).await?
     };
+
+    // ---- Diagnostic preflight ----
+    // Before managed startup: every requested diagnostic source must have a
+    // registered executor. Missing executors fail before startup; no
+    // diagnostic ever runs without an explicit registry entry.
+    if !cancel.is_cancelled() {
+        preflight_diagnostics(diagnostics, resolved)?;
+    }
 
     // ---- Startup / readiness ----
     if cancel.is_cancelled() {
@@ -787,6 +856,25 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
                 );
             }
         }
+    }
+
+    // ---- Pre-workload diagnostics ----
+    // After readiness, before warmups. Outside every measured interval.
+    // A required negative/failed pre diagnostic sets Invalid and skips all
+    // workload; optional negatives record evidence and continue. Cleanup
+    // still runs through the common tail.
+    if state.status == ExecutionStatus::Completed && state.staging_error.is_none() {
+        run_diagnostic_phase(
+            &mut state,
+            resolved,
+            diagnostics,
+            session.runtime_bindings().clone(),
+            run_id,
+            cancel,
+            origin,
+            eggbench_core::DiagnosticPhase::PreWorkload,
+        )
+        .await;
     }
 
     // ---- Warmups ----
@@ -1349,6 +1437,27 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
         }
     }
 
+    // ---- Post-workload diagnostics ----
+    // After workload drain, before teardown, while services are still alive.
+    // Post diagnostics run after completed or workload-failed execution when
+    // services remain available (useful failure context). Under cancellation
+    // they are skipped with `skipped_due_to_cancellation` and Cancelled stays
+    // primary. A required post negative after Completed sets Invalid; it
+    // never masks an earlier workload/cancellation failure.
+    if state.services_started {
+        run_diagnostic_phase(
+            &mut state,
+            resolved,
+            diagnostics,
+            session.runtime_bindings().clone(),
+            run_id,
+            cancel,
+            origin,
+            eggbench_core::DiagnosticPhase::PostWorkload,
+        )
+        .await;
+    }
+
     // ---- Managed-service teardown ----
     let teardown_index = begin_phase(&mut state.phases, PhaseKind::Teardown, None, None, origin);
     let stopped_order = if state.services_started {
@@ -1412,6 +1521,14 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     // cause without rewriting cleanup or workload outcomes.
     if state.staging_error.is_none()
         && let Err(error) = stage_runtime_topology(session, &mut state.writer)
+    {
+        state.staging_error = Some(error);
+    }
+    // Diagnostic index stages after all per-diagnostic reports exist.
+    // Timings inside reports remain raw diagnostic evidence; nothing here
+    // enters TrialMetrics.
+    if state.staging_error.is_none()
+        && let Err(error) = stage_diagnostics_index(&mut state, resolved)
     {
         state.staging_error = Some(error);
     }
@@ -1736,6 +1853,446 @@ async fn preflight_telemetry(
         }
     }
     Ok(plan)
+}
+
+/// Number of diagnostic executions in one run: requests with `Both` run twice.
+fn diagnostic_execution_count(resolved: &eggbench_core::ResolvedPlan) -> usize {
+    resolved
+        .diagnostics
+        .iter()
+        .map(|request| {
+            if request.phase == eggbench_core::DiagnosticPhase::Both {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+/// Preflight diagnostic executors before managed startup.
+///
+/// Every requested diagnostic source must have a registered executor.
+/// Missing executors fail before startup; no diagnostic runs unregistered.
+fn preflight_diagnostics(
+    diagnostics: &DiagnosticRegistry,
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<(), OrchestrationError> {
+    for request in &resolved.diagnostics {
+        if diagnostics.lookup(request.source.as_str()).is_none() {
+            return Err(OrchestrationError::Preflight(
+                "required diagnostic executor is not registered",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Execute one lifecycle diagnostic slot (pre or post) in plan order.
+///
+/// Pre slot: required negative/failed outcomes set `Invalid` and skip all
+/// workload; optional outcomes record evidence and continue. Post slot:
+/// required negatives after `Completed` set `Invalid`; earlier failures are
+/// never masked. Cancellation skips post diagnostics with
+/// `skipped_due_to_cancellation`.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)] // One diagnostic slot needs the full lifecycle context.
+async fn run_diagnostic_phase(
+    state: &mut RunState,
+    resolved: &eggbench_core::ResolvedPlan,
+    diagnostics: &mut DiagnosticRegistry,
+    bindings: RuntimeBindings,
+    run_id: RunId,
+    cancel: &CancellationToken,
+    origin: Instant,
+    slot: eggbench_core::DiagnosticPhase,
+) {
+    use eggbench_core::DiagnosticPhase::{Both, PostWorkload, PreWorkload};
+    let is_pre = slot == PreWorkload;
+    for request in resolved.diagnostics.clone() {
+        let applies = matches!(
+            (slot, request.phase),
+            (PreWorkload, PreWorkload | Both) | (PostWorkload, PostWorkload | Both)
+        );
+        if !applies {
+            continue;
+        }
+        // Post diagnostics never prolong a cancelled shutdown.
+        if !is_pre && cancel.is_cancelled() {
+            record_skipped_diagnostic(state, &request, slot, "skipped_due_to_cancellation");
+            continue;
+        }
+        if cancel.is_cancelled() {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+            record_skipped_diagnostic(state, &request, slot, "skipped_due_to_cancellation");
+            break;
+        }
+        let kind = if is_pre {
+            PhaseKind::DiagnosticsPre
+        } else {
+            PhaseKind::DiagnosticsPost
+        };
+        let index = begin_phase(&mut state.phases, kind, None, None, origin);
+        let Some(handle) = diagnostics.lookup(request.source.as_str()) else {
+            state.staging_error = Some(BundleError::InvalidManifest(
+                "diagnostic executor is not registered",
+            ));
+            state.status = ExecutionStatus::Failed;
+            finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+            break;
+        };
+        let context = DiagnosticContext {
+            run_id,
+            diagnostic_id: request.id.as_str().to_owned(),
+            phase: slot,
+            target: request.target.as_str().to_owned(),
+            probes: request.probes.clone(),
+            required: request.required,
+            bindings: bindings.clone(),
+            cancellation: cancel.child_token(),
+            timeout: Duration::from_millis(request.timeout_ms.get()),
+        };
+        let outcome = {
+            let mut guard = handle.lock().await;
+            let exec_timeout = context
+                .timeout
+                .checked_add(Duration::from_secs(5))
+                .unwrap_or(context.timeout);
+            tokio::select! {
+                () = cancel.cancelled() => Err(FailureCategory::Cancelled),
+                result = timeout(exec_timeout, guard.execute(context)) => match result {
+                    Ok(result) => result,
+                    Err(_) => Err(FailureCategory::TimedOut),
+                },
+            }
+        };
+        match outcome {
+            Ok(output) => {
+                let terminal_negative = output.disposition == DiagnosticDisposition::Negative
+                    || output.disposition == DiagnosticDisposition::Failed;
+                match stage_diagnostic_record(
+                    state,
+                    &request,
+                    slot,
+                    &output,
+                    request.required && terminal_negative,
+                ) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        state.staging_error = Some(error);
+                        state.status = ExecutionStatus::Failed;
+                        finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+                        break;
+                    }
+                }
+                if terminal_negative && request.required {
+                    if is_pre {
+                        state.status = ExecutionStatus::Invalid;
+                        state.primary_failure = Some(FailureCategory::DiagnosticFailed);
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            PhaseOutcome::Failed,
+                            Some(FailureCategory::DiagnosticFailed),
+                        );
+                        break;
+                    } else if state.status == ExecutionStatus::Completed {
+                        state.status = ExecutionStatus::Invalid;
+                        state.primary_failure = Some(FailureCategory::DiagnosticFailed);
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            PhaseOutcome::Failed,
+                            Some(FailureCategory::DiagnosticFailed),
+                        );
+                    } else {
+                        // Earlier workload/cancellation failure stands;
+                        // the diagnostic is secondary evidence.
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            PhaseOutcome::Failed,
+                            Some(FailureCategory::DiagnosticFailed),
+                        );
+                    }
+                } else {
+                    finish_phase(
+                        &mut state.phases,
+                        index,
+                        origin,
+                        if output.disposition == DiagnosticDisposition::Failed && !request.required
+                        {
+                            PhaseOutcome::Failed
+                        } else {
+                            PhaseOutcome::Completed
+                        },
+                        None,
+                    );
+                    if output.disposition == DiagnosticDisposition::Failed && !request.required {
+                        // Optional operational failure: evidence + warning
+                        // only; workload continues.
+                    }
+                }
+            }
+            Err(category) => {
+                let failed_output = crate::diagnostics::DiagnosticOutput {
+                    raw_report: b"{}".to_vec(),
+                    disposition: DiagnosticDisposition::Failed,
+                    producer: request.source.as_str().to_owned(),
+                    producer_version: String::new(),
+                    executable_sha256: String::new(),
+                    machine_schema: String::new(),
+                    report_status: format!("executor_{category:?}").to_lowercase(),
+                    probe_statuses: Vec::new(),
+                    warnings: vec![format!("diagnostic executor {category:?}")],
+                    skipped_reason: None,
+                };
+                if stage_diagnostic_record(state, &request, slot, &failed_output, false).is_err() {
+                    state.staging_error = Some(BundleError::InvalidManifest(
+                        "diagnostic evidence staging failed",
+                    ));
+                    state.status = ExecutionStatus::Failed;
+                    finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+                    break;
+                }
+                if request.required {
+                    if is_pre {
+                        state.status = if category == FailureCategory::Cancelled {
+                            ExecutionStatus::Cancelled
+                        } else {
+                            ExecutionStatus::Invalid
+                        };
+                        state.primary_failure = Some(category);
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            outcome_for(category),
+                            Some(category),
+                        );
+                        break;
+                    } else if state.status == ExecutionStatus::Completed {
+                        state.status = if category == FailureCategory::Cancelled {
+                            ExecutionStatus::Cancelled
+                        } else {
+                            ExecutionStatus::Invalid
+                        };
+                        state.primary_failure = Some(category);
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            outcome_for(category),
+                            Some(category),
+                        );
+                    } else {
+                        finish_phase(
+                            &mut state.phases,
+                            index,
+                            origin,
+                            outcome_for(category),
+                            Some(category),
+                        );
+                    }
+                } else {
+                    finish_phase(
+                        &mut state.phases,
+                        index,
+                        origin,
+                        PhaseOutcome::Completed,
+                        None,
+                    );
+                }
+            }
+        }
+        if cancel.is_cancelled() && state.status == ExecutionStatus::Completed {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+        }
+    }
+}
+
+/// Record a skipped diagnostic without executing (cancellation path).
+fn record_skipped_diagnostic(
+    state: &mut RunState,
+    request: &eggbench_core::DiagnosticRequest,
+    slot: eggbench_core::DiagnosticPhase,
+    reason: &str,
+) {
+    use eggbench_core::DiagnosticPhase::{Both, PostWorkload, PreWorkload};
+    let phase_label = match slot {
+        PreWorkload => "pre_workload",
+        PostWorkload => "post_workload",
+        Both => "both",
+    };
+    let artifact = format!(
+        "diagnostics/{}/{}.json",
+        short_phase(slot),
+        request.id.as_str()
+    );
+    state.diagnostics.push(DiagnosticExecutionRecord {
+        id: request.id.as_str().to_owned(),
+        phase: phase_label.to_owned(),
+        required: request.required,
+        target: request.target.as_str().to_owned(),
+        probes: request.probes.iter().copied().map(probe_label).collect(),
+        timeout_ms: request.timeout_ms.get(),
+        disposition: "skipped".to_owned(),
+        report_status: "skipped".to_owned(),
+        artifact,
+        artifact_sha256: format!("{:x}", sha2::Sha256::digest(b"{}")),
+        producer_version: String::new(),
+        executable_sha256: String::new(),
+        machine_schema: String::new(),
+        warnings: Vec::new(),
+        skipped_reason: Some(reason.to_owned()),
+    });
+}
+
+fn short_phase(slot: eggbench_core::DiagnosticPhase) -> &'static str {
+    match slot {
+        eggbench_core::DiagnosticPhase::PreWorkload => "pre",
+        eggbench_core::DiagnosticPhase::PostWorkload => "post",
+        eggbench_core::DiagnosticPhase::Both => "both",
+    }
+}
+
+fn probe_label(probe: eggbench_core::DiagnosticProbe) -> String {
+    match probe {
+        eggbench_core::DiagnosticProbe::Dns => "dns".to_owned(),
+        eggbench_core::DiagnosticProbe::Tcp => "tcp".to_owned(),
+        eggbench_core::DiagnosticProbe::Tls => "tls".to_owned(),
+        eggbench_core::DiagnosticProbe::Http => "http".to_owned(),
+    }
+}
+
+/// Stage one diagnostic raw report plus its index record.
+fn stage_diagnostic_record(
+    state: &mut RunState,
+    request: &eggbench_core::DiagnosticRequest,
+    slot: eggbench_core::DiagnosticPhase,
+    output: &crate::diagnostics::DiagnosticOutput,
+    _required_negative: bool,
+) -> Result<(), BundleError> {
+    if output.raw_report.len() as u64 > 4 * 1024 * 1024 {
+        return Err(BundleError::BoundExceeded("diagnostic report"));
+    }
+    let phase_label = match slot {
+        eggbench_core::DiagnosticPhase::PreWorkload => "pre_workload",
+        eggbench_core::DiagnosticPhase::PostWorkload => "post_workload",
+        eggbench_core::DiagnosticPhase::Both => "both",
+    };
+    let path = format!(
+        "diagnostics/{}/{}.json",
+        short_phase(slot),
+        request.id.as_str()
+    );
+    let artifact_path = ArtifactPath::new(path.clone())?;
+    let digest = format!("{:x}", sha2::Sha256::digest(&output.raw_report));
+    state.writer.add_artifact(
+        artifact_path,
+        ArtifactRole::Other {
+            label: crate::diagnostics::diagnostics_role_label(),
+        },
+        "application/json",
+        Sensitivity::Redacted,
+        output.raw_report.as_slice(),
+    )?;
+    let disposition = match output.disposition {
+        DiagnosticDisposition::Positive => "positive",
+        DiagnosticDisposition::Negative => "negative",
+        DiagnosticDisposition::Failed => "failed",
+        DiagnosticDisposition::Skipped => "skipped",
+    };
+    state.diagnostics.push(DiagnosticExecutionRecord {
+        id: request.id.as_str().to_owned(),
+        phase: phase_label.to_owned(),
+        required: request.required,
+        target: request.target.as_str().to_owned(),
+        probes: request.probes.iter().copied().map(probe_label).collect(),
+        timeout_ms: request.timeout_ms.get(),
+        disposition: disposition.to_owned(),
+        report_status: output.report_status.clone(),
+        artifact: path,
+        artifact_sha256: digest,
+        producer_version: output.producer_version.clone(),
+        executable_sha256: output.executable_sha256.clone(),
+        machine_schema: output.machine_schema.clone(),
+        warnings: output.warnings.clone(),
+        skipped_reason: output.skipped_reason.clone(),
+    });
+    Ok(())
+}
+
+/// Stage the run-level `diagnostics.json` index when diagnostics ran.
+fn stage_diagnostics_index(
+    state: &mut RunState,
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<(), BundleError> {
+    if resolved.diagnostics.is_empty() {
+        return Ok(());
+    }
+    if state.diagnostics.is_empty() {
+        // No diagnostic executed or skipped (for example cancellation before
+        // readiness): there is nothing to index and no provenance to claim.
+        return Ok(());
+    }
+    let diagnostic_driver = resolved
+        .drivers
+        .get(&eggbench_core::DriverCategory::Diagnostic);
+    let (executable_version, executable_sha256) = state
+        .diagnostics
+        .iter()
+        .find(|record| !record.producer_version.is_empty())
+        .map(|record| {
+            (
+                record.producer_version.clone(),
+                record.executable_sha256.clone(),
+            )
+        })
+        .unwrap_or_default();
+    let machine_schema = state
+        .diagnostics
+        .iter()
+        .find(|record| !record.machine_schema.is_empty())
+        .map_or_else(|| "0.3".to_owned(), |record| record.machine_schema.clone());
+    let adapter_version = diagnostic_driver.map_or_else(
+        || env!("CARGO_PKG_VERSION").to_owned(),
+        |driver| driver.descriptor.adapter_version.clone(),
+    );
+    let index = DiagnosticsIndex {
+        schema_version: SchemaVersion(1),
+        driver: "eggprobe".to_owned(),
+        adapter_version,
+        executable_version,
+        executable_sha256,
+        machine_schema,
+        executions: state.diagnostics.clone(),
+    };
+    index
+        .validate_contract()
+        .map_err(|_| BundleError::InvalidManifest("diagnostics index contract is invalid"))?;
+    let bytes = serde_json::to_vec_pretty(&index)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if bytes.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest(
+            "diagnostics index exceeds the 128 KiB bound",
+        ));
+    }
+    state.writer.add_artifact(
+        ArtifactPath::new("diagnostics.json")?,
+        ArtifactRole::Other {
+            label: crate::diagnostics::diagnostics_role_label(),
+        },
+        "application/json",
+        Sensitivity::Redacted,
+        bytes.as_slice(),
+    )?;
+    Ok(())
 }
 
 /// Per-artifact byte estimate for one telemetry artifact (for example the

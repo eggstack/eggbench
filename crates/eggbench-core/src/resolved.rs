@@ -88,6 +88,11 @@ pub enum Capability {
     /// `Eggbench` trial (Eggstack M003a). No `ClosedLoop`/`OpenLoop` claim is
     /// required for this capability.
     SemanticReplay,
+    /// Driver executes one diagnostic probe family (Eggstack M003b).
+    DiagnosticProbe {
+        /// Supported probe family.
+        probe: crate::DiagnosticProbe,
+    },
 }
 
 /// Stable identity and advertised capabilities of one adapter.
@@ -215,6 +220,9 @@ pub struct ResolvedPlan {
         deserialize_with = "crate::plan::deserialize_present_optional"
     )]
     pub network_path: Option<ResolvedNetworkPath>,
+    /// Resolved diagnostics for schema-v5 plans; empty when not requested.
+    #[serde(default)]
+    pub diagnostics: Vec<crate::DiagnosticRequest>,
     /// Non-fatal resolution diagnostics.
     pub warnings: Vec<ResolutionWarning>,
 }
@@ -436,6 +444,23 @@ pub fn resolve_plan(
     if !plan.services.is_empty() || matches!(plan.subject, Subject::ManagedCommand { .. }) {
         required.entry(DriverCategory::Service).or_default();
     }
+    if let Some(all) = plan.diagnostics.as_deref()
+        && !all.is_empty()
+    {
+        // Each requested probe family must be advertised by the selected
+        // Diagnostic driver; the M003b `eggprobe` descriptor claims
+        // DNS/TCP/TLS/HTTP only.
+        let mut families = BTreeSet::new();
+        for request in all {
+            for probe in &request.probes {
+                families.insert(Capability::DiagnosticProbe { probe: *probe });
+            }
+        }
+        required
+            .entry(DriverCategory::Diagnostic)
+            .or_default()
+            .extend(families);
+    }
     for (category, capabilities) in &options.required_capabilities {
         required
             .entry(*category)
@@ -630,6 +655,7 @@ pub fn resolve_plan(
         seed: plan.seed,
         paired,
         network_path,
+        diagnostics: plan.diagnostics.clone().unwrap_or_default(),
         warnings,
     })
 }

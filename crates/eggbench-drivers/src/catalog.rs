@@ -5,8 +5,9 @@
 //! (`eggserve-origin`) and the `Eggfetch` native HTTP workload
 //! (`eggfetch-http`); with the `gregg` feature it registers the `Gregg`
 //! host-telemetry driver (`gregg`). The external-process oracles (`oha`,
-//! `h2load`, `iperf3`) and the `EggReplay` semantic workload
-//! (`eggreplay-semantic`) register unconditionally. Without features and
+//! `h2load`, `iperf3`), the `EggReplay` semantic workload
+//! (`eggreplay-semantic`), and the `Eggprobe` pre/post diagnostic driver
+//! (`eggprobe`) register unconditionally. Without features and
 //! without installed tools only the external descriptors remain.
 //! Qualification fakes remain test/qualification-only and are never linked
 //! through this catalog.
@@ -57,6 +58,7 @@ impl DriverCatalog {
             crate::external::h2load_descriptor(),
             crate::external::iperf3_descriptor(),
             crate::external::eggreplay_descriptor(),
+            crate::external::eggprobe_descriptor(),
         ]);
         Self { descriptors }
     }
@@ -93,6 +95,14 @@ impl DriverCatalog {
             .find(|d| d.category == DriverCategory::Telemetry && d.name == *name)
     }
 
+    /// Look up a diagnostic adapter by canonical name.
+    #[must_use]
+    pub fn diagnostic(&self, name: &Name) -> Option<&DriverDescriptor> {
+        self.descriptors
+            .iter()
+            .find(|d| d.category == DriverCategory::Diagnostic && d.name == *name)
+    }
+
     /// Number of registered production drivers.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -120,6 +130,7 @@ mod tests {
     fn production_catalog_matches_feature() {
         let catalog = production_catalog();
         let mut expected: Vec<String> = vec![
+            "eggprobe".to_owned(),
             "eggreplay-semantic".to_owned(),
             "h2load".to_owned(),
             "iperf3".to_owned(),
@@ -153,6 +164,11 @@ mod tests {
             assert!(descriptor.external_process);
             assert!(!descriptor.default);
         }
+        let probe = Name::new("eggprobe").unwrap();
+        let descriptor = catalog.diagnostic(&probe).expect("eggprobe registered");
+        assert!(descriptor.external_process);
+        assert!(!descriptor.default);
+        assert!(catalog.workload(&probe).is_none());
     }
 
     #[test]
@@ -162,5 +178,6 @@ mod tests {
         assert!(catalog.workload(&name).is_none());
         assert!(catalog.service(&name).is_none());
         assert!(catalog.telemetry(&name).is_none());
+        assert!(catalog.diagnostic(&name).is_none());
     }
 }

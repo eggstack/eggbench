@@ -2343,3 +2343,170 @@ async fn doctor_reports_eggreplay_descriptor_and_absence_safe_preflight() {
         );
     }
 }
+
+fn write_diagnostics_v5_plan(dir: &std::path::Path) -> PathBuf {
+    let raw = std::fs::read_to_string(fixture_dir().join("minimal.json")).expect("read");
+    let mut value: Value = serde_json::from_str(&raw).expect("parse");
+    value["schema_version"] = serde_json::json!(5);
+    value["services"] = serde_json::json!([{
+        "name": "origin",
+        "kind": {"kind": "named", "service_type": "eggserve-origin"},
+        "lifecycle": "external",
+        "depends_on": [],
+        "config": {},
+        "readiness": null,
+        "shutdown": null,
+        "working_directory": null,
+        "log_limit_bytes": 4096,
+    }]);
+    value["workload"] = serde_json::json!({
+        "kind": "finite_count", "target": "origin",
+        "requests": 10, "concurrency": 1,
+    });
+    value["diagnostics"] = serde_json::json!([
+        {"id": "pre-check", "source": "eggprobe", "phase": "pre_workload",
+         "target": "origin", "probes": ["tcp", "http"],
+         "required": true, "timeout_ms": 5000},
+        {"id": "post-check", "source": "eggprobe", "phase": "post_workload",
+         "target": "origin", "probes": ["tcp"],
+         "required": false, "timeout_ms": 5000},
+    ]);
+    let path = dir.join("diagnostics-v5.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).expect("write");
+    path
+}
+
+#[tokio::test]
+async fn validate_accepts_diagnostics_v5() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_diagnostics_v5_plan(tmp.path());
+    let presented = execute(
+        Command::Validate {
+            plan,
+            input_format: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(presented.envelope.ok);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["schema_version"], 5);
+}
+
+#[tokio::test]
+async fn doctor_reports_eggprobe_descriptor_and_diagnostics_summary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_diagnostics_v5_plan(tmp.path());
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    let drivers = body["result"]["drivers"].as_array().unwrap();
+    let entry = drivers
+        .iter()
+        .find(|driver| driver["name"] == "eggprobe")
+        .expect("eggprobe descriptor reported");
+    assert_eq!(entry["category"], "Diagnostic");
+    assert_eq!(entry["external_process"], true);
+    let capabilities = entry["capabilities"].as_array().unwrap();
+    for family in ["Dns", "Tcp", "Tls", "Http"] {
+        assert!(
+            capabilities
+                .iter()
+                .any(|cap| cap.as_str().unwrap().contains(family)),
+            "{family} capability advertised"
+        );
+    }
+    let summary = &body["result"]["diagnostics"];
+    assert_eq!(summary["requested"], true);
+    assert_eq!(
+        summary["binary_present"],
+        Value::Bool(tool_present("eggprobe")),
+        "truthful binary presence"
+    );
+    for family in ["dns", "tcp", "tls", "http"] {
+        assert!(
+            summary["supported_families"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == family),
+            "{family} supported"
+        );
+    }
+    for family in ["icmp", "udp", "trace", "pmtu"] {
+        assert!(
+            summary["unsupported_families"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == family),
+            "{family} unsupported"
+        );
+    }
+    assert!(
+        summary["timing_note"]
+            .as_str()
+            .unwrap()
+            .contains("not a benchmark metric"),
+        "timings labeled diagnostic-only"
+    );
+    // Handshake vocabulary stays stable with or without an installed binary.
+    let handshake = summary["handshake"].as_str().unwrap();
+    if tool_present("eggprobe") {
+        assert_eq!(handshake, "pass", "live handshake against installed binary");
+    } else {
+        assert_eq!(handshake, "missing-binary", "absence-safe handshake");
+        let category = body["error"]["category"].as_str().unwrap();
+        // Without the native service adapters (default features) the
+        // Service selection fails first; with eggstack-http the missing
+        // eggprobe executable path is reported instead.
+        assert!(
+            matches!(category, "missing_driver" | "missing_executable_path"),
+            "absence-safe {category}"
+        );
+    }
+}
+
+/// M003b: without an `eggprobe` binary the run fails before managed startup.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn run_preflights_diagnostics_before_startup() {
+    if tool_present("eggprobe") {
+        eprintln!("skipping absence run: eggprobe installed");
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_diagnostics_v5_plan(tmp.path());
+    let bundle = tmp.path().join("bundle.eggb");
+    let presented = execute(
+        Command::Run {
+            plan,
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    let category = presented
+        .envelope
+        .error
+        .as_ref()
+        .expect("error")
+        .category
+        .as_str();
+    assert_eq!(
+        category, "missing_executable_path",
+        "pre-startup {category}"
+    );
+    assert!(!bundle.exists(), "no bundle published before startup");
+}

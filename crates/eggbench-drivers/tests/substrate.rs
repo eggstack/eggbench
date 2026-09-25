@@ -28,6 +28,7 @@ fn command(args: &[&str]) -> ExternalCommandSpec {
         cwd: None,
         env: BTreeMap::new(),
         stdin_null: true,
+        stdin_bytes: None,
         stdout_limit: 64 * 1024,
         stderr_limit: 64 * 1024,
         timeout: Duration::from_secs(10),
@@ -225,10 +226,12 @@ async fn raw_artifacts_are_deterministic_and_bounded() {
 #[test]
 fn production_catalog_registers_oracles_unconditionally() {
     let catalog = eggbench_drivers::production_catalog();
-    // The external-process drivers (oracles plus EggReplay) register in
-    // every build; only the Eggstack-native drivers are feature-gated.
+    // The external-process drivers (oracles plus EggReplay/Eggprobe)
+    // register in every build; only the Eggstack-native drivers are
+    // feature-gated.
     let mut expected: Vec<String> = Vec::new();
     expected.extend([
+        "eggprobe".to_owned(),
         "eggreplay-semantic".to_owned(),
         "h2load".to_owned(),
         "iperf3".to_owned(),

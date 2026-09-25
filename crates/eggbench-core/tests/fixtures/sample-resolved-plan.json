@@ -35,5 +35,6 @@
   "artifact_bounds": {"artifact_count": 256, "artifact_bytes": 16777216, "total_bytes": 268435456},
   "seed": 42,
   "paired": null,
+  "diagnostics": [],
   "warnings": []
 }

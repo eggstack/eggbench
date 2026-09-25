@@ -54,4 +54,16 @@ The driver is never the default; `eggfetch-http` remains the native default wher
 
 Fixture identity is digest-based (sorted relative paths, file lengths, SHA-256 contents, aggregate SHA-256), never path-based. `eggreplay validate --output json` (envelope schema 1) runs before startup; `eggreplay replay --route direct --output json` runs once per warmup/measured invocation. `RegressionReport` schema 2 is enforced and `finding_count` must match the report sum. Semantic mismatches are successful observations with `semantic_findings > 0`; only process failures become `WorkloadFailed`. Run evidence is `semantic-replay.json` (schema v1); per-trial raw JSON plus `eggreplay-summary.json` stay bounded.
 
+## Diagnostic capability matrix
+
+A v5 `diagnostics` request requires one `DiagnosticProbe` capability per requested family plus `ExternalBinary` before resolution succeeds:
+
+| Category | Required capability | Production descriptor |
+|---|---|---|
+| Diagnostic | `DiagnosticProbe{dns,tcp,tls,http}` | `eggprobe` / `eggprobe` (external process) |
+
+`Diagnostic` is distinct from `Telemetry` (repeated trial observation) and `Workload`. The `eggprobe` driver is never the default and claims only DNS/TCP/TLS/HTTP; ICMP/UDP/trace/PMTU are explicitly unsupported. Resolution pins the exact executable path; `run` preflight then performs the schema-0.3 compatibility handshake (`eggprobe run -` with a minimal plan on stdin) before managed startup, failing with `diagnostic_contract_unsupported` for schema-0.4 binaries even when the version string is still 0.1.1.
+
+The adapter lowers each request into a deterministic schema-0.3 plan (route Direct, one repetition, no retries, no assertions) from the target's bound `http_url`. DNS for literal-IP hostnames is deterministically not applicable; TLS requires an explicit `https_url` binding and is never inferred from the port. Exit 1 with a valid report is a negative diagnostic outcome, never a process failure. Run evidence is `diagnostics.json` (schema v1) plus bounded per-execution raw `ProbeReport` artifacts under `diagnostics/<pre|post>/<id>.json`. Probe timings stay diagnostic evidence and never become trial metrics.
+
 See [Eggstack HTTP](eggstack-http.md), [experiment plans](experiment-plan.md), [evidence bundles](evidence-bundle.md), and [comparison](comparison.md).

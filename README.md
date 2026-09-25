@@ -11,7 +11,7 @@ eggbench run      <plan> <bundle>    execute and finalize a bundle
 eggbench inspect  <bundle>           verify and summarize a finalized bundle
 ```
 
-Production resolution uses the catalog owned by `eggbench-drivers`. The external-process drivers (`oha`, `h2load`, `iperf3`, and `eggreplay-semantic`) are always catalogued. The `eggstack-http` feature adds the EggServe controlled origin and the native Eggfetch HTTP workload. The opt-in `eggstack-path` feature adds the listener-free Eggress route and deterministic Eggchaos stream-fault path:
+Production resolution uses the catalog owned by `eggbench-drivers`. The external-process drivers (`oha`, `h2load`, `iperf3`, `eggreplay-semantic`, and `eggprobe`) are always catalogued. The `eggstack-http` feature adds the EggServe controlled origin and the native Eggfetch HTTP workload. The opt-in `eggstack-path` feature adds the listener-free Eggress route and deterministic Eggchaos stream-fault path:
 
 ```text
 Eggfetch -> Eggress route -> Eggchaos accepted byte stream -> EggServe origin
@@ -21,7 +21,7 @@ Eggfetch -> Eggress route -> Eggchaos accepted byte stream -> EggServe origin
 
 Network-path runs are schema v3, use route-first/fault-second semantics, reject credential-bearing routes, and never fall back from a requested proxy route to a direct connection. One Eggfetch client is retained for the whole workload executor/run, so warmups and measured trials can reuse pooled physical connections. **Eggchaos faults are user-space accepted byte-stream impairments, never packet/datagram loss.**
 
-Complete examples are [`examples/eggstack-path.json`](examples/eggstack-path.json), the intentionally rejected [`examples/eggstack-path-paired-unsupported.json`](examples/eggstack-path-paired-unsupported.json), and the schema-v4 semantic replay [`examples/eggstack-replay.json`](examples/eggstack-replay.json). Semantic replay uses the external `eggreplay` JSON CLI (envelope 1, report 2) with digest-based fixture identity; one fixture replay is one trial and findings are correctness evidence, never latency.
+Complete examples are [`examples/eggstack-path.json`](examples/eggstack-path.json), the intentionally rejected [`examples/eggstack-path-paired-unsupported.json`](examples/eggstack-path-paired-unsupported.json), the schema-v4 semantic replay [`examples/eggstack-replay.json`](examples/eggstack-replay.json), and the schema-v5 replay-plus-diagnostics [`examples/eggstack-diagnostics.json`](examples/eggstack-diagnostics.json). Semantic replay uses the external `eggreplay` JSON CLI (envelope 1, report 2) with digest-based fixture identity; one fixture replay is one trial and findings are correctness evidence, never latency. Pre/post diagnostics use the external `eggprobe` JSON CLI (machine schema 0.3) outside measured intervals; probe timings are diagnostic evidence only.
 
 Measurement normalizes each measured trial into `trials/NNN/metrics.json`, with one observed, missing, or invalid record per requested metric. Comparison is offline and deterministic:
 

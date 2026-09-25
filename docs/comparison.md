@@ -27,6 +27,14 @@ A schema-v3 `network_path` is comparison-critical configuration, not runtime tel
 
 A change to any of these dimensions sets the path mismatch as a critical comparability mismatch. It does not invent a new verdict system: existing environment policy decides how the mismatch affects gates. Ephemeral ports, socket addresses, physical dial counts, observed hop counts, and other bounded runtime diagnostics are informational and do not make otherwise identical configurations incomparable.
 
+A schema-v5 `diagnostics` request is likewise comparison-critical diagnostic context, verified from `diagnostics.json` against the resolved requests:
+
+- presence and order of requests;
+- request IDs, lifecycle phase, required flag, target identity, requested probe kinds, and timeout policy;
+- Eggprobe producer version/digest and machine schema version.
+
+Observed probe statuses and timings are result evidence, never configuration identity. Under `strict_same_testbed`, a diagnostic configuration/provenance mismatch invalidates relative comparison through the same critical-mismatch path.
+
 The expected policy effects are:
 
 - `strict_same_testbed`: a critical path mismatch suppresses baseline-relative primary gating and yields an invalid gate disposition;

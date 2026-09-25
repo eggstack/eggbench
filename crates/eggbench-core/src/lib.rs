@@ -27,3 +27,5 @@ pub const EXPERIMENT_PLAN_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_3: SchemaVersion = SchemaVersion(3);
 /// Semantic-replay experiment-plan schema version (adds `SemanticReplay` workload).
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_4: SchemaVersion = SchemaVersion(4);
+/// Diagnostic experiment-plan schema version (adds `diagnostics`).
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_5: SchemaVersion = SchemaVersion(5);

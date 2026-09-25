@@ -1,7 +1,8 @@
 use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4, Name, NetworkPathRequest,
-    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_5, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
+    RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,8 +45,66 @@ pub struct ExperimentPlan {
         deserialize_with = "deserialize_present_optional"
     )]
     pub network_path: Option<NetworkPathRequest>,
+    /// Optional pre/post workload diagnostics (schema v5 only). Presence is
+    /// significant: an explicit field (even empty) on schemas v1-v4 fails
+    /// closed rather than silently accepting future semantics.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_optional"
+    )]
+    pub diagnostics: Option<Vec<DiagnosticRequest>>,
     /// Upper bounds for later evidence creation.
     pub bounds: ArtifactBounds,
+}
+
+/// One-shot lifecycle diagnostic request (schema v5, Eggstack M003b).
+///
+/// Diagnostics run outside measured trial timing: pre-workload after
+/// readiness/before warmups, post-workload after drain/before teardown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticRequest {
+    /// Stable diagnostic identity (unique per plan).
+    pub id: Name,
+    /// Diagnostic source; initially only `eggprobe` is supported.
+    pub source: Name,
+    /// Lifecycle phase(s) in which this diagnostic executes.
+    pub phase: DiagnosticPhase,
+    /// Target service or external target publishing a runtime binding.
+    pub target: Name,
+    /// Requested probe families (non-empty, bounded, no duplicates).
+    pub probes: Vec<DiagnosticProbe>,
+    /// Whether a negative/unsupported result invalidates the run.
+    pub required: bool,
+    /// Per-diagnostic timeout.
+    pub timeout_ms: DurationMs,
+}
+
+/// Lifecycle phase for one diagnostic request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticPhase {
+    /// After readiness, before warmups.
+    PreWorkload,
+    /// After workload drain, before teardown.
+    PostWorkload,
+    /// Both pre- and post-workload (two executions, one request).
+    Both,
+}
+
+/// Supported diagnostic probe families (M003b: DNS/TCP/TLS/HTTP only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticProbe {
+    /// DNS resolution of the target hostname.
+    Dns,
+    /// Direct TCP connectivity to the target host/port.
+    Tcp,
+    /// TLS handshake (requires HTTPS-capable binding at runtime).
+    Tls,
+    /// HTTP GET against the target `http_url` binding.
+    Http,
 }
 
 /// Subject declaration.
@@ -601,18 +660,33 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_2
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_3
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
-        // SemanticReplay is a schema-v4 workload; earlier schemas fail closed
+        // Diagnostics are a schema-v5 contract; an explicit field on
+        // earlier schemas fails closed rather than silently accepting
+        // future semantics (presence is significant, even when empty).
+        if self.diagnostics.is_some() && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5 {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "diagnostics require schema version 5 (got {})",
+                    self.schema_version.0
+                ),
+            );
+        }
+        // SemanticReplay was introduced in schema v4 and remains supported
+        // in v5 (combined replay + diagnostics). Earlier schemas fail closed
         // rather than silently accepting future semantics.
         if matches!(self.workload, Workload::SemanticReplay { .. })
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
         {
             return invalid(
                 "unsupported_option",
                 format!(
-                    "SemanticReplay workload requires schema version 4 (got {})",
+                    "SemanticReplay workload requires schema version 4 or 5 (got {})",
                     self.schema_version.0
                 ),
             );
@@ -626,6 +700,23 @@ impl ExperimentPlan {
             return invalid(
                 "workload_path_incompatible",
                 "SemanticReplay workload is incompatible with network_path in M003a",
+            );
+        }
+        // M003b: diagnostics bypass the benchmark network path by design.
+        // Presenting direct diagnostics as evidence about a routed/faulted
+        // path would be misleading, so the combination fails closed. This
+        // specific incompatibility is checked before the generic
+        // schema-version gate so callers see the stable
+        // diagnostic_path_incompatible category.
+        if self.network_path.is_some()
+            && self
+                .diagnostics
+                .as_deref()
+                .is_some_and(|all| !all.is_empty())
+        {
+            return invalid(
+                "diagnostic_path_incompatible",
+                "diagnostics are incompatible with network_path in M003b (diagnostics bypass the path)",
             );
         }
         // Schema-v3 is the only schema where `network_path` is permitted.
@@ -740,6 +831,13 @@ impl ExperimentPlan {
         ensure_acyclic(&self.services)?;
         validate_workload(&self.workload)?;
         validate_paired(self, &services)?;
+        // M003b: diagnostics bypass the benchmark network path by design.
+        // Presenting direct diagnostics as evidence about a routed/faulted
+        // path would be misleading, so the combination fails closed. This
+        // specific incompatibility is checked before the generic
+        // schema-version gate (see above) so callers see the stable
+        // diagnostic_path_incompatible category.
+        validate_diagnostics(self, &services)?;
         if self.trials.warmup > 1_000 {
             return invalid("invalid_bound", "warmup count exceeds 1000");
         }
@@ -999,6 +1097,102 @@ fn validate_semantic_fixture_path(fixture: &str) -> Result<(), PlanError> {
             "invalid_fixture",
             "SemanticReplay fixture path must use forward slashes",
         );
+    }
+    Ok(())
+}
+
+/// Maximum per-diagnostic timeout in milliseconds (ten minutes, M003b).
+/// The `DurationMs` type already guarantees nonzero; this tighter cap keeps
+/// one diagnostic from stalling lifecycle teardown. The adapter enforces
+/// the same bound at execution.
+pub const MAX_DIAGNOSTIC_TIMEOUT_MS: u64 = 600_000;
+
+/// Validate M003b diagnostic requests: bounded, source-pinned, target-bound,
+/// and duplicate-free. Runtime binding checks (TLS/HTTP URL availability)
+/// happen at execution time against startup-established bindings.
+fn validate_diagnostics(
+    plan: &ExperimentPlan,
+    services: &BTreeMap<Name, &Service>,
+) -> Result<(), PlanError> {
+    let all = plan.diagnostics.as_deref().unwrap_or(&[]);
+    if all.len() > 32 {
+        return invalid("invalid_bound", "at most 32 diagnostics are allowed");
+    }
+    let mut seen = BTreeSet::new();
+    for request in all {
+        if !seen.insert(request.id.clone()) {
+            return invalid(
+                "duplicate_identity",
+                format!("duplicate diagnostic {}", request.id),
+            );
+        }
+        // Diagnostic IDs become bundle artifact path components
+        // (`diagnostics/<phase>/<id>.json`); restrict to a safe alphabet so
+        // no escaping or ambiguous paths can be constructed.
+        if request.id.as_str().len() > 64
+            || !request
+                .id
+                .as_str()
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "diagnostic {} id must be 1..=64 ASCII alphanumeric/_/-",
+                    request.id
+                ),
+            );
+        }
+        if request.source.as_str() != "eggprobe" {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "diagnostic {} source must be eggprobe in M003b (got {})",
+                    request.id, request.source
+                ),
+            );
+        }
+        if request.probes.is_empty() || request.probes.len() > 16 {
+            return invalid(
+                "invalid_bound",
+                format!("diagnostic {} must request 1..=16 probes", request.id),
+            );
+        }
+        let mut probe_seen = BTreeSet::new();
+        for probe in &request.probes {
+            if !probe_seen.insert(*probe) {
+                return invalid(
+                    "duplicate_identity",
+                    format!("diagnostic {} has duplicate probe", request.id),
+                );
+            }
+        }
+        // DurationMs already guarantees nonzero; cap one diagnostic at ten
+        // minutes so lifecycle teardown stays bounded (mirrors the adapter).
+        if request.timeout_ms.get() > MAX_DIAGNOSTIC_TIMEOUT_MS {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "diagnostic {} timeout exceeds {MAX_DIAGNOSTIC_TIMEOUT_MS}ms",
+                    request.id
+                ),
+            );
+        }
+        let target = &request.target;
+        if !services.contains_key(target) {
+            let is_external =
+                matches!(&plan.subject, Subject::External { target: ext, .. } if ext == target);
+            if !is_external {
+                return invalid(
+                    "missing_reference",
+                    format!(
+                        "diagnostic {} target {target} is neither a declared service nor the subject's external target",
+                        request.id
+                    ),
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -1782,5 +1976,135 @@ mod tests {
         }
         // Absolute zero gate is the primary correctness use case.
         assert!(ExperimentPlan::from_json(&semantic_value().to_string()).is_ok());
+    }
+
+    fn diagnostic_value() -> serde_json::Value {
+        let mut value = semantic_value();
+        value["schema_version"] = 5.into();
+        value["diagnostics"] = serde_json::json!([{
+            "id": "pre-check",
+            "source": "eggprobe",
+            "phase": "pre_workload",
+            "target": "origin",
+            "probes": ["dns", "tcp", "http"],
+            "required": true,
+            "timeout_ms": 5000,
+        }]);
+        value
+    }
+
+    #[test]
+    fn v5_diagnostics_round_trip_and_v1_v4_compat() {
+        // v1-v4 plans without diagnostics remain readable.
+        assert!(ExperimentPlan::from_json(VALID).is_ok());
+        let plan = ExperimentPlan::from_json(&diagnostic_value().to_string()).unwrap();
+        assert_eq!(plan.schema_version.0, 5);
+        assert_eq!(plan.diagnostics.as_deref().unwrap_or(&[]).len(), 1);
+        let round = ExperimentPlan::from_json(&plan.to_json().unwrap()).unwrap();
+        assert_eq!(plan, round);
+        let toml = ExperimentPlan::from_toml(&plan.to_toml().unwrap()).unwrap();
+        assert_eq!(plan, toml);
+    }
+
+    #[test]
+    fn v5_empty_diagnostics_is_valid_but_explicit_field_rejected_before_v5() {
+        // Explicit empty diagnostics on v5 is a valid no-op.
+        let mut value = diagnostic_value();
+        value["diagnostics"] = serde_json::json!([]);
+        assert!(ExperimentPlan::from_json(&value.to_string()).is_ok());
+        // An explicit field (even empty) on earlier schemas fails closed.
+        for version in [1, 2, 3, 4] {
+            let mut legacy = diagnostic_value();
+            legacy["schema_version"] = version.into();
+            assert_eq!(
+                error_category(ExperimentPlan::from_json(&legacy.to_string()).map(|_| ())),
+                "unsupported_option",
+                "version={version}"
+            );
+            legacy["diagnostics"] = serde_json::json!([]);
+            assert_eq!(
+                error_category(ExperimentPlan::from_json(&legacy.to_string()).map(|_| ())),
+                "unsupported_option",
+                "empty diagnostics on version={version}"
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostic_requests_validate_phases_bounds_and_identity() {
+        // Both-phase request is valid.
+        let mut value = diagnostic_value();
+        value["diagnostics"][0]["phase"] = serde_json::json!("both");
+        value["diagnostics"][0]["id"] = serde_json::json!("both-check");
+        assert!(ExperimentPlan::from_json(&value.to_string()).is_ok());
+
+        // Duplicate IDs fail closed.
+        let mut value = diagnostic_value();
+        value["diagnostics"] = serde_json::json!([
+            {"id": "dup", "source": "eggprobe", "phase": "pre_workload",
+             "target": "origin", "probes": ["tcp"], "required": true, "timeout_ms": 1000},
+            {"id": "dup", "source": "eggprobe", "phase": "post_workload",
+             "target": "origin", "probes": ["tcp"], "required": false, "timeout_ms": 1000},
+        ]);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "duplicate_identity"
+        );
+
+        // Unsupported source fails closed.
+        let mut value = diagnostic_value();
+        value["diagnostics"][0]["source"] = serde_json::json!("other");
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "unsupported_option"
+        );
+
+        // Duplicate probes fail closed.
+        let mut value = diagnostic_value();
+        value["diagnostics"][0]["probes"] = serde_json::json!(["tcp", "tcp"]);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "duplicate_identity"
+        );
+
+        // Empty probe set and oversized timeout fail closed.
+        let mut value = diagnostic_value();
+        value["diagnostics"][0]["probes"] = serde_json::json!([]);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+        let mut value = diagnostic_value();
+        value["diagnostics"][0]["timeout_ms"] = serde_json::json!(600_001);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+
+        // Unknown target fails closed.
+        let mut value = diagnostic_value();
+        value["diagnostics"][0]["target"] = serde_json::json!("missing");
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "missing_reference"
+        );
+    }
+
+    #[test]
+    fn diagnostics_reject_network_path_composition() {
+        let mut value = diagnostic_value();
+        // Use a non-replay workload so the M003b diagnostic gate (not the
+        // M003a replay gate) decides the combination.
+        value["workload"] = serde_json::json!({
+            "kind": "closed_loop", "target": "origin",
+            "concurrency": 1, "requests": 1,
+        });
+        value["network_path"] = serde_json::json!({
+            "route": {"driver": "eggress-route", "mode": {"kind": "direct"}},
+        });
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "diagnostic_path_incompatible"
+        );
     }
 }

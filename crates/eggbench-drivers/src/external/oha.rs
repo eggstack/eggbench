@@ -162,6 +162,7 @@ impl WorkloadExecutor for OhaWorkload {
                 cwd: None,
                 env: driver_env(),
                 stdin_null: true,
+                stdin_bytes: None,
                 stdout_limit: STDOUT_LIMIT,
                 stderr_limit: STDERR_LIMIT,
                 timeout: context.timeout,

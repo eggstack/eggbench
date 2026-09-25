@@ -133,7 +133,7 @@ pub async fn execute(command: Command, options: CommandOptions) -> PresentedComm
             plan,
             input_format,
             workload_driver,
-        } => commands::doctor::run(&plan, input_format, workload_driver.as_deref(), options),
+        } => commands::doctor::run(&plan, input_format, workload_driver.as_deref(), options).await,
         Command::Run {
             plan,
             input_format,

@@ -68,6 +68,7 @@ impl VersionProbe {
             cwd: None,
             env: default_probe_env(),
             stdin_null: true,
+            stdin_bytes: None,
             stdout_limit: spec.stdout_limit,
             stderr_limit: spec.stderr_limit,
             timeout: spec.timeout,

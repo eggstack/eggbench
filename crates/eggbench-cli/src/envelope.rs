@@ -70,6 +70,9 @@ pub enum CliOutput {
         /// Network-path feature and selection summary.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         network_path: Option<Box<NetworkPathDoctorSummary>>,
+        /// Eggprobe diagnostic summary (Eggstack M003b).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diagnostics: Option<Box<DiagnosticsDoctorSummary>>,
     },
     /// `run` summary with finalized bundle path and execution status.
     Run {
@@ -134,6 +137,9 @@ pub enum CliOutput {
         /// Verified semantic-replay evidence summary (Eggstack M003a).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         semantic_replay: Option<SemanticReplayInspectSummary>,
+        /// Verified diagnostic evidence summary (Eggstack M003b).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diagnostics: Option<DiagnosticsInspectSummary>,
     },
 }
 
@@ -557,4 +563,63 @@ pub struct SemanticReplayInspectSummary {
     pub executable_version: Option<String>,
     /// Flow count from preflight.
     pub flow_count: Option<u64>,
+}
+
+/// Eggprobe diagnostic summary used by `doctor` (`Eggstack` M003b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsDoctorSummary {
+    /// Whether the plan requests diagnostics.
+    pub requested: bool,
+    /// Filesystem-only binary presence (`None` when the descriptor is absent).
+    pub binary_present: Option<bool>,
+    /// Observed tool version when a version probe succeeded.
+    pub executable_version: Option<String>,
+    /// Handshake outcome: `pass`, `unsupported-contract`, `probe-failed`,
+    /// `missing-binary`, or `not-requested`.
+    pub handshake: String,
+    /// Probe families claimed by the M003b adapter.
+    pub supported_families: Vec<String>,
+    /// Probe families explicitly unsupported in M003b.
+    pub unsupported_families: Vec<String>,
+    /// Evidence-only timing policy note.
+    pub timing_note: String,
+}
+
+/// One diagnostic execution summary used by `inspect` (`Eggstack` M003b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticExecutionSummary {
+    /// Diagnostic request identity.
+    pub id: String,
+    /// Lifecycle slot executed (`pre_workload` / `post_workload`).
+    pub phase: String,
+    /// Whether the request was required.
+    pub required: bool,
+    /// Tool report status label.
+    pub report_status: String,
+    /// Typed execution disposition.
+    pub disposition: String,
+    /// Requested probe families.
+    pub probes: Vec<String>,
+    /// Bundle-relative artifact path.
+    pub artifact: String,
+    /// Producer tool version.
+    pub producer_version: Option<String>,
+}
+
+/// Verified diagnostic evidence summary used by `inspect` (`Eggstack` M003b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsInspectSummary {
+    /// Whether a manifest-listed diagnostics artifact exists.
+    pub artifact_present: bool,
+    /// Canonical driver name.
+    pub driver: Option<String>,
+    /// Observed tool version.
+    pub executable_version: Option<String>,
+    /// Accepted machine schema (`0.3`).
+    pub machine_schema: Option<String>,
+    /// Per-execution summaries in plan order.
+    pub executions: Vec<DiagnosticExecutionSummary>,
 }

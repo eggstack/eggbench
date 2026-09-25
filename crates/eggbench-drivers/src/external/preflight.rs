@@ -9,8 +9,11 @@
 
 use super::error::{DriverError, ErrorCategory};
 use super::version::ToolVersion;
-use super::{EGGREPLAY_DRIVER_NAME, H2LOAD_DRIVER_NAME, IPERF3_DRIVER_NAME, OHA_DRIVER_NAME};
-use super::{EggReplayWorkload, H2loadWorkload, Iperf3Workload, OhaWorkload};
+use super::{
+    EGGPROBE_DRIVER_NAME, EGGREPLAY_DRIVER_NAME, H2LOAD_DRIVER_NAME, IPERF3_DRIVER_NAME,
+    OHA_DRIVER_NAME,
+};
+use super::{EggProbeExecutor, EggReplayWorkload, H2loadWorkload, Iperf3Workload, OhaWorkload};
 use eggbench_core::Name;
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +29,7 @@ pub fn is_external_workload(name: &Name) -> bool {
 /// Filesystem-only binary presence for `doctor` (no process is spawned).
 ///
 /// Returns `None` for in-process drivers; `Some(present)` for external
-/// workload drivers.
+/// workload and diagnostic drivers.
 #[must_use]
 pub fn external_binary_present(name: &Name) -> Option<bool> {
     match name.as_str() {
@@ -34,6 +37,7 @@ pub fn external_binary_present(name: &Name) -> Option<bool> {
         H2LOAD_DRIVER_NAME => Some(H2loadWorkload::resolve().is_ok()),
         IPERF3_DRIVER_NAME => Some(Iperf3Workload::resolve().is_ok()),
         EGGREPLAY_DRIVER_NAME => Some(EggReplayWorkload::resolve().is_ok()),
+        EGGPROBE_DRIVER_NAME => Some(EggProbeExecutor::resolve().is_ok()),
         _ => None,
     }
 }
@@ -51,6 +55,7 @@ pub fn executable_path_for(name: &Name) -> Option<String> {
         H2LOAD_DRIVER_NAME => H2loadWorkload::resolve().ok(),
         IPERF3_DRIVER_NAME => Iperf3Workload::resolve().ok(),
         EGGREPLAY_DRIVER_NAME => EggReplayWorkload::resolve().ok(),
+        EGGPROBE_DRIVER_NAME => EggProbeExecutor::resolve().ok(),
         _ => None,
     }?;
     Some(resolved.canonical_path.to_string_lossy().into_owned())

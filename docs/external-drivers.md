@@ -10,12 +10,19 @@ execution. See [external oracles](external-oracles.md).
 
 Production driver inventory lives in `eggbench-drivers::DriverCatalog`. The
 catalog always registers the external-process drivers (`oha`, `h2load`,
-`iperf3`, `eggreplay-semantic`); native drivers join per feature. `doctor`
-truthfully reports the inventory (including per-driver `binary_present`
-without spawning tools) and production `run` fails before startup with
+`iperf3`, `eggreplay-semantic`, `eggprobe`); native drivers join per feature.
+`doctor` truthfully reports the inventory (including per-driver
+`binary_present` without spawning tools) and production `run` fails before
+startup with
 `missing_driver`/`unsupported_workload`/`ambiguous_selection`/`missing_executable_path`
 when no driver resolves. The CLI no longer owns the
 authoritative registry. The qualification fake stays test-only.
+
+When a plan requests Eggprobe diagnostics, `doctor` additionally performs
+the schema-0.3 compatibility handshake against the resolved `eggprobe`
+binary and reports the outcome (`pass`, `unsupported-contract`,
+`probe-failed`, `missing-binary`); without requested diagnostics no process
+is spawned. `run` always handshakes before managed startup.
 
 Feature policy: `default = []`, `external-command = [...]` (substrate only).
 Default builds contain no protocol client/server dependency.
@@ -46,6 +53,9 @@ Default builds contain no protocol client/server dependency.
 - stdout/stderr are drained concurrently with independent caps; draining
   continues after the cap so children cannot block on a full pipe.
   Truncation is explicit (`truncated`, retained/dropped/total counters).
+- Callers that must deliver input (Eggprobe `run -` plans) use the bounded
+  `stdin_bytes` payload (64 KiB cap, written once, then EOF); no temporary
+  plan file is created and no shell is involved.
 - Cancellation token plus explicit driver timeout are always observed. Unix
   uses a dedicated process group (TERM then KILL, reusing runner semantics);
   Windows cleans up the direct child and reports `direct_child_only`.

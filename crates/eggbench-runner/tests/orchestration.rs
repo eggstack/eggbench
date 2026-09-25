@@ -74,6 +74,7 @@ fn plan() -> ResolvedPlan {
         seed: Some(42),
         paired: None,
         network_path: None,
+        diagnostics: Vec::new(),
         warnings: Vec::new(),
     }
 }
@@ -1996,4 +1997,413 @@ async fn paired_odd_warmup_count_alternates_deterministically() {
         workload.workload_targets.as_slice(),
         &["origin-a", "origin-a", "origin-b"]
     );
+}
+
+// Eggstack M003b: one-shot pre/post workload diagnostics run outside every
+// measured interval through the sibling-neutral DiagnosticRegistry seam.
+// These tests use FakeDiagnosticExecutor (no external binary) to prove
+// lifecycle ordering, required/optional policy, failure precedence, and
+// evidence staging; tool-contract parsing is covered by the Eggprobe
+// adapter unit tests.
+
+use eggbench_core::{DiagnosticPhase, DiagnosticProbe, DiagnosticRequest};
+use eggbench_runner::{DiagnosticRegistry, FakeDiagnosticExecutor, execute_run_with_diagnostics};
+
+fn diagnostic_request(id: &str, phase: DiagnosticPhase, required: bool) -> DiagnosticRequest {
+    DiagnosticRequest {
+        id: name(id),
+        source: name("eggprobe"),
+        phase,
+        target: name("app"),
+        probes: vec![DiagnosticProbe::Tcp],
+        required,
+        timeout_ms: DurationMs::new(5000).unwrap(),
+    }
+}
+
+/// Managed `sleep` service so post-workload diagnostics have live services.
+/// Post diagnostics run after drain while services are still alive; with no
+/// started services the post slot is skipped by design.
+fn managed_sleep_service() -> Service {
+    Service {
+        name: name("app"),
+        kind: ServiceKind::Command {
+            argv: vec![
+                env!("CARGO_BIN_EXE_eggbench-child-fixture").to_owned(),
+                "sleep".to_owned(),
+                "30000".to_owned(),
+            ],
+        },
+        lifecycle: Lifecycle::Managed,
+        depends_on: Vec::new(),
+        config: BTreeMap::new(),
+        readiness: None,
+        shutdown: None,
+        working_directory: None,
+        log_limit_bytes: 4096,
+    }
+}
+
+fn diagnostic_registry_for(negative_ids: &[&str], fail_ids: &[&str]) -> DiagnosticRegistry {
+    let mut fake = FakeDiagnosticExecutor::new("eggprobe");
+    fake.negative_ids = negative_ids.iter().map(|id| (*id).to_owned()).collect();
+    fake.fail_ids = fail_ids.iter().map(|id| (*id).to_owned()).collect();
+    let mut registry = DiagnosticRegistry::new();
+    registry.register(Box::new(fake));
+    registry
+}
+
+fn phase_kinds(outcome: &eggbench_runner::RunOutcome) -> Vec<PhaseKind> {
+    outcome.phases.iter().map(|event| event.phase).collect()
+}
+
+fn read_diagnostics_index(outcome: &eggbench_runner::RunOutcome) -> serde_json::Value {
+    let reader = BundleReader::open(&outcome.bundle_path).unwrap();
+    reader.verify().unwrap();
+    let record = outcome
+        .manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path.as_str() == "diagnostics.json")
+        .expect("diagnostics index staged");
+    let mut file = reader.open_artifact(&record.path).unwrap();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn pre_and_post_diagnostics_run_around_workload_and_stage_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.diagnostics = vec![
+        diagnostic_request("pre-check", DiagnosticPhase::PreWorkload, true),
+        diagnostic_request("post-check", DiagnosticPhase::PostWorkload, true),
+        diagnostic_request("both-check", DiagnosticPhase::Both, false),
+    ];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&[], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    // Pre diagnostics run after readiness/before warmups; post diagnostics
+    // run after drain/before teardown. Both executes twice.
+    let kinds = phase_kinds(&outcome);
+    let first_pre = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::DiagnosticsPre)
+        .unwrap();
+    let first_warmup = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::Warmup)
+        .unwrap();
+    let last_trial = kinds
+        .iter()
+        .rposition(|kind| *kind == PhaseKind::MeasuredTrial)
+        .unwrap_or(first_warmup);
+    let first_post = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::DiagnosticsPost)
+        .unwrap();
+    let teardown = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::Teardown)
+        .unwrap();
+    assert!(first_pre < first_warmup, "pre before warmups: {kinds:?}");
+    assert!(last_trial < first_post, "post after trials: {kinds:?}");
+    assert!(first_post < teardown, "post before teardown: {kinds:?}");
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == PhaseKind::DiagnosticsPre)
+            .count(),
+        2,
+        "pre + both-pre: {kinds:?}"
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == PhaseKind::DiagnosticsPost)
+            .count(),
+        2,
+        "post + both-post: {kinds:?}"
+    );
+    // Run-level index carries four executions in plan order with provenance.
+    let index = read_diagnostics_index(&outcome);
+    assert_eq!(index["schema_version"], 1);
+    assert_eq!(index["driver"], "eggprobe");
+    assert_eq!(index["machine_schema"], "0.3");
+    let executions = index["executions"].as_array().unwrap();
+    assert_eq!(executions.len(), 4);
+    assert_eq!(executions[0]["id"], "pre-check");
+    assert_eq!(executions[0]["phase"], "pre_workload");
+    assert_eq!(executions[3]["id"], "both-check");
+    assert_eq!(executions[3]["phase"], "post_workload");
+    for execution in executions {
+        assert_eq!(execution["disposition"], "positive");
+        assert!(!execution["artifact_sha256"].as_str().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn required_pre_negative_invalidates_without_workload() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.diagnostics = vec![diagnostic_request(
+        "pre-check",
+        DiagnosticPhase::PreWorkload,
+        true,
+    )];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&["pre-check"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Invalid);
+    assert_eq!(
+        outcome.primary_failure,
+        Some(FailureCategory::DiagnosticFailed)
+    );
+    assert!(
+        workload.invocations.is_empty(),
+        "no warmup/measured workload began"
+    );
+    // Teardown still runs through the common cleanup tail.
+    assert!(phase_kinds(&outcome).contains(&PhaseKind::Teardown));
+    let index = read_diagnostics_index(&outcome);
+    assert_eq!(index["executions"][0]["disposition"], "negative");
+}
+
+#[tokio::test]
+async fn optional_pre_negative_continues_with_warning_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.diagnostics = vec![diagnostic_request(
+        "pre-check",
+        DiagnosticPhase::PreWorkload,
+        false,
+    )];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&["pre-check"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    assert!(!workload.invocations.is_empty(), "workload continued");
+    let index = read_diagnostics_index(&outcome);
+    assert_eq!(index["executions"][0]["disposition"], "negative");
+}
+
+#[tokio::test]
+async fn required_post_negative_invalidates_completed_run() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.diagnostics = vec![diagnostic_request(
+        "post-check",
+        DiagnosticPhase::PostWorkload,
+        true,
+    )];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&["post-check"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Invalid);
+    assert_eq!(
+        outcome.primary_failure,
+        Some(FailureCategory::DiagnosticFailed)
+    );
+    assert!(!workload.invocations.is_empty(), "workload ran before post");
+}
+
+#[tokio::test]
+async fn post_negative_never_masks_workload_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.diagnostics = vec![diagnostic_request(
+        "post-check",
+        DiagnosticPhase::PostWorkload,
+        true,
+    )];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.fail_on = Some(1);
+    let mut diagnostics = diagnostic_registry_for(&["post-check"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Failed);
+    assert_eq!(
+        outcome.primary_failure,
+        Some(FailureCategory::WorkloadFailed)
+    );
+    // Post diagnostics still ran as failure context.
+    let index = read_diagnostics_index(&outcome);
+    assert_eq!(index["executions"][0]["disposition"], "negative");
+}
+
+#[tokio::test]
+async fn cancelled_run_skips_diagnostics_and_still_tears_down() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.diagnostics = vec![
+        diagnostic_request("pre-check", DiagnosticPhase::PreWorkload, true),
+        diagnostic_request("post-check", DiagnosticPhase::PostWorkload, true),
+    ];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&[], &[]);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Cancelled);
+    assert!(workload.invocations.is_empty());
+    // No diagnostic executed; nothing is staged and teardown is not faked.
+    assert!(
+        outcome
+            .manifest
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.path.as_str() != "diagnostics.json"),
+        "no diagnostics index without executions"
+    );
+}
+
+#[tokio::test]
+async fn diagnostic_evidence_never_enters_trial_metrics() {
+    use eggbench_core::{Aggregation, RawMetricObservation};
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.diagnostics = vec![diagnostic_request(
+        "pre-check",
+        DiagnosticPhase::PreWorkload,
+        true,
+    )];
+    resolved.metrics = vec![eggbench_core::MetricRequest {
+        name: name("latency_p99"),
+        unit: name("ms"),
+        direction: eggbench_core::MetricDirection::LowerIsBetter,
+        intent: eggbench_core::MetricIntent::Primary,
+        gate: None,
+    }];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    workload.metrics_by_invocation = vec![
+        None,
+        Some(vec![RawMetricObservation {
+            name: "latency_p99".to_owned(),
+            unit: "ms".to_owned(),
+            value: 3.0,
+            aggregation: Aggregation::Direct,
+            source_field: None,
+            producer: None,
+            producer_version: None,
+            raw_artifacts: Vec::new(),
+        }]),
+        Some(vec![RawMetricObservation {
+            name: "latency_p99".to_owned(),
+            unit: "ms".to_owned(),
+            value: 4.0,
+            aggregation: Aggregation::Direct,
+            source_field: None,
+            producer: None,
+            producer_version: None,
+            raw_artifacts: Vec::new(),
+        }]),
+    ];
+    let mut diagnostics = diagnostic_registry_for(&[], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    let reader = BundleReader::open(&outcome.bundle_path).unwrap();
+    for descriptor in &outcome.manifest.trials {
+        let metrics = reader.trial_metrics(descriptor.id).unwrap().unwrap();
+        let names: Vec<&str> = metrics
+            .observations
+            .iter()
+            .map(|observation| observation.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["latency_p99"],
+            "only workload metrics: {names:?}"
+        );
+    }
+    // Diagnostic evidence exists alongside, never inside, trial metrics.
+    let index = read_diagnostics_index(&outcome);
+    assert_eq!(index["executions"].as_array().unwrap().len(), 1);
 }

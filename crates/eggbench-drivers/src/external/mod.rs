@@ -7,6 +7,7 @@
 mod artifact;
 mod command;
 mod common;
+pub mod eggprobe;
 pub mod eggreplay;
 mod error;
 mod h2load;
@@ -18,7 +19,16 @@ mod resolver;
 mod version;
 
 pub use artifact::{artifact_candidates, command_metadata_json, workload_output_from_outcome};
-pub use command::{CapturedStream, ExternalCommandOutcome, ExternalCommandSpec, run_command};
+pub use command::{
+    CapturedStream, ExternalCommandOutcome, ExternalCommandSpec, MAX_STDIN_BYTES, run_command,
+};
+pub use eggprobe::{
+    DIAGNOSTICS_EVIDENCE, EGGPROBE_DRIVER_NAME, EGGPROBE_MACHINE_SCHEMA, EGGPROBE_PARSER_ID,
+    EGGPROBE_SUPPORTED_FAMILIES, EGGPROBE_UNSUPPORTED_FAMILIES, EggProbeExecutor, HandshakeProof,
+    LoweredTarget, MAX_DIAGNOSTIC_TIMEOUT_MS, ProbeReportParsed, diagnostic_timing_label,
+    eggprobe_descriptor, eggprobe_role_label, eggprobe_supported_family_names, handshake_eggprobe,
+    lower_target, parse_probe_report, preflight_eggprobe,
+};
 pub use eggreplay::{
     EGGREPLAY_DRIVER_NAME, EGGREPLAY_PARSER_ID, EggReplayParser, EggReplayWorkload,
     SEMANTIC_REPLAY_EVIDENCE, SemanticReplayEvidence, compute_fixture_identity,

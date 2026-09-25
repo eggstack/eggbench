@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 
 mod bundle;
+mod diagnostics;
 mod environment;
 mod error;
 pub(crate) mod orchestration;
@@ -45,13 +46,18 @@ mod telemetry;
 pub use bundle::{
     stage_lifecycle_logs, stage_lifecycle_metadata, stage_run_evidence, stage_runtime_topology,
 };
+pub use diagnostics::{
+    DiagnosticContext, DiagnosticDisposition, DiagnosticExecutionRecord, DiagnosticExecutor,
+    DiagnosticOutput, DiagnosticRegistry, DiagnosticsIndex, FakeDiagnosticExecutor,
+    diagnostics_role_label,
+};
 pub use environment::{EnvironmentError, LocalEnvironmentCollector};
 pub use error::{CleanupFailure, RunnerError};
 pub use orchestration::{
     DrainContext, FailureCategory, InvocationContext, InvocationKind, MeasurementSignal,
     OrchestrationError, PhaseEvent, PhaseKind, PhaseOutcome, ResetContext, ResetHook,
     ResetRegistry, RunEvidenceArtifact, RunEvidenceContract, RunOutcome, WorkloadArtifact,
-    WorkloadExecutor, WorkloadOutput, execute_run,
+    WorkloadExecutor, WorkloadOutput, execute_run, execute_run_with_diagnostics,
 };
 pub use platform::{
     PlatformAdapter, PlatformSupport, UnixPlatform, UnsupportedPlatform, is_process_alive,
@@ -75,6 +81,8 @@ pub use telemetry::{
 
 /// Deterministic adapters for runner integration tests and qualification.
 pub mod test_support {
+    /// Fake one-shot diagnostic executor with canned outcomes.
+    pub use crate::diagnostics::FakeDiagnosticExecutor;
     /// Fake workload with configurable delay, failure, timeout, and drain behavior.
     pub use crate::orchestration::FakeWorkload;
     /// Fake telemetry collector recording preflight/start/stop/drain calls.

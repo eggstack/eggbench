@@ -378,6 +378,7 @@ mod tests {
             seed: None,
             paired: None,
             network_path: None,
+            diagnostics: Vec::new(),
             warnings: Vec::new(),
         }
     }

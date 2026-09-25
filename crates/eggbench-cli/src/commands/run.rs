@@ -190,6 +190,31 @@ pub async fn run(
         }
     }
 
+    // M003b diagnostic preflight: trusted binary resolution, version
+    // probe, and schema-0.3 compatibility handshake before any managed
+    // startup when the plan requests diagnostics.
+    let mut diagnostic_registry = eggbench_runner::DiagnosticRegistry::new();
+    if !resolved.diagnostics.is_empty() {
+        let preflight_cancel = CancellationToken::new();
+        match eggbench_drivers::preflight_eggprobe(&preflight_cancel).await {
+            Ok((executable, probed, _proof)) => {
+                diagnostic_registry.register(Box::new(
+                    eggbench_drivers::EggProbeExecutor::from_resolved(executable, probed.version),
+                ));
+            }
+            Err(error) => {
+                let detail = error.to_string();
+                let category = if detail.contains("diagnostic_contract_unsupported") {
+                    "diagnostic_contract_unsupported"
+                } else {
+                    "external_tool"
+                };
+                let failure = CliFailure::new(category, detail, ExitCode::CapabilityPreflight);
+                return Ok(PresentedCommandResult::failure("run", &failure));
+            }
+        }
+    }
+
     run_impl(
         RunPlan { input, bundle },
         &descriptors,
@@ -197,6 +222,7 @@ pub async fn run(
         production_service_adapters(),
         driver_selection.as_ref(),
         Some(resolved),
+        &mut diagnostic_registry,
         wait_for_ctrl_c(),
     )
     .await
@@ -223,6 +249,7 @@ pub async fn run_with_qualification(
     descriptors.push(QualificationRuntime::service_descriptor());
     let mut executor = QualificationRuntime::workload_executor(fake);
     let input = load_plan(plan, input_format)?;
+    let mut diagnostic_registry = eggbench_runner::DiagnosticRegistry::new();
     run_impl(
         RunPlan { input, bundle },
         &descriptors,
@@ -230,6 +257,7 @@ pub async fn run_with_qualification(
         ServiceAdapterRegistry::new(),
         None,
         None,
+        &mut diagnostic_registry,
         signal,
     )
     .await
@@ -241,6 +269,7 @@ struct RunPlan<'a> {
     bundle: &'a Path,
 }
 
+#[allow(clippy::too_many_arguments)] // The diagnostic registry joins the established run context.
 async fn run_impl(
     input: RunPlan<'_>,
     descriptors: &[DriverDescriptor],
@@ -248,6 +277,7 @@ async fn run_impl(
     service_adapters: ServiceAdapterRegistry,
     workload_driver: Option<&Name>,
     pre_resolved: Option<ResolvedPlan>,
+    diagnostics: &mut eggbench_runner::DiagnosticRegistry,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
     let plan = input.input.plan;
@@ -359,12 +389,13 @@ async fn run_impl(
     // token; drain/teardown remain authoritative. The listener is aborted and
     // joined after completion so no detached task remains.
     let signal_handle = spawn_signal_forwarder(cancel.clone(), signal);
-    let outcome = eggbench_runner::execute_run(
+    let outcome = eggbench_runner::execute_run_with_diagnostics(
         &mut session,
         &resolved,
         executor,
         &resets,
         &mut telemetry_registry,
+        diagnostics,
         writer,
         &cancel,
     )
@@ -496,7 +527,24 @@ fn resolution_options(
         );
     }
     options.required_capabilities = caps;
+    // M003b: pin the resolved eggprobe binary so diagnostic resolution
+    // records the exact executable before any managed startup. When the
+    // binary is missing the path stays absent and resolution reports
+    // MissingExecutablePath before startup.
+    if plan
+        .diagnostics
+        .as_deref()
+        .is_some_and(|all| !all.is_empty())
+        && let Some(path) = eggbench_drivers::executable_path_for(&eggprobe_name())
+    {
+        options.executable_paths.insert(eggprobe_name(), path);
+    }
     options
+}
+
+/// Canonical `eggprobe` diagnostic driver name.
+fn eggprobe_name() -> Name {
+    Name::new(eggbench_drivers::EGGPROBE_DRIVER_NAME).expect("static driver name")
 }
 
 /// Resolve the platform label without a masked `unknown` fallback.

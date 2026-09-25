@@ -1,0 +1,31 @@
+{
+  "schema_version": 5,
+  "experiment": "eggstack-diagnostics",
+  "subject": { "kind": "label", "label": "eggstack-diagnostics" },
+  "services": [
+    {
+      "name": "origin",
+      "kind": { "kind": "named", "service_type": "eggserve-origin" },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": { "path": "/bench", "body_bytes": "64", "status": "200" },
+      "readiness": null,
+      "shutdown": { "grace_ms": 5000, "method": null },
+      "working_directory": null,
+      "log_limit_bytes": 4096
+    }
+  ],
+  "workload": { "kind": "semantic_replay", "target": "origin", "fixture": "fixtures/replay" },
+  "trials": { "measured": 2, "warmup": 0, "cooldown_ms": 1, "reset": { "kind": "none" }, "timeouts": { "measurement": 30000, "drain": 5000 } },
+  "telemetry": [],
+  "metrics": [
+    { "name": "semantic_findings", "unit": "count", "direction": { "kind": "lower_is_better" }, "intent": "primary", "gate": { "kind": "absolute", "value": 0.0 } }
+  ],
+  "diagnostics": [
+    { "id": "pre-check", "source": "eggprobe", "phase": "pre_workload", "target": "origin", "probes": ["dns", "tcp", "http"], "required": true, "timeout_ms": 5000 },
+    { "id": "post-check", "source": "eggprobe", "phase": "post_workload", "target": "origin", "probes": ["tcp", "http"], "required": false, "timeout_ms": 5000 }
+  ],
+  "environment_policy": { "kind": "strict_same_testbed" },
+  "seed": 7,
+  "bounds": { "artifact_count": 128, "artifact_bytes": 4194304, "total_bytes": 67108864 }
+}

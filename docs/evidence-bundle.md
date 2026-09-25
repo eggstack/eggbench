@@ -56,6 +56,10 @@ Environment data has a separate schema version (`EnvironmentFingerprint` v1). Ea
 
 Per measured trial, `trials/NNN/telemetry/` holds collector artifacts in `{collector:02}-{artifact:02}-{name}` slots (for example `trials/001/telemetry/00-00-gregg.ndjson`): the raw series plus a provenance document, staged with the same name-safety rules as workload artifacts and collision-checked against them. Telemetry observations join workload observations in the same `metrics.json` normalization with per-observation producer attribution. See [Gregg telemetry](gregg-telemetry.md).
 
+## Diagnostic evidence (Eggstack M003b)
+
+Pre/post workload diagnostics stage outside every measured interval. Each execution retains its bounded raw `ProbeReport` JSON at `diagnostics/<pre|post>/<id>.json` (`Redacted`), and the run-level `diagnostics.json` index (schema v1) records one entry per execution in plan order: request ID, phase, required flag, target, probe kinds, timeout, disposition, report status, artifact path/digest, producer version/executable SHA, machine schema, and warnings. Probe timings inside the raw reports are diagnostic evidence only and never enter `trials/NNN/metrics.json`.
+
 ## Staging and finalization
 
 `BundleWriter` creates a sibling staging directory. Each artifact is copied and hashed with a fixed 64 KiB buffer and checked against the plan's count, per-artifact, total-byte, path-length, and path-depth limits. Hard caps are 10,000 artifacts, 256 MiB per artifact, 2 GiB total, a 4 MiB manifest, 1,024 path bytes, and 16 path components. Finalization checks required primary roles and references, verifies staged content again, flushes files, writes the manifest last, and atomically renames the directory into place. A destination collision fails. If the filesystem cannot perform the same-directory atomic rename, finalization reports an error; it never copies a partial tree and labels it atomic. On Windows, the library flushes each artifact and manifest file, while directory-entry durability follows OS/filesystem behavior because portable directory syncing is unavailable through `std`.

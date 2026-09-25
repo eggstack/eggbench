@@ -1,8 +1,8 @@
 //! `eggbench doctor <plan>` command.
 
 use crate::envelope::{
-    CliEnvelope, CliOutput, DoctorPairedDesign, DriverSummary, EnvironmentSummary, ExitCode,
-    NetworkPathDoctorSummary,
+    CliEnvelope, CliOutput, DiagnosticsDoctorSummary, DoctorPairedDesign, DriverSummary,
+    EnvironmentSummary, ExitCode, NetworkPathDoctorSummary,
 };
 use crate::envelope::{CliFailure, PresentedCommandResult};
 use crate::error::CliError;
@@ -27,8 +27,12 @@ use std::path::Path;
 /// Resolves against the full production catalog (all driver categories),
 /// so service and telemetry descriptors participate exactly as in `run`.
 /// Without compiled adapters the command completes truthfully reporting
-/// `has_workload_driver=false`.
-pub fn run(
+/// `has_workload_driver=false`. When the plan requests Eggprobe diagnostics,
+/// the schema-compatibility handshake runs against the resolved `eggprobe`
+/// binary (a short-lived diagnostic process, never a managed service) and
+/// its outcome is reported; otherwise only filesystem binary presence is
+/// reported and no process is spawned.
+pub async fn run(
     plan: &Path,
     input_format: Option<InputFormat>,
     workload_driver: Option<&str>,
@@ -39,12 +43,14 @@ pub fn run(
         Err(presented) => return Ok(*presented),
     };
     let runtime = ProductionRuntime::new();
-    run_with_descriptors(
-        plan,
-        input_format,
+    let input = load_plan(plan, input_format)?;
+    let diagnostics = live_diagnostics_summary(&input.plan).await;
+    Ok(run_with_input(
+        input,
         &runtime.driver_descriptors(),
         workload_driver.as_ref(),
-    )
+        diagnostics,
+    ))
 }
 
 /// Validate the explicit `--workload-driver` selection.
@@ -83,36 +89,45 @@ pub fn run_with_registry(
         .iter()
         .map(|entry| entry.descriptor.to_descriptor())
         .collect();
-    run_with_descriptors(plan, input_format, &descriptors, None)
+    let input = load_plan(plan, input_format)?;
+    let diagnostics = static_diagnostics_summary(&input.plan);
+    Ok(run_with_input(input, &descriptors, None, diagnostics))
 }
 
-/// Shared doctor flow over explicit canonical descriptors.
-fn run_with_descriptors(
-    plan: &Path,
-    input_format: Option<InputFormat>,
+/// Shared doctor flow over a loaded plan and an explicit driver inventory.
+fn run_with_input(
+    input: crate::plan_input::PlanInput,
     descriptors: &[eggbench_core::DriverDescriptor],
     workload_driver: Option<&Name>,
-) -> Result<PresentedCommandResult, CliError> {
-    let input = load_plan(plan, input_format)?;
+    diagnostics: DiagnosticsDoctorSummary,
+) -> PresentedCommandResult {
     let plan = input.plan;
     if plan.network_path.is_some() && !cfg!(feature = "eggstack-path") {
-        return Ok(PresentedCommandResult::failure(
+        return PresentedCommandResult::failure(
             "doctor",
             &CliFailure::new(
                 "unsupported_network_path",
                 "network_path requires the eggstack-path feature",
                 ExitCode::CapabilityPreflight,
             ),
-        ));
+        );
     }
     let platform_label = platform_label();
     let platform_supported = platform_support();
 
-    let platform = Name::new(platform_label.clone()).map_err(|error| {
-        CliError::Internal(format!(
-            "invalid platform label {platform_label:?}: {error}"
-        ))
-    })?;
+    let platform = match Name::new(platform_label.clone()) {
+        Ok(platform) => platform,
+        Err(error) => {
+            return PresentedCommandResult::failure(
+                "doctor",
+                &CliFailure::new(
+                    "environment",
+                    format!("invalid platform label {platform_label:?}: {error}"),
+                    ExitCode::Internal,
+                ),
+            );
+        }
+    };
     let mut options = ResolutionOptions {
         selections: BTreeMap::default(),
         default_policy: DefaultDriverPolicy::Deterministic,
@@ -130,18 +145,32 @@ fn run_with_descriptors(
             options.executable_paths.insert(driver.clone(), path);
         }
     }
+    // M003b: pin the resolved eggprobe binary so diagnostic resolution
+    // records the exact executable. When the binary is missing the path
+    // stays absent and resolution reports MissingExecutablePath.
+    if plan
+        .diagnostics
+        .as_deref()
+        .is_some_and(|all| !all.is_empty())
+    {
+        let probe = eggbench_core::Name::new(eggbench_drivers::EGGPROBE_DRIVER_NAME)
+            .expect("static driver name");
+        if let Some(path) = eggbench_drivers::executable_path_for(&probe) {
+            options.executable_paths.insert(probe, path);
+        }
+    }
 
     if plan.network_path.is_some()
         && workload_driver.is_some_and(eggbench_drivers::is_external_workload)
     {
-        return Ok(PresentedCommandResult::failure(
+        return PresentedCommandResult::failure(
             "doctor",
             &CliFailure::new(
                 "workload_path_incompatible",
                 "external workload drivers cannot own an Eggbench network path",
                 ExitCode::CapabilityPreflight,
             ),
-        ));
+        );
     }
     let mut required_capabilities = std::collections::BTreeMap::new();
     if matches!(
@@ -174,7 +203,7 @@ fn run_with_descriptors(
                 format!("environment collection failed: {error}"),
                 ExitCode::Internal,
             );
-            return Ok(PresentedCommandResult::failure("doctor", &failure));
+            return PresentedCommandResult::failure("doctor", &failure);
         }
     };
 
@@ -227,18 +256,19 @@ fn run_with_descriptors(
                 environment_fields: env_fields.clone(),
                 paired: paired.clone(),
                 network_path: Some(Box::new(network_path.clone())),
+                diagnostics: Some(Box::new(diagnostics.clone())),
             },
         );
         envelope.ok = false;
         envelope.error = Some(failure.to_payload());
-        return Ok(PresentedCommandResult {
+        return PresentedCommandResult {
             envelope,
             exit_code: failure.exit_code,
-        });
+        };
     }
 
     match resolved {
-        Ok(_) => Ok(PresentedCommandResult::success(
+        Ok(_) => PresentedCommandResult::success(
             "doctor",
             CliOutput::Doctor {
                 resolved: true,
@@ -248,9 +278,10 @@ fn run_with_descriptors(
                 environment_fields: env_fields,
                 paired,
                 network_path: Some(Box::new(network_path)),
+                diagnostics: Some(Box::new(diagnostics)),
             },
-        )),
-        Err(error) => Ok(envelope_for_resolution_error(
+        ),
+        Err(error) => envelope_for_resolution_error(
             &error,
             platform_supported,
             drivers,
@@ -258,7 +289,8 @@ fn run_with_descriptors(
             env_fields,
             paired,
             network_path,
-        )),
+            diagnostics,
+        ),
     }
 }
 
@@ -350,6 +382,80 @@ fn doctor_paired_design(plan: &eggbench_core::ExperimentPlan) -> Option<DoctorPa
     })
 }
 
+/// Static Eggprobe diagnostic summary: no process is spawned.
+fn static_diagnostics_summary(plan: &eggbench_core::ExperimentPlan) -> DiagnosticsDoctorSummary {
+    let requested = plan
+        .diagnostics
+        .as_deref()
+        .is_some_and(|all| !all.is_empty());
+    let probe_name = eggbench_core::Name::new(eggbench_drivers::EGGPROBE_DRIVER_NAME)
+        .expect("static driver name");
+    DiagnosticsDoctorSummary {
+        requested,
+        binary_present: eggbench_drivers::external_binary_present(&probe_name),
+        executable_version: None,
+        handshake: if requested {
+            "not-attempted".to_owned()
+        } else {
+            "not-requested".to_owned()
+        },
+        supported_families: eggbench_drivers::eggprobe_supported_family_names()
+            .iter()
+            .map(|family| (*family).to_owned())
+            .collect(),
+        unsupported_families: eggbench_drivers::EGGPROBE_UNSUPPORTED_FAMILIES
+            .iter()
+            .map(|family| (*family).to_owned())
+            .collect(),
+        timing_note: eggbench_drivers::diagnostic_timing_label().to_owned(),
+    }
+}
+
+/// Live Eggprobe diagnostic summary for production `doctor`.
+///
+/// When the plan requests diagnostics and the binary resolves, the version
+/// probe and schema-compatibility handshake run against the resolved binary
+/// (a short-lived diagnostic process, never a managed service). Otherwise
+/// only filesystem binary presence is reported and no process is spawned.
+async fn live_diagnostics_summary(
+    plan: &eggbench_core::ExperimentPlan,
+) -> DiagnosticsDoctorSummary {
+    let mut summary = static_diagnostics_summary(plan);
+    if !summary.requested || summary.binary_present != Some(true) {
+        if summary.requested {
+            "missing-binary".clone_into(&mut summary.handshake);
+        }
+        return summary;
+    }
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let Ok(executable) = eggbench_drivers::EggProbeExecutor::resolve() else {
+        "missing-binary".clone_into(&mut summary.handshake);
+        return summary;
+    };
+    let Ok(probed) = eggbench_drivers::EggProbeExecutor::probe(&executable, &cancel).await else {
+        "probe-failed".clone_into(&mut summary.handshake);
+        return summary;
+    };
+    summary.executable_version = Some(probed.version.clone());
+    if eggbench_drivers::EggProbeExecutor::new(executable.clone(), probed.version).is_err() {
+        "probe-failed".clone_into(&mut summary.handshake);
+        return summary;
+    }
+    match eggbench_drivers::handshake_eggprobe(&executable, &cancel).await {
+        Ok(_) => "pass".clone_into(&mut summary.handshake),
+        Err(error)
+            if error
+                .to_string()
+                .contains("diagnostic_contract_unsupported") =>
+        {
+            "unsupported-contract".clone_into(&mut summary.handshake);
+        }
+        Err(_) => "probe-failed".clone_into(&mut summary.handshake),
+    }
+    summary
+}
+
+#[allow(clippy::too_many_arguments)] // Parallel doctor evidence summaries stay explicit.
 fn envelope_for_resolution_error(
     error: &ResolveError,
     platform_supported: bool,
@@ -358,6 +464,7 @@ fn envelope_for_resolution_error(
     environment_fields: Vec<EnvironmentSummary>,
     paired: Option<DoctorPairedDesign>,
     network_path: NetworkPathDoctorSummary,
+    diagnostics: DiagnosticsDoctorSummary,
 ) -> PresentedCommandResult {
     let failure = cli_failure_from_resolve(error);
     // Retain the doctor payload (including has_workload_driver) alongside the
@@ -372,6 +479,7 @@ fn envelope_for_resolution_error(
             environment_fields,
             paired,
             network_path: Some(Box::new(network_path)),
+            diagnostics: Some(Box::new(diagnostics)),
         },
     );
     envelope.ok = false;

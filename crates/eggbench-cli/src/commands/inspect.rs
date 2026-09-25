@@ -1,8 +1,9 @@
 //! `eggbench inspect <bundle>` command.
 
 use crate::envelope::{
-    CliOutput, DriverSummary, EnvironmentSummary, NetworkPathInspectSummary,
-    PresentedCommandResult, SemanticReplayInspectSummary, SubjectSummary, TrialSummary,
+    CliOutput, DiagnosticExecutionSummary, DiagnosticsInspectSummary, DriverSummary,
+    EnvironmentSummary, NetworkPathInspectSummary, PresentedCommandResult,
+    SemanticReplayInspectSummary, SubjectSummary, TrialSummary,
 };
 use crate::error::CliError;
 use eggbench_core::BundleReader;
@@ -110,6 +111,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
     }
     let network_path = network_path_inspect_summary(&reader, network_path_artifact_present)?;
     let semantic_replay = semantic_replay_inspect_summary(&reader)?;
+    let diagnostics = diagnostics_inspect_summary(&reader)?;
 
     let manifest_json = if emit_manifest_json {
         serde_json::to_string_pretty(manifest).ok()
@@ -140,6 +142,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
             manifest_json,
             network_path: Some(network_path),
             semantic_replay: Some(semantic_replay),
+            diagnostics: Some(diagnostics),
         },
     ))
 }
@@ -188,6 +191,112 @@ fn trial_summary(
         terminal_status: format!("{:?}", result.terminal_status).to_lowercase(),
         measurement_elapsed_ns: Some(result.measurement_elapsed_ns),
         semantic_findings,
+    })
+}
+
+fn diagnostics_inspect_summary(
+    reader: &BundleReader,
+) -> Result<DiagnosticsInspectSummary, CliError> {
+    let manifest = reader.manifest();
+    let record = manifest.artifacts.iter().find(|artifact| {
+        artifact.path.as_str() == "diagnostics.json"
+            || matches!(
+                &artifact.role,
+                eggbench_core::ArtifactRole::Other { label } if label.as_str() == "diagnostics"
+            )
+    });
+    let Some(record) = record else {
+        return Ok(DiagnosticsInspectSummary {
+            artifact_present: false,
+            driver: None,
+            executable_version: None,
+            machine_schema: None,
+            executions: Vec::new(),
+        });
+    };
+    let mut file = reader
+        .open_artifact(&record.path)
+        .map_err(CliError::Bundle)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::Io {
+            path: std::path::PathBuf::from(record.path.as_str()),
+            source: error,
+        })
+    })?;
+    let evidence: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::ManifestParse(error.to_string()))
+    })?;
+    let executions = evidence
+        .get("executions")
+        .and_then(serde_json::Value::as_array)
+        .map(|executions| {
+            executions
+                .iter()
+                .map(|execution| DiagnosticExecutionSummary {
+                    id: execution
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    phase: execution
+                        .get("phase")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    required: execution
+                        .get("required")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    report_status: execution
+                        .get("report_status")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    disposition: execution
+                        .get("disposition")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    probes: execution
+                        .get("probes")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|probes| {
+                            probes
+                                .iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    artifact: execution
+                        .get("artifact")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    producer_version: execution
+                        .get("producer_version")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(DiagnosticsInspectSummary {
+        artifact_present: true,
+        driver: evidence
+            .get("driver")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        executable_version: evidence
+            .get("executable_version")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        machine_schema: evidence
+            .get("machine_schema")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        executions,
     })
 }
 

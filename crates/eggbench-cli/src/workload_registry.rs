@@ -725,9 +725,11 @@ mod tests {
         let runtime = ProductionRuntime::new();
         // Workload inventory always carries the external drivers (three
         // oracles plus EggReplay); the native descriptors join with
-        // eggstack-http (+gregg).
+        // eggstack-http (+gregg). The catalog additionally carries the
+        // Eggprobe diagnostic descriptor, which never appears in the
+        // workload inventory.
         let expected_workload: usize = 4 + usize::from(cfg!(feature = "eggstack-http"));
-        let expected_descriptors: usize = 4
+        let expected_descriptors: usize = 5
             + 2 * usize::from(cfg!(feature = "eggstack-http"))
             + 2 * usize::from(cfg!(feature = "eggstack-path"))
             + usize::from(cfg!(feature = "gregg"));

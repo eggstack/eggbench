@@ -18,8 +18,14 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
+
+/// Maximum stdin payload accepted by the substrate (64 KiB). Generated
+/// machine plans (for example Eggprobe schema-0.3 diagnostic plans) are
+/// small deterministic JSON documents far below this cap; anything larger
+/// fails before spawn rather than streaming unbounded input.
+pub const MAX_STDIN_BYTES: u64 = 64 * 1024;
 
 /// Protocol-neutral external command specification.
 #[derive(Debug, Clone)]
@@ -35,6 +41,11 @@ pub struct ExternalCommandSpec {
     pub env: BTreeMap<OsString, OsString>,
     /// When true stdin is null.
     pub stdin_null: bool,
+    /// Optional bounded stdin payload. When `Some`, stdin is piped, the
+    /// payload is written once, and the pipe closes so the child observes
+    /// EOF (used for `eggprobe run -` plan delivery). Takes precedence over
+    /// `stdin_null`. Payloads above [`MAX_STDIN_BYTES`] fail before spawn.
+    pub stdin_bytes: Option<Vec<u8>>,
     /// Stdout retention cap in bytes.
     pub stdout_limit: u64,
     /// Stderr retention cap in bytes.
@@ -141,6 +152,16 @@ pub async fn run_command(
     spec: &ExternalCommandSpec,
     cancel: &CancellationToken,
 ) -> Result<ExternalCommandOutcome, DriverError> {
+    if spec
+        .stdin_bytes
+        .as_ref()
+        .is_some_and(|payload| u64::try_from(payload.len()).unwrap_or(u64::MAX) > MAX_STDIN_BYTES)
+    {
+        return Err(DriverError::execution(
+            ErrorCategory::UnsupportedOption,
+            format!("stdin payload exceeds bound ({MAX_STDIN_BYTES} bytes)"),
+        ));
+    }
     let start = Instant::now();
     let mut command = tokio::process::Command::new(&spec.executable.canonical_path);
     command.args(&spec.args);
@@ -151,7 +172,9 @@ pub async fn run_command(
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }
-    if spec.stdin_null {
+    if spec.stdin_bytes.is_some() {
+        command.stdin(Stdio::piped());
+    } else if spec.stdin_null {
         command.stdin(Stdio::null());
     }
     command.stdout(Stdio::piped());
@@ -178,6 +201,19 @@ pub async fn run_command(
     let mut stderr_pipe = child.stderr.take();
     let stdout_limit = spec.stdout_limit;
     let stderr_limit = spec.stderr_limit;
+
+    // Bounded one-shot stdin delivery: write the payload once, then shut
+    // down so the child observes EOF. The writer is aborted once the child
+    // is reaped (or during cancellation/timeout cleanup).
+    let stdin_writer = spec.stdin_bytes.clone().map(|payload| {
+        let stdin = child.stdin.take();
+        tokio::spawn(async move {
+            if let Some(mut stdin) = stdin {
+                let _ = stdin.write_all(&payload).await;
+                let _ = stdin.shutdown().await;
+            }
+        })
+    });
 
     let stdout_task = tokio::spawn(async move {
         let Some(pipe) = stdout_pipe.take() else {
@@ -211,6 +247,9 @@ pub async fn run_command(
         }
         WaitKind::Cancelled | WaitKind::TimedOut => {
             let timed_out = matches!(wait_result, WaitKind::TimedOut);
+            if let Some(writer) = stdin_writer {
+                writer.abort();
+            }
             terminate_child(&mut child, pid).await;
             // Bounded re-wait so pipes drain and the child is reaped.
             let status = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
@@ -234,6 +273,9 @@ pub async fn run_command(
     };
 
     let (stdout, stderr) = join_pipes(stdout_task, stderr_task).await;
+    if let Some(writer) = stdin_writer {
+        writer.abort();
+    }
     let duration = start.elapsed();
     let exit_code = wait_status.and_then(|s| s.code());
     let cleanup_notes: Vec<String> = {
@@ -358,6 +400,7 @@ mod tests {
             cwd: None,
             env: BTreeMap::new(),
             stdin_null: true,
+            stdin_bytes: None,
             stdout_limit: 1024,
             stderr_limit: 1024,
             timeout: Duration::from_secs(1),

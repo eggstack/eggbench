@@ -26,11 +26,11 @@
 //!   timestamp enters the canonical receipt.
 
 use crate::{
-    ArtifactRecord, ArtifactRole, BundleError, BundleReader, DriverCategory, EnvironmentFieldClass,
-    EnvironmentFingerprint, EnvironmentPolicy, Gate, MetricDirection, MetricIntent, MetricRequest,
-    Name, ObservationState, ResolvedPlan, RunId, SchemaVersion, Subject, TrialArm,
-    TrialExecutionResult, TrialExecutionStatus, TrialId, TrialMetrics, Workload,
-    validate_resolved_plan_bytes,
+    ArtifactRecord, ArtifactRole, BundleError, BundleReader, DiagnosticPhase, DiagnosticProbe,
+    DriverCategory, EnvironmentFieldClass, EnvironmentFingerprint, EnvironmentPolicy, Gate,
+    MetricDirection, MetricIntent, MetricRequest, Name, ObservationState, ResolvedPlan, RunId,
+    SchemaVersion, Subject, TrialArm, TrialExecutionResult, TrialExecutionStatus, TrialId,
+    TrialMetrics, Workload, validate_resolved_plan_bytes,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -492,6 +492,9 @@ pub struct ComparisonInput {
     /// Verified semantic-replay evidence identity, present only for
     /// semantic-replay runs (Eggstack M003a).
     pub semantic_replay_evidence: Option<SemanticReplayEvidenceIdentity>,
+    /// Verified diagnostic evidence identity, present only for runs that
+    /// request pre/post workload diagnostics (Eggstack M003b).
+    pub diagnostics_evidence: Option<DiagnosticsEvidenceIdentity>,
 }
 
 /// Comparison-critical identity loaded from `semantic-replay.json`.
@@ -512,6 +515,25 @@ pub struct SemanticReplayEvidenceIdentity {
     pub executable_version: String,
     /// SHA-256 of the selected `eggreplay` executable.
     pub executable_sha256: String,
+}
+
+/// Comparison-critical identity loaded from `diagnostics.json`.
+///
+/// Observed probe statuses/timings are result evidence, never configuration
+/// identity: only the requested configuration plus producer provenance
+/// participates in comparability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsEvidenceIdentity {
+    /// Ordered per-request summaries (`id phase required target
+    /// probes=... timeout_ms=...`).
+    pub requests: Vec<String>,
+    /// Observed `eggprobe` tool version.
+    pub executable_version: String,
+    /// SHA-256 of the selected `eggprobe` executable (empty only when every
+    /// execution was skipped before any diagnostic ran).
+    pub executable_sha256: String,
+    /// Accepted machine schema (M003b pins `0.3`).
+    pub machine_schema: String,
 }
 
 /// Comparison-critical identity loaded from `network-path.json`.
@@ -967,6 +989,290 @@ fn load_semantic_replay_evidence_identity(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredDiagnosticsIndex {
+    schema_version: SchemaVersion,
+    driver: String,
+    adapter_version: String,
+    executable_version: String,
+    executable_sha256: String,
+    machine_schema: String,
+    #[serde(default)]
+    executions: Vec<StoredDiagnosticExecution>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredDiagnosticExecution {
+    id: String,
+    phase: String,
+    required: bool,
+    target: String,
+    probes: Vec<String>,
+    timeout_ms: u64,
+    disposition: String,
+    report_status: String,
+    artifact: String,
+    artifact_sha256: String,
+    producer_version: String,
+    executable_sha256: String,
+    machine_schema: String,
+    #[serde(default)]
+    warnings: Vec<String>,
+    #[serde(default)]
+    skipped_reason: Option<String>,
+}
+
+/// Expected per-execution identity expanded from resolved requests
+/// (`Both` requests execute twice: pre then post).
+fn expected_diagnostic_executions(resolved: &ResolvedPlan) -> Vec<DiagnosticExecutionExpectation> {
+    let mut out = Vec::new();
+    for request in &resolved.diagnostics {
+        let slots: &[&str] = match request.phase {
+            DiagnosticPhase::PreWorkload => &["pre_workload"],
+            DiagnosticPhase::PostWorkload => &["post_workload"],
+            DiagnosticPhase::Both => &["pre_workload", "post_workload"],
+        };
+        for slot in slots {
+            out.push(DiagnosticExecutionExpectation {
+                id: request.id.as_str().to_owned(),
+                phase: (*slot).to_owned(),
+                required: request.required,
+                target: request.target.as_str().to_owned(),
+                probes: {
+                    let mut probes: Vec<String> = request
+                        .probes
+                        .iter()
+                        .copied()
+                        .map(diagnostic_probe_label)
+                        .collect();
+                    probes.sort();
+                    probes
+                },
+                timeout_ms: request.timeout_ms.get(),
+            });
+        }
+    }
+    out
+}
+
+struct DiagnosticExecutionExpectation {
+    id: String,
+    phase: String,
+    required: bool,
+    target: String,
+    probes: Vec<String>,
+    timeout_ms: u64,
+}
+
+/// True when every staged execution matches the resolved request expansion
+/// in order. Result evidence (statuses, artifact digests, warnings) never
+/// participates in identity, but its shape is re-validated so a tampered
+/// index cannot smuggle unbounded fields past comparison.
+fn diagnostics_executions_match_resolved(
+    executions: &[StoredDiagnosticExecution],
+    expected: &[DiagnosticExecutionExpectation],
+) -> bool {
+    executions.len() == expected.len()
+        && executions
+            .iter()
+            .zip(expected.iter())
+            .all(|(execution, expectation)| {
+                let mut probes = execution.probes.clone();
+                probes.sort();
+                let result_shape_ok = !execution.report_status.is_empty()
+                    && execution.report_status.len() <= 64
+                    && !execution.artifact.is_empty()
+                    && execution.artifact.len() <= 256
+                    && execution.warnings.len() <= 32
+                    && execution
+                        .warnings
+                        .iter()
+                        .all(|warning| warning.len() <= 512)
+                    && execution
+                        .skipped_reason
+                        .as_ref()
+                        .is_none_or(|reason| !reason.is_empty() && reason.len() <= 128);
+                execution.id == expectation.id
+                    && execution.phase == expectation.phase
+                    && execution.required == expectation.required
+                    && execution.target == expectation.target
+                    && probes == expectation.probes
+                    && execution.timeout_ms == expectation.timeout_ms
+                    && execution.artifact_sha256.len() == 64
+                    && execution.producer_version.len() <= 128
+                    && execution.executable_sha256.len() <= 64
+                    && execution.machine_schema.len() <= 16
+                    && result_shape_ok
+            })
+}
+
+fn diagnostic_probe_label(probe: DiagnosticProbe) -> String {
+    match probe {
+        DiagnosticProbe::Dns => "dns".to_owned(),
+        DiagnosticProbe::Tcp => "tcp".to_owned(),
+        DiagnosticProbe::Tls => "tls".to_owned(),
+        DiagnosticProbe::Http => "http".to_owned(),
+    }
+}
+
+fn diagnostics_evidence_record(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<ArtifactRecord>, ComparisonError> {
+    let mut record = None;
+    for artifact in &reader.manifest().artifacts {
+        let has_path = artifact.path.as_str() == "diagnostics.json";
+        let has_role = matches!(
+            &artifact.role,
+            ArtifactRole::Other { label } if label.as_str() == "diagnostics"
+        );
+        if has_path || has_role {
+            if record.is_some() || has_path != has_role {
+                return Err(BundleError::InvalidManifest(
+                    "diagnostics evidence path and role must occur exactly once",
+                )
+                .into());
+            }
+            record = Some(artifact);
+        }
+    }
+    let Some(record) = record else {
+        if !resolved.diagnostics.is_empty() {
+            return Err(BundleError::InvalidManifest(
+                "diagnostic run bundle lacks diagnostics evidence",
+            )
+            .into());
+        }
+        return Ok(None);
+    };
+    if record.media_type != "application/json" {
+        return Err(
+            BundleError::InvalidManifest("diagnostics evidence metadata is invalid").into(),
+        );
+    }
+    Ok(Some(record.clone()))
+}
+
+/// Validate `diagnostics.json` index-level provenance. An all-skipped index
+/// (cancellation before any diagnostic ran) carries no producer provenance;
+/// otherwise the tool version and executable digest are required.
+fn validate_diagnostics_index_provenance(
+    evidence: &StoredDiagnosticsIndex,
+) -> Result<(), ComparisonError> {
+    let invalid = || {
+        ComparisonError::from(BundleError::InvalidManifest(
+            "diagnostics evidence contract is invalid",
+        ))
+    };
+    let all_skipped = !evidence.executions.is_empty()
+        && evidence
+            .executions
+            .iter()
+            .all(|execution| execution.disposition == "skipped");
+    if all_skipped {
+        if !evidence.executable_sha256.is_empty() && evidence.executable_sha256.len() != 64 {
+            return Err(invalid());
+        }
+    } else {
+        if evidence.executable_version.is_empty() || evidence.executable_sha256.len() != 64 {
+            return Err(invalid());
+        }
+        if !evidence
+            .executable_sha256
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
+fn load_diagnostics_evidence_identity(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<DiagnosticsEvidenceIdentity>, ComparisonError> {
+    let Some(record) = diagnostics_evidence_record(reader, resolved)? else {
+        return Ok(None);
+    };
+    if resolved.diagnostics.is_empty() {
+        return Err(BundleError::InvalidManifest(
+            "diagnostic-free bundle contains diagnostics evidence",
+        )
+        .into());
+    }
+    let mut file = reader.open_artifact(&record.path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| BundleError::Io {
+            path: PathBuf::from(record.path.as_str()),
+            source: error,
+        })?;
+    if bytes.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest("diagnostics evidence exceeds bound").into());
+    }
+    let evidence: StoredDiagnosticsIndex = serde_json::from_slice(&bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if evidence.schema_version != SchemaVersion(1)
+        || evidence.driver != "eggprobe"
+        || evidence.adapter_version.is_empty()
+        || evidence.adapter_version.len() > 128
+        || evidence.executable_version.len() > 128
+        || evidence.machine_schema != "0.3"
+    {
+        return Err(
+            BundleError::InvalidManifest("diagnostics evidence contract is invalid").into(),
+        );
+    }
+    validate_diagnostics_index_provenance(&evidence)?;
+    // Every execution must match the resolved request expansion in order;
+    // observed statuses/timings never participate in identity.
+    let expected = expected_diagnostic_executions(resolved);
+    if evidence.executions.len() != expected.len() {
+        return Err(BundleError::InvalidManifest(
+            "diagnostics evidence execution count contradicts the resolved plan",
+        )
+        .into());
+    }
+    if !diagnostics_executions_match_resolved(&evidence.executions, &expected) {
+        return Err(BundleError::InvalidManifest(
+            "diagnostics evidence execution contradicts the resolved plan",
+        )
+        .into());
+    }
+    let mut requests = Vec::with_capacity(resolved.diagnostics.len());
+    for request in &resolved.diagnostics {
+        let mut probes: Vec<String> = request
+            .probes
+            .iter()
+            .copied()
+            .map(diagnostic_probe_label)
+            .collect();
+        probes.sort();
+        let phase = match request.phase {
+            DiagnosticPhase::PreWorkload => "pre_workload",
+            DiagnosticPhase::PostWorkload => "post_workload",
+            DiagnosticPhase::Both => "both",
+        };
+        requests.push(format!(
+            "{} {phase} required={} target={} probes=[{}] timeout_ms={}",
+            request.id.as_str(),
+            request.required,
+            request.target.as_str(),
+            probes.join(","),
+            request.timeout_ms.get(),
+        ));
+    }
+    Ok(Some(DiagnosticsEvidenceIdentity {
+        requests,
+        executable_version: evidence.executable_version,
+        executable_sha256: evidence.executable_sha256.to_ascii_lowercase(),
+        machine_schema: evidence.machine_schema,
+    }))
+}
+
 /// Load a verified comparison-ready input from an opened bundle.
 ///
 /// Verifies the bundle before deriving identity or reading evidence.
@@ -1011,6 +1317,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
     });
     let network_path_evidence = load_network_path_evidence_identity(reader, &resolved)?;
     let semantic_replay_evidence = load_semantic_replay_evidence_identity(reader, &resolved)?;
+    let diagnostics_evidence = load_diagnostics_evidence_identity(reader, &resolved)?;
     Ok(ComparisonInput {
         identity,
         resolved,
@@ -1019,6 +1326,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         paired,
         network_path_evidence,
         semantic_replay_evidence,
+        diagnostics_evidence,
     })
 }
 
@@ -2038,11 +2346,52 @@ fn compare_semantic_replay(
 
 fn compare_driver(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
     let workload = compare_workload_driver(&candidate.resolved, &baseline.resolved);
+    // Diagnostic configuration is comparison-critical for runs that claim
+    // comparable diagnostic context; observed probe statuses/timings never
+    // participate (see diagnostics_summary). Network-path and diagnostics
+    // never coexist in one bundle (plan validation rejects the combination),
+    // but both dimensions are still compared across bundles.
+    let (diagnostics_match, diagnostics_detail) = compare_diagnostics(candidate, baseline);
     if candidate.resolved.network_path.is_none() && baseline.resolved.network_path.is_none() {
-        return workload;
+        return (
+            workload.0 && diagnostics_match,
+            format!("{}; {}", workload.1, diagnostics_detail),
+        );
     }
     let path = compare_network_path(candidate, baseline);
-    (workload.0 && path.0, format!("{}; {}", workload.1, path.1))
+    (
+        workload.0 && path.0 && diagnostics_match,
+        format!("{}; {}; {}", workload.1, path.1, diagnostics_detail),
+    )
+}
+
+fn diagnostics_summary(input: &ComparisonInput) -> String {
+    if input.resolved.diagnostics.is_empty() {
+        return "absent".to_owned();
+    }
+    match &input.diagnostics_evidence {
+        None => "missing-evidence".to_owned(),
+        Some(evidence) => format!(
+            "requests=[{}] tool={}:{} schema={}",
+            evidence.requests.join(" | "),
+            evidence.executable_version,
+            evidence.executable_sha256,
+            evidence.machine_schema,
+        ),
+    }
+}
+
+fn compare_diagnostics(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
+    let left = diagnostics_summary(candidate);
+    let right = diagnostics_summary(baseline);
+    if left == right {
+        (true, format!("diagnostics match ({left})"))
+    } else {
+        (
+            false,
+            format!("diagnostics differ: candidate {left} vs baseline {right}"),
+        )
+    }
 }
 
 fn compare_workload_driver(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, String) {
@@ -2993,6 +3342,7 @@ mod tests {
             seed: None,
             paired: None,
             network_path: None,
+            diagnostics: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -3065,6 +3415,7 @@ mod tests {
             paired: None,
             network_path_evidence: None,
             semantic_replay_evidence: None,
+            diagnostics_evidence: None,
         }
     }
 
@@ -3928,6 +4279,110 @@ mod tests {
         assert!(!receipt.comparability.workload_match);
     }
 
+    fn diagnostics_input() -> ComparisonInput {
+        let (mut candidate, _, _) = statistical_inputs(&[0.0; 7], &[0.0; 7]);
+        candidate.resolved.diagnostics = vec![crate::DiagnosticRequest {
+            id: Name::new("pre-check").unwrap(),
+            source: Name::new("eggprobe").unwrap(),
+            phase: crate::DiagnosticPhase::PreWorkload,
+            target: metric_name("origin"),
+            probes: vec![crate::DiagnosticProbe::Tcp, crate::DiagnosticProbe::Http],
+            required: true,
+            timeout_ms: crate::DurationMs::new(5000).unwrap(),
+        }];
+        candidate.diagnostics_evidence = Some(DiagnosticsEvidenceIdentity {
+            requests: vec![
+                "pre-check pre_workload required=true target=origin probes=[http,tcp] timeout_ms=5000"
+                    .to_owned(),
+            ],
+            executable_version: "0.1.1".to_owned(),
+            executable_sha256: "ab".repeat(32),
+            machine_schema: "0.3".to_owned(),
+        });
+        candidate
+    }
+
+    #[test]
+    fn identical_diagnostics_compare_equal() {
+        let candidate = diagnostics_input();
+        let baseline = diagnostics_input();
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(receipt.comparability.driver_match);
+        assert!(!receipt.comparability.critical_mismatch);
+    }
+
+    #[test]
+    fn diagnostic_config_or_provenance_mismatch_invalidates() {
+        let candidate = diagnostics_input();
+        for name in [
+            "timeout",
+            "probes",
+            "required",
+            "tool-version",
+            "tool-digest",
+            "machine-schema",
+        ] {
+            let mut baseline = diagnostics_input();
+            match name {
+                "timeout" => {
+                    baseline.resolved.diagnostics[0].timeout_ms =
+                        crate::DurationMs::new(6000).unwrap();
+                    baseline.diagnostics_evidence.as_mut().unwrap().requests = vec![
+                        "pre-check pre_workload required=true target=origin probes=[http,tcp] timeout_ms=6000"
+                            .to_owned(),
+                    ];
+                }
+                "probes" => {
+                    baseline.resolved.diagnostics[0].probes = vec![crate::DiagnosticProbe::Tcp];
+                    baseline.diagnostics_evidence.as_mut().unwrap().requests = vec![
+                        "pre-check pre_workload required=true target=origin probes=[tcp] timeout_ms=5000"
+                            .to_owned(),
+                    ];
+                }
+                "required" => {
+                    baseline.resolved.diagnostics[0].required = false;
+                    baseline.diagnostics_evidence.as_mut().unwrap().requests = vec![
+                        "pre-check pre_workload required=false target=origin probes=[http,tcp] timeout_ms=5000"
+                            .to_owned(),
+                    ];
+                }
+                "tool-version" => {
+                    baseline
+                        .diagnostics_evidence
+                        .as_mut()
+                        .unwrap()
+                        .executable_version = "0.1.2".to_owned();
+                }
+                "tool-digest" => {
+                    baseline
+                        .diagnostics_evidence
+                        .as_mut()
+                        .unwrap()
+                        .executable_sha256 = "bb".repeat(32);
+                }
+                _ => {
+                    baseline
+                        .diagnostics_evidence
+                        .as_mut()
+                        .unwrap()
+                        .machine_schema = "0.4".to_owned();
+                }
+            }
+            let receipt = compare_pair(&candidate, &baseline);
+            assert!(!receipt.comparability.driver_match, "{name}");
+            assert!(receipt.comparability.critical_mismatch, "{name}");
+        }
+    }
+
+    #[test]
+    fn diagnostics_vs_absent_runs_are_incomparable() {
+        let candidate = diagnostics_input();
+        let (baseline, _, _) = statistical_inputs(&[0.0; 7], &[0.0; 7]);
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(!receipt.comparability.driver_match);
+        assert!(receipt.comparability.critical_mismatch);
+    }
+
     #[test]
     fn subject_digest_difference_alone_does_not_invalidate() {
         let (candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
@@ -4218,6 +4673,7 @@ mod tests {
             }),
             network_path_evidence: None,
             semantic_replay_evidence: None,
+            diagnostics_evidence: None,
         }
     }
 
