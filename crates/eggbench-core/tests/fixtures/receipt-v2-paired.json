@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 2,
   "policy_id": "eggbench.trial-bootstrap-paired.v1",
   "created_by_version": "0.1.0",
   "candidate_identity": {
@@ -91,20 +91,19 @@
         11
       ],
       "baseline_excluded": [],
-      "candidate_estimate": 130.0,
+      "candidate_estimate": 101.0,
       "baseline_estimate": 100.00000000000013,
-      "degradation": 0.29999999999999916,
-      "confidence_low": 0.29999999999999916,
-      "confidence_high": 0.29999999999999916,
+      "degradation": 0.009999999999999787,
+      "confidence_low": 0.009999999999999787,
+      "confidence_high": 0.009999999999999787,
       "threshold": 0.05,
       "statistical_method": "paired-trial-bootstrap-percentile-95",
       "resamples": 10000,
       "effective_seed": 6205336000878171932,
-      "disposition": "fail"
+      "disposition": "pass"
     }
   ],
-  "aggregate_verdict": "fail",
-  "performance_verdict": "fail",
+  "aggregate_verdict": "pass",
   "paired": {
     "schedule": "alternating-baseline-first",
     "pairs_declared": 6,
@@ -133,32 +132,32 @@
         "pair_effects": [
           {
             "pair_id": 1,
-            "effect": 0.29999999999999916
+            "effect": 0.009999999999999787
           },
           {
             "pair_id": 2,
-            "effect": 0.29999999999999916
+            "effect": 0.009999999999999787
           },
           {
             "pair_id": 3,
-            "effect": 0.29999999999999916
+            "effect": 0.009999999999999787
           },
           {
             "pair_id": 4,
-            "effect": 0.29999999999999916
+            "effect": 0.009999999999999787
           },
           {
             "pair_id": 5,
-            "effect": 0.29999999999999916
+            "effect": 0.009999999999999787
           },
           {
             "pair_id": 6,
-            "effect": 0.29999999999999916
+            "effect": 0.009999999999999787
           }
         ],
         "drift": {
-          "first_half_mean": 0.29999999999999916,
-          "second_half_mean": 0.29999999999999916,
+          "first_half_mean": 0.009999999999999787,
+          "second_half_mean": 0.009999999999999787,
           "trend": "flat"
         },
         "effective_seed": 6205336000878171932

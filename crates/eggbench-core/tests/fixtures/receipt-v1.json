@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 1,
   "policy_id": "eggbench.trial-bootstrap.v1",
   "created_by_version": "0.1.0",
   "candidate_identity": {
@@ -93,19 +93,18 @@
         7
       ],
       "baseline_excluded": [],
-      "candidate_estimate": 103.85714285714286,
+      "candidate_estimate": 101.0,
       "baseline_estimate": 100.00000000000013,
-      "degradation": 0.024578422321907434,
-      "confidence_low": -0.09594894094681039,
-      "confidence_high": 0.15771899204610618,
+      "degradation": 0.009999999999998899,
+      "confidence_low": 0.009999999999998899,
+      "confidence_high": 0.009999999999998899,
       "threshold": 0.05,
       "statistical_method": "unpaired-trial-bootstrap-percentile-95",
       "resamples": 10000,
       "effective_seed": 15314197278215548558,
-      "disposition": "inconclusive"
+      "disposition": "pass"
     }
   ],
-  "aggregate_verdict": "inconclusive",
-  "performance_verdict": "inconclusive",
+  "aggregate_verdict": "pass",
   "warnings": []
 }

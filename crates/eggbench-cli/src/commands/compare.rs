@@ -131,12 +131,30 @@ fn present_receipt(
 }
 
 fn comparison_detail(receipt: &ComparisonReceipt) -> String {
+    // Human stderr separates the independent gate families: a security
+    // correctness outcome is never collapsed into a generic "metric
+    // failed". Machine JSON uses the typed v3 fields
+    // (`performance_verdict`, `correctness`, `aggregate_verdict`).
+    let correctness_aggregate = receipt
+        .correctness
+        .as_ref()
+        .map(|section| section.aggregate_verdict);
     match receipt.aggregate_verdict {
+        Some(eggbench_core::AggregateVerdict::Fail)
+            if correctness_aggregate == Some(eggbench_core::AggregateVerdict::Fail) =>
+        {
+            "comparison failed a security correctness gate".to_owned()
+        }
         Some(eggbench_core::AggregateVerdict::Fail) => {
             "comparison failed a primary gate".to_owned()
         }
         Some(eggbench_core::AggregateVerdict::Inconclusive) => {
             "comparison is inconclusive for a primary gate".to_owned()
+        }
+        Some(eggbench_core::AggregateVerdict::Invalid)
+            if correctness_aggregate == Some(eggbench_core::AggregateVerdict::Invalid) =>
+        {
+            "comparison is invalid for security correctness evidence".to_owned()
         }
         Some(eggbench_core::AggregateVerdict::Invalid) => {
             "comparison is invalid for a primary gate".to_owned()

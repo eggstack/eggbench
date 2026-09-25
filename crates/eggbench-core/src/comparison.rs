@@ -26,11 +26,11 @@
 //!   timestamp enters the canonical receipt.
 
 use crate::{
-    ArtifactRecord, ArtifactRole, BundleError, BundleReader, DiagnosticPhase, DiagnosticProbe,
-    DriverCategory, EnvironmentFieldClass, EnvironmentFingerprint, EnvironmentPolicy, Gate,
-    MetricDirection, MetricIntent, MetricRequest, Name, ObservationState, ResolvedPlan, RunId,
-    SchemaVersion, Subject, TrialArm, TrialExecutionResult, TrialExecutionStatus, TrialId,
-    TrialMetrics, Workload, validate_resolved_plan_bytes,
+    ArtifactPath, ArtifactRecord, ArtifactRole, BundleError, BundleReader, DiagnosticPhase,
+    DiagnosticProbe, DriverCategory, EnvironmentFieldClass, EnvironmentFingerprint,
+    EnvironmentPolicy, Gate, MetricDirection, MetricIntent, MetricRequest, Name, ObservationState,
+    ResolvedPlan, RunId, SchemaVersion, Subject, TrialArm, TrialExecutionResult,
+    TrialExecutionStatus, TrialId, TrialMetrics, Workload, validate_resolved_plan_bytes,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -39,10 +39,26 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-/// Schema version of the standalone [`ComparisonReceipt`] (v2 adds `paired`).
-pub const COMPARISON_RECEIPT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
-/// Previous receipt schema version, still accepted on read.
+/// Schema version of the standalone [`ComparisonReceipt`] (v3 adds the
+/// independent security-correctness section with an explicit
+/// performance-only verdict and a conservative combined verdict).
+pub const COMPARISON_RECEIPT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
+/// Previous receipt schema version (paired section), still accepted on read.
+pub const COMPARISON_RECEIPT_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);
+/// Oldest receipt schema version, still accepted on read.
 pub const COMPARISON_RECEIPT_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
+
+/// Immutable security-correctness policy identifier (Eggstack M004b).
+///
+/// This policy means: checks are evaluated against expectations declared in
+/// the candidate plan; the M004 initial family is `waf_bypass`; each valid
+/// check is Pass or Fail; malformed/missing/incompatible evidence is
+/// Invalid; no statistical method is applied; configuration identity
+/// participates in comparability. Any semantic change requires a new
+/// policy identifier.
+pub const SECURITY_CORRECTNESS_POLICY_V1: &str = "eggbench.security-correctness.v1";
+/// Initial M004 correctness family evaluated under the v1 policy.
+pub const SECURITY_CORRECTNESS_FAMILY_WAF_BYPASS: &str = "waf_bypass";
 
 /// Immutable comparison-policy identifier for trial-level bootstrap v1.
 pub const COMPARISON_POLICY_V1: &str = "eggbench.trial-bootstrap.v1";
@@ -334,7 +350,96 @@ pub struct ComparisonWarning {
     pub detail: String,
 }
 
-/// Standalone immutable-by-content comparison receipt, schema v2.
+/// Per-check correctness disposition (Eggstack M004b).
+///
+/// Missing/insufficient evidence is `Invalid`, never inconclusive: there is
+/// no `Inconclusive` in the M004 v1 per-check vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectnessDisposition {
+    /// Observed bypasses within the predeclared allowance.
+    Pass,
+    /// Observed bypasses exceeded the predeclared allowance.
+    Fail,
+    /// Malformed, missing, or incompatible evidence.
+    Invalid,
+}
+
+/// Typed correctness observation for one check (Eggstack M004b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CorrectnessObserved {
+    /// Eggsec WAF bypass observation: Eggsec-defined case counts.
+    WafBypass {
+        /// Number of evaluated Eggsec cases.
+        evaluated_cases: u32,
+        /// Count of `bypass_successful == true` findings.
+        successful_bypasses: u32,
+    },
+}
+
+/// Typed correctness expectation for one check (Eggstack M004b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CorrectnessExpectationRecord {
+    /// Predeclared maximum successful bypasses (declared before execution).
+    MaxSuccessfulBypasses {
+        /// Allowed successful bypass count.
+        value: u32,
+    },
+}
+
+/// One validated correctness check record (Eggstack M004b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CorrectnessCheckRecord {
+    /// Check identity from the candidate plan.
+    pub id: Name,
+    /// Correctness source (`eggsec-waf`).
+    pub source: Name,
+    /// Correctness family (`waf_bypass`).
+    pub family: Name,
+    /// Declared target binding.
+    pub target: Name,
+    /// Validated per-check disposition.
+    pub disposition: CorrectnessDisposition,
+    /// Typed observed counts.
+    pub observed: CorrectnessObserved,
+    /// Typed predeclared expectation.
+    pub expectation: CorrectnessExpectationRecord,
+    /// Bundle-relative evidence artifact path (`security/<id>.json`).
+    pub evidence_path: ArtifactPath,
+    /// SHA-256 of the staged per-check artifact bytes.
+    pub evidence_sha256: String,
+    /// Observed producer version.
+    pub producer_version: String,
+    /// SHA-256 of the producer executable.
+    pub producer_sha256: String,
+    /// Stable `snake_case` reason for invalid outcomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Independent security-correctness comparison section (Eggstack M004b).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CorrectnessComparisonSection {
+    /// Immutable correctness policy identifier.
+    pub policy_id: String,
+    /// Per-check records in candidate plan order.
+    pub checks: Vec<CorrectnessCheckRecord>,
+    /// Conservative correctness aggregate (Invalid > Fail > Pass).
+    pub aggregate_verdict: AggregateVerdict,
+}
+
+/// Standalone immutable-by-content comparison receipt, schema v3.
+///
+/// For schema v3: `performance_verdict` is the conservative aggregate of
+/// metric gates only, `correctness` is independent security evidence, and
+/// `aggregate_verdict` is the final combined verdict. For legacy v1/v2
+/// receipts, the historical `aggregate_verdict` retains its metric-only
+/// meaning; readers may project it as performance-only for display and
+/// must never project correctness into a legacy receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComparisonReceipt {
@@ -361,8 +466,24 @@ pub struct ComparisonReceipt {
     /// Per-metric records in metric-name order.
     pub metrics: Vec<MetricComparison>,
     /// Conservative aggregate over gated primary metrics, when any.
+    ///
+    /// For schema v3 this is the final combined verdict (performance plus
+    /// correctness); for legacy v1/v2 this retains its historical
+    /// metric-only meaning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggregate_verdict: Option<AggregateVerdict>,
+    /// Conservative aggregate of metric gates only (schema v3).
+    ///
+    /// Absent on legacy v1/v2 receipts; readers project the legacy
+    /// `aggregate_verdict` as performance-only for display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance_verdict: Option<AggregateVerdict>,
+    /// Independent security-correctness section (schema v3).
+    ///
+    /// Absent when the candidate declares no security checks; never
+    /// projected into legacy receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correctness: Option<CorrectnessComparisonSection>,
     /// Paired-design evidence, present only for paired comparisons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paired: Option<PairedComparisonSection>,
@@ -500,6 +621,11 @@ pub struct ComparisonInput {
     /// Result values (pass/fail/counts) never participate; only requested
     /// configuration plus producer/scope provenance does.
     pub security_evidence: Option<SecurityEvidenceIdentity>,
+    /// Validated per-check correctness records, present only for runs that
+    /// declare security checks (Eggstack M004b). Malformed, missing, or
+    /// incompatible evidence yields `Invalid` records, never an abort:
+    /// only bundle-structural contradictions fail the whole load.
+    pub security_records: Option<Vec<CorrectnessCheckRecord>>,
 }
 
 /// Comparison-critical identity loaded from `semantic-replay.json`.
@@ -1346,6 +1472,266 @@ fn load_diagnostics_evidence_identity(
     }))
 }
 
+/// Load validated per-check correctness records for one candidate bundle.
+///
+/// Bundle-structural contradictions (missing index for a security run,
+/// index contract violation, check-count mismatch, paired/path composition
+/// despite schema validation) fail the whole load. Per-check evidence
+/// problems (missing artifact, digest mismatch, unparsable result,
+/// contract violation, config/producer/scope mismatch, stored-versus-
+/// recomputed disposition disagreement) yield `Invalid` records with stable
+/// reasons: an invalid correctness contract can never become a security
+/// pass, and comparison still reports it as `Invalid`.
+///
+/// # Errors
+/// Returns [`ComparisonError`] on bundle-structural contradictions.
+pub fn load_correctness_records(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<Vec<CorrectnessCheckRecord>>, ComparisonError> {
+    let Some(index_record) = security_evidence_record(reader, resolved)? else {
+        return Ok(None);
+    };
+    if resolved.security_checks.is_empty() {
+        return Err(BundleError::InvalidManifest(
+            "security-free bundle contains security evidence",
+        )
+        .into());
+    }
+    // M004a rejects paired/path composition at plan validation; a bundle
+    // carrying both anyway fails closed here rather than inventing
+    // per-arm or routed correctness semantics.
+    if resolved.paired.is_some() || resolved.network_path.is_some() {
+        return Err(BundleError::InvalidManifest(
+            "security evidence is incompatible with paired or network-path runs",
+        )
+        .into());
+    }
+    let mut file = reader.open_artifact(&index_record.path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| BundleError::Io {
+            path: PathBuf::from(index_record.path.as_str()),
+            source: error,
+        })?;
+    if bytes.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest("security evidence exceeds bound").into());
+    }
+    let index: StoredSecurityChecksIndex = serde_json::from_slice(&bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if index.schema_version != SchemaVersion(crate::SECURITY_CHECKS_INDEX_SCHEMA)
+        || index.driver != crate::EGGSEC_WAF_DRIVER_NAME
+        || index.adapter_version.is_empty()
+        || index.adapter_version.len() > 128
+        || index.executable_version.is_empty()
+        || index.executable_version.len() > 128
+        || index.executable_sha256.len() != 64
+        || index.scope_sha256.len() != 64
+        || index.operation.is_empty()
+        || index.operation.len() > 256
+        || index.lifecycle_placement.is_empty()
+        || index.lifecycle_placement.len() > 128
+    {
+        return Err(BundleError::InvalidManifest("security evidence contract is invalid").into());
+    }
+    if index.checks.len() != resolved.security_checks.len() {
+        return Err(BundleError::InvalidManifest(
+            "security evidence check count contradicts the resolved plan",
+        )
+        .into());
+    }
+    let mut records = Vec::with_capacity(resolved.security_checks.len());
+    for (staged, request) in index.checks.iter().zip(resolved.security_checks.iter()) {
+        records.push(load_correctness_record(reader, &index, staged, request));
+    }
+    Ok(Some(records))
+}
+
+/// Read one staged per-check artifact with digest verification.
+///
+/// Returns the canonical artifact path plus bytes, or the stable reason
+/// the evidence is unusable (`config_mismatch`, `missing_artifact`, or
+/// `digest_mismatch`).
+fn read_correctness_artifact(
+    reader: &BundleReader,
+    staged: &StoredSecurityCheckRecord,
+) -> Result<(ArtifactPath, Vec<u8>), &'static str> {
+    let Ok(path) = ArtifactPath::new(staged.artifact.clone()) else {
+        return Err("config_mismatch");
+    };
+    let Ok(mut file) = reader.open_artifact(&path) else {
+        return Err("missing_artifact");
+    };
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() || bytes.len() > 128 * 1024 {
+        return Err("missing_artifact");
+    }
+    if !format!("{:x}", sha2::Sha256::digest(&bytes)).eq_ignore_ascii_case(&staged.artifact_sha256)
+    {
+        return Err("digest_mismatch");
+    }
+    Ok((path, bytes))
+}
+
+/// Load and validate one correctness check record.
+///
+/// Never fails: every evidence problem becomes an `Invalid` record with a
+/// stable reason, so tampered or truncated evidence stays visible as
+/// invalid correctness instead of aborting comparison.
+fn load_correctness_record(
+    reader: &BundleReader,
+    index: &StoredSecurityChecksIndex,
+    staged: &StoredSecurityCheckRecord,
+    request: &crate::SecurityCheckRequest,
+) -> CorrectnessCheckRecord {
+    let family = crate::Name::new(crate::SECURITY_CORRECTNESS_FAMILY_WAF_BYPASS)
+        .expect("static correctness family");
+    let invalid = |reason: &'static str| CorrectnessCheckRecord {
+        id: request.id.clone(),
+        source: request.source.clone(),
+        family: family.clone(),
+        target: request.target.clone(),
+        disposition: CorrectnessDisposition::Invalid,
+        observed: CorrectnessObserved::WafBypass {
+            evaluated_cases: 0,
+            successful_bypasses: 0,
+        },
+        expectation: CorrectnessExpectationRecord::MaxSuccessfulBypasses {
+            value: request.max_successful_bypasses,
+        },
+        evidence_path: crate::ArtifactPath::new(format!("security/{}.json", request.id.as_str()))
+            .expect("validated check id"),
+        evidence_sha256: staged.artifact_sha256.clone(),
+        producer_version: index.executable_version.clone(),
+        producer_sha256: index.executable_sha256.to_ascii_lowercase(),
+        reason: Some(reason.to_owned()),
+    };
+    // The staged index row must describe the resolved request.
+    if staged.id != request.id.as_str()
+        || staged.source != request.source.as_str()
+        || staged.target != request.target.as_str()
+    {
+        return invalid("config_mismatch");
+    }
+    // The artifact path is canonical: no traversal or aliasing.
+    let canonical = format!("security/{}.json", request.id.as_str());
+    if staged.artifact != canonical || staged.artifact_sha256.len() != 64 {
+        return invalid("config_mismatch");
+    }
+    let (path, bytes) = match read_correctness_artifact(reader, staged) {
+        Ok(artifact) => artifact,
+        Err(reason) => return invalid(reason),
+    };
+    let result: crate::SecurityCheckResultV1 = match serde_json::from_slice(&bytes) {
+        Ok(result) => result,
+        Err(_) => return invalid("unparsable_result"),
+    };
+    // Do not trust the persisted Pass/Fail string without recomputing the
+    // Eggbench-owned threshold relation, and do not reopen raw payload data.
+    if result.recomputed() != result.disposition {
+        return invalid("disposition_mismatch");
+    }
+    if result.validate_contract().is_err() {
+        return invalid("contract_violation");
+    }
+    if result.id.as_str() != request.id.as_str()
+        || result.source.as_str() != request.source.as_str()
+        || result.target.as_str() != request.target.as_str()
+        || result.test_type != request.test_type.as_cli_str()
+        || result.allowed_successful_bypasses != request.max_successful_bypasses
+    {
+        return invalid("config_mismatch");
+    }
+    if result.producer_version != index.executable_version
+        || !result
+            .producer_sha256
+            .eq_ignore_ascii_case(&index.executable_sha256)
+    {
+        return invalid("producer_mismatch");
+    }
+    if !result
+        .scope_sha256
+        .eq_ignore_ascii_case(&index.scope_sha256)
+    {
+        return invalid("scope_mismatch");
+    }
+    let disposition = match result.disposition {
+        crate::SecurityDisposition::Pass => CorrectnessDisposition::Pass,
+        crate::SecurityDisposition::Fail => CorrectnessDisposition::Fail,
+        crate::SecurityDisposition::Invalid => return invalid("contract_violation"),
+    };
+    CorrectnessCheckRecord {
+        id: request.id.clone(),
+        source: request.source.clone(),
+        family,
+        target: request.target.clone(),
+        disposition,
+        observed: CorrectnessObserved::WafBypass {
+            evaluated_cases: result.evaluated_cases,
+            successful_bypasses: result.successful_bypasses,
+        },
+        expectation: CorrectnessExpectationRecord::MaxSuccessfulBypasses {
+            value: request.max_successful_bypasses,
+        },
+        evidence_path: path,
+        evidence_sha256: staged.artifact_sha256.to_ascii_lowercase(),
+        producer_version: result.producer_version,
+        producer_sha256: result.producer_sha256.to_ascii_lowercase(),
+        reason: None,
+    }
+}
+
+/// Deterministic correctness aggregation (Eggstack M004b).
+///
+/// Any `Invalid` evidence yields `Invalid`; otherwise any `Fail` yields
+/// `Fail`; otherwise at least one `Pass` yields `Pass`. An empty record
+/// list (which cannot arise from a validated load) yields `Invalid`.
+#[must_use]
+pub fn aggregate_correctness(records: &[CorrectnessCheckRecord]) -> AggregateVerdict {
+    if records.is_empty()
+        || records
+            .iter()
+            .any(|record| record.disposition == CorrectnessDisposition::Invalid)
+    {
+        return AggregateVerdict::Invalid;
+    }
+    if records
+        .iter()
+        .any(|record| record.disposition == CorrectnessDisposition::Fail)
+    {
+        return AggregateVerdict::Fail;
+    }
+    AggregateVerdict::Pass
+}
+
+/// Conservative performance-plus-correctness combination (Eggstack M004b).
+///
+/// Precedence: `Invalid > Fail > Inconclusive > Pass`, where `>` means
+/// stronger precedence, not desirability. A performance pass can never
+/// override a security-correctness failure, and an invalid correctness
+/// contract can never be hidden by a performance pass. When neither side
+/// provides a gate the combined verdict is `None`.
+#[must_use]
+pub fn combine_verdicts(
+    performance: Option<AggregateVerdict>,
+    correctness: Option<AggregateVerdict>,
+) -> Option<AggregateVerdict> {
+    match (performance, correctness) {
+        (Some(AggregateVerdict::Invalid), _) | (_, Some(AggregateVerdict::Invalid)) => {
+            Some(AggregateVerdict::Invalid)
+        }
+        (Some(AggregateVerdict::Fail), _) | (_, Some(AggregateVerdict::Fail)) => {
+            Some(AggregateVerdict::Fail)
+        }
+        (Some(AggregateVerdict::Inconclusive), _) | (_, Some(AggregateVerdict::Inconclusive)) => {
+            Some(AggregateVerdict::Inconclusive)
+        }
+        (Some(AggregateVerdict::Pass), Some(AggregateVerdict::Pass) | None)
+        | (None, Some(AggregateVerdict::Pass)) => Some(AggregateVerdict::Pass),
+        (None, None) => None,
+    }
+}
+
 fn security_evidence_record(
     reader: &BundleReader,
     resolved: &ResolvedPlan,
@@ -1493,6 +1879,31 @@ fn load_security_evidence_identity(
     }))
 }
 
+/// Parse and validate a standalone comparison receipt.
+///
+/// Accepts schema v1, v2, and v3; unknown schema versions and unknown
+/// fields fail closed. Historical v1/v2 receipts keep their metric-only
+/// aggregate meaning; v3 receipts carry the explicit performance-only
+/// verdict plus the independent correctness section.
+///
+/// # Errors
+/// Returns [`ComparisonError`] on malformed JSON, unknown fields, or an
+/// unsupported receipt schema version.
+pub fn parse_comparison_receipt(bytes: &[u8]) -> Result<ComparisonReceipt, ComparisonError> {
+    let receipt: ComparisonReceipt = serde_json::from_slice(bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION
+        && receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION_2
+        && receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION_1
+    {
+        return Err(BundleError::InvalidManifest(
+            "comparison receipt schema version is unsupported",
+        )
+        .into());
+    }
+    Ok(receipt)
+}
+
 /// Load a verified comparison-ready input from an opened bundle.
 ///
 /// Verifies the bundle before deriving identity or reading evidence.
@@ -1539,6 +1950,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
     let semantic_replay_evidence = load_semantic_replay_evidence_identity(reader, &resolved)?;
     let diagnostics_evidence = load_diagnostics_evidence_identity(reader, &resolved)?;
     let security_evidence = load_security_evidence_identity(reader, &resolved)?;
+    let security_records = load_correctness_records(reader, &resolved)?;
     Ok(ComparisonInput {
         identity,
         resolved,
@@ -1549,6 +1961,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         semantic_replay_evidence,
         diagnostics_evidence,
         security_evidence,
+        security_records,
     })
 }
 
@@ -1679,6 +2092,33 @@ fn unpaired_policy_id(
 /// evaluation); these indicate a programming defect, never input data.
 #[allow(clippy::too_many_lines)] // One auditable policy pass over all metrics.
 #[must_use]
+/// Build the independent correctness section for one candidate input.
+///
+/// Returns `None` when the candidate declares no security checks. The
+/// section aggregates validated per-check records; baseline security
+/// outcomes never redefine the candidate expectation.
+fn correctness_section(candidate: &ComparisonInput) -> Option<CorrectnessComparisonSection> {
+    let records = candidate.security_records.clone()?;
+    Some(CorrectnessComparisonSection {
+        policy_id: SECURITY_CORRECTNESS_POLICY_V1.to_owned(),
+        aggregate_verdict: aggregate_correctness(&records),
+        checks: records,
+    })
+}
+
+/// Compare a candidate bundle against an optional baseline.
+///
+/// Emits a schema-v3 receipt: the metric-only `performance_verdict`, the
+/// independent `correctness` section (when the candidate declares security
+/// checks), and the conservative combined `aggregate_verdict`. Security
+/// results never enter `TrialMetrics` and never become metric samples.
+///
+/// # Panics
+/// Panics only on the internal invariant that every metric name collected
+/// from the plan resolves back to its request; this indicates a programming
+/// defect, never input data.
+#[allow(clippy::too_many_lines)] // One auditable unpaired policy pass, as for v2.
+#[must_use]
 pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> ComparisonReceipt {
     let candidate = request.candidate;
     let policy_id = unpaired_policy_id(candidate, request.baseline.as_ref().map(|side| side.input));
@@ -1763,9 +2203,14 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
             break;
         }
     }
-    let aggregate_verdict = aggregate(&metrics);
+    let performance_verdict = aggregate(&metrics);
+    let correctness = correctness_section(candidate);
+    let correctness_aggregate = correctness
+        .as_ref()
+        .map(|section| section.aggregate_verdict);
+    let aggregate_verdict = combine_verdicts(performance_verdict, correctness_aggregate);
     ComparisonReceipt {
-        schema_version: COMPARISON_RECEIPT_SCHEMA_VERSION_1,
+        schema_version: COMPARISON_RECEIPT_SCHEMA_VERSION,
         policy_id: policy_id.to_owned(),
         created_by_version: env!("CARGO_PKG_VERSION").to_owned(),
         candidate_identity: candidate.identity.clone(),
@@ -1779,6 +2224,8 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
         base_seed,
         metrics,
         aggregate_verdict,
+        performance_verdict,
+        correctness,
         paired: None,
         warnings,
     }
@@ -1924,7 +2371,16 @@ pub fn compare_paired(
             break;
         }
     }
-    let aggregate_verdict = aggregate(&metrics);
+    let performance_verdict = aggregate(&metrics);
+    // Security checks cannot appear in a paired bundle: plan validation
+    // rejects the composition and the loader fails closed, so paired
+    // receipts carry no correctness section.
+    debug_assert!(input.security_records.is_none());
+    let correctness = correctness_section(input);
+    let correctness_aggregate = correctness
+        .as_ref()
+        .map(|section| section.aggregate_verdict);
+    let aggregate_verdict = combine_verdicts(performance_verdict, correctness_aggregate);
     let paired = input.paired.as_ref().and_then(|summary| {
         let design = input.resolved.paired.as_ref()?;
         Some(PairedComparisonSection {
@@ -1955,6 +2411,8 @@ pub fn compare_paired(
         base_seed,
         metrics,
         aggregate_verdict,
+        performance_verdict,
+        correctness,
         paired,
         warnings,
     }
@@ -3682,6 +4140,7 @@ mod tests {
             semantic_replay_evidence: None,
             diagnostics_evidence: None,
             security_evidence: None,
+            security_records: None,
         }
     }
 
@@ -5042,6 +5501,7 @@ mod tests {
             semantic_replay_evidence: None,
             diagnostics_evidence: None,
             security_evidence: None,
+            security_records: None,
         }
     }
 
@@ -5459,6 +5919,531 @@ mod tests {
         compare_paired_test(&input)
     }
 
+    // ---- Eggstack M004b security-correctness gate tests ----
+
+    fn correctness_record_with(
+        disposition: CorrectnessDisposition,
+        evaluated: u32,
+        successful: u32,
+        allowed: u32,
+    ) -> CorrectnessCheckRecord {
+        CorrectnessCheckRecord {
+            id: Name::new("waf-sqli").unwrap(),
+            source: Name::new(crate::SECURITY_SOURCE_EGGSEC_WAF).unwrap(),
+            family: Name::new(crate::SECURITY_CORRECTNESS_FAMILY_WAF_BYPASS).unwrap(),
+            target: metric_name("origin"),
+            disposition,
+            observed: CorrectnessObserved::WafBypass {
+                evaluated_cases: evaluated,
+                successful_bypasses: successful,
+            },
+            expectation: CorrectnessExpectationRecord::MaxSuccessfulBypasses { value: allowed },
+            evidence_path: crate::ArtifactPath::new("security/waf-sqli.json").unwrap(),
+            evidence_sha256: "aa".repeat(32),
+            producer_version: "0.1.0".to_owned(),
+            producer_sha256: "bb".repeat(32),
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn correctness_aggregation_prefers_invalid_then_fail() {
+        use AggregateVerdict::{Fail, Invalid, Pass};
+        use CorrectnessDisposition::{Fail as CFail, Invalid as CInvalid, Pass as CPass};
+        let verdict_of = |dispositions: &[CorrectnessDisposition]| {
+            aggregate_correctness(
+                &dispositions
+                    .iter()
+                    .map(|disposition| correctness_record_with(*disposition, 3, 0, 0))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(verdict_of(&[CPass]), Pass);
+        assert_eq!(verdict_of(&[CPass, CPass]), Pass);
+        assert_eq!(verdict_of(&[CPass, CFail]), Fail);
+        assert_eq!(verdict_of(&[CFail]), Fail);
+        assert_eq!(verdict_of(&[CPass, CInvalid]), Invalid);
+        assert_eq!(verdict_of(&[CFail, CInvalid]), Invalid);
+        assert_eq!(verdict_of(&[CInvalid]), Invalid);
+        assert_eq!(verdict_of(&[]), Invalid);
+    }
+
+    #[test]
+    fn combined_verdict_precedence_is_invalid_fail_inconclusive_pass() {
+        use AggregateVerdict::{Fail, Inconclusive, Invalid, Pass};
+        // Evidence invalidity dominates.
+        assert_eq!(combine_verdicts(Some(Pass), Some(Invalid)), Some(Invalid));
+        assert_eq!(combine_verdicts(Some(Invalid), Some(Pass)), Some(Invalid));
+        assert_eq!(combine_verdicts(None, Some(Invalid)), Some(Invalid));
+        assert_eq!(combine_verdicts(Some(Invalid), None), Some(Invalid));
+        // Known failure dominates uncertainty and pass.
+        assert_eq!(combine_verdicts(Some(Pass), Some(Fail)), Some(Fail));
+        assert_eq!(combine_verdicts(Some(Fail), Some(Pass)), Some(Fail));
+        assert_eq!(
+            combine_verdicts(Some(Inconclusive), Some(Pass)),
+            Some(Inconclusive)
+        );
+        assert_eq!(combine_verdicts(None, Some(Fail)), Some(Fail));
+        assert_eq!(combine_verdicts(Some(Fail), None), Some(Fail));
+        // A performance pass can never override a security failure, and a
+        // security pass can never override a performance failure.
+        assert_eq!(combine_verdicts(Some(Pass), Some(Pass)), Some(Pass));
+        assert_eq!(combine_verdicts(Some(Pass), None), Some(Pass));
+        assert_eq!(combine_verdicts(None, Some(Pass)), Some(Pass));
+        // Performance uncertainty remains visible without correctness.
+        assert_eq!(
+            combine_verdicts(Some(Inconclusive), None),
+            Some(Inconclusive)
+        );
+        // No gates on either side.
+        assert_eq!(combine_verdicts(None, None), None);
+    }
+
+    fn security_bundle_plan() -> (crate::ExperimentPlan, ResolvedPlan) {
+        let mut plan =
+            crate::ExperimentPlan::from_json(include_str!("../tests/fixtures/minimal.json"))
+                .unwrap();
+        plan.schema_version = crate::EXPERIMENT_PLAN_SCHEMA_VERSION_6;
+        plan.services = vec![crate::Service {
+            name: metric_name("origin"),
+            kind: crate::ServiceKind::Named {
+                service_type: metric_name("eggserve-origin"),
+            },
+            lifecycle: crate::Lifecycle::External,
+            depends_on: Vec::new(),
+            config: std::collections::BTreeMap::new(),
+            readiness: None,
+            shutdown: None,
+            working_directory: None,
+            log_limit_bytes: 4096,
+        }];
+        plan.workload = crate::Workload::FiniteCount {
+            target: metric_name("origin"),
+            requests: crate::PositiveCount::new(10).unwrap(),
+            concurrency: crate::PositiveCount::new(1).unwrap(),
+        };
+        plan.security_checks = Some(vec![crate::SecurityCheckRequest {
+            id: metric_name("waf-sqli"),
+            source: Name::new(crate::SECURITY_SOURCE_EGGSEC_WAF).unwrap(),
+            target: metric_name("origin"),
+            test_type: crate::EggsecWafTestType::Sqli,
+            max_successful_bypasses: 0,
+            concurrency: crate::PositiveCount::new(2).unwrap(),
+            timeout_ms: crate::DurationMs::new(5000).unwrap(),
+        }]);
+        plan.validate().unwrap();
+        let mut resolved = resolved_with(Vec::new(), EnvironmentPolicy::StrictSameTestbed);
+        resolved.source_plan_schema_version = crate::EXPERIMENT_PLAN_SCHEMA_VERSION_6;
+        resolved.security_checks = plan.security_checks.clone().unwrap_or_default();
+        (plan, resolved)
+    }
+
+    fn security_result_json(
+        evaluated: u32,
+        successful: u32,
+        allowed: u32,
+        disposition: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": 1,
+            "id": "waf-sqli",
+            "source": "eggsec-waf",
+            "target": "origin",
+            "test_type": "sqli",
+            "disposition": disposition,
+            "evaluated_cases": evaluated,
+            "successful_bypasses": successful,
+            "allowed_successful_bypasses": allowed,
+            "producer_version": "0.1.0",
+            "producer_sha256": "bb".repeat(32),
+            "scope_sha256": "cc".repeat(32),
+            "sanitized_cases": (0..evaluated).map(|i| serde_json::json!({
+                "technique": format!("technique-{i}"),
+                "severity_label": "low",
+                "response_status": 403,
+                "bypass_successful": i < successful,
+                "payload_sha256": "dd".repeat(32),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    /// Stage a minimal security bundle with one check.
+    ///
+    /// `mutate` adjusts `(index_json, result_bytes)` after the valid
+    /// baseline is derived: return `None` for the result bytes to omit the
+    /// per-check artifact (missing-artifact case).
+    #[allow(clippy::too_many_lines)] // One linear bundle-staging script per tamper case.
+    fn stage_security_bundle(
+        dir: &std::path::Path,
+        name: &str,
+        mutate: impl FnOnce(serde_json::Value, Option<Vec<u8>>) -> (serde_json::Value, Option<Vec<u8>>),
+    ) -> crate::BundleReader {
+        use crate::{ArtifactRole, BundleWriter, Sensitivity};
+        let (_plan, resolved) = security_bundle_plan();
+        let result_bytes =
+            serde_json::to_vec_pretty(&security_result_json(3, 0, 0, "pass")).unwrap();
+        let digest = format!("{:x}", sha2::Sha256::digest(&result_bytes));
+        let index = serde_json::json!({
+            "schema_version": 1,
+            "driver": "eggsec-waf",
+            "adapter_version": "0.1.0",
+            "executable_version": "0.1.0",
+            "executable_sha256": "bb".repeat(32),
+            "operation": "waf --json --bypass",
+            "scope_sha256": "cc".repeat(32),
+            "lifecycle_placement": "test",
+            "checks": [{
+                "id": "waf-sqli",
+                "source": "eggsec-waf",
+                "target": "origin",
+                "test_type": "sqli",
+                "disposition": "pass",
+                "evaluated_cases": 3,
+                "successful_bypasses": 0,
+                "allowed_successful_bypasses": 0,
+                "artifact": "security/waf-sqli.json",
+                "artifact_sha256": digest,
+            }],
+        });
+        let (index, result_bytes) = mutate(index, Some(result_bytes));
+        let bounds = crate::ArtifactBounds {
+            artifact_count: crate::PositiveCount::new(64).unwrap(),
+            artifact_bytes: 1024 * 1024,
+            total_bytes: 8 * 1024 * 1024,
+        };
+        let mut writer = BundleWriter::create(dir.join(name), crate::RunId::new(), bounds).unwrap();
+        let plan_bytes = security_bundle_plan()
+            .0
+            .to_json()
+            .expect("plan serializes")
+            .into_bytes();
+        writer
+            .add_artifact(
+                crate::ArtifactPath::new("plan.json").unwrap(),
+                ArtifactRole::ExperimentPlan,
+                "application/json",
+                Sensitivity::Redacted,
+                plan_bytes.as_slice(),
+            )
+            .unwrap();
+        let resolved_bytes = serde_json::to_vec(&resolved).unwrap();
+        writer
+            .add_artifact(
+                crate::ArtifactPath::new("resolved-plan.json").unwrap(),
+                ArtifactRole::ResolvedPlan,
+                "application/json",
+                Sensitivity::Redacted,
+                resolved_bytes.as_slice(),
+            )
+            .unwrap();
+        let environment_bytes = serde_json::to_vec(&standard_environment()).unwrap();
+        writer
+            .add_artifact(
+                crate::ArtifactPath::new("environment.json").unwrap(),
+                ArtifactRole::EnvironmentFingerprint,
+                "application/json",
+                Sensitivity::Redacted,
+                environment_bytes.as_slice(),
+            )
+            .unwrap();
+        let index_bytes = serde_json::to_vec_pretty(&index).unwrap();
+        writer
+            .add_artifact(
+                crate::ArtifactPath::new("security-checks.json").unwrap(),
+                ArtifactRole::Other {
+                    label: crate::Name::new("security").unwrap(),
+                },
+                "application/json",
+                Sensitivity::Redacted,
+                index_bytes.as_slice(),
+            )
+            .unwrap();
+        if let Some(result_bytes) = result_bytes {
+            writer
+                .add_artifact(
+                    crate::ArtifactPath::new("security/waf-sqli.json").unwrap(),
+                    ArtifactRole::Other {
+                        label: crate::Name::new("security").unwrap(),
+                    },
+                    "application/json",
+                    Sensitivity::Redacted,
+                    result_bytes.as_slice(),
+                )
+                .unwrap();
+        }
+        writer
+            .finalize(
+                crate::ExecutionStatus::Completed,
+                None,
+                crate::Subject::Label {
+                    label: metric_name("m004b"),
+                },
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+            )
+            .unwrap()
+    }
+
+    fn load_records(bundle: &crate::BundleReader) -> Vec<CorrectnessCheckRecord> {
+        let input = load_comparison_input(bundle).expect("bundle loads");
+        input.security_records.expect("records present")
+    }
+
+    #[test]
+    fn valid_security_evidence_loads_as_pass() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle =
+            stage_security_bundle(temp.path(), "valid.eggb", |index, result| (index, result));
+        let records = load_records(&bundle);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Pass);
+        assert!(records[0].reason.is_none());
+        assert_eq!(
+            records[0].observed,
+            CorrectnessObserved::WafBypass {
+                evaluated_cases: 3,
+                successful_bypasses: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn tampered_or_missing_evidence_is_invalid_never_pass() {
+        let temp = tempfile::tempdir().unwrap();
+        // Missing per-check artifact.
+        let bundle = stage_security_bundle(temp.path(), "missing.eggb", |index, _| (index, None));
+        let records = load_records(&bundle);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Invalid);
+        assert_eq!(records[0].reason.as_deref(), Some("missing_artifact"));
+        // Digest mismatch.
+        let bundle = stage_security_bundle(temp.path(), "digest.eggb", |mut index, result| {
+            index["checks"][0]["artifact_sha256"] = serde_json::json!("00".repeat(32));
+            (index, result)
+        });
+        let records = load_records(&bundle);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Invalid);
+        assert_eq!(records[0].reason.as_deref(), Some("digest_mismatch"));
+        // Config mismatch (result target contradicts the plan; the index
+        // stays intact and the digest is recomputed so the config check,
+        // not the digest check, decides).
+        let bundle = stage_security_bundle(temp.path(), "config.eggb", |mut index, result| {
+            let mut value: serde_json::Value = serde_json::from_slice(&result.unwrap()).unwrap();
+            value["target"] = serde_json::json!("other");
+            let bytes = serde_json::to_vec_pretty(&value).unwrap();
+            index["checks"][0]["artifact_sha256"] =
+                serde_json::json!(format!("{:x}", sha2::Sha256::digest(&bytes)));
+            (index, Some(bytes))
+        });
+        let records = load_records(&bundle);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Invalid);
+        assert_eq!(records[0].reason.as_deref(), Some("config_mismatch"));
+        // Producer mismatch. The digest is recomputed for the tampered
+        // bytes so the producer check (not the digest check) decides.
+        let bundle = stage_security_bundle(temp.path(), "producer.eggb", |mut index, result| {
+            let mut value: serde_json::Value = serde_json::from_slice(&result.unwrap()).unwrap();
+            value["producer_version"] = serde_json::json!("9.9.9");
+            let bytes = serde_json::to_vec_pretty(&value).unwrap();
+            index["checks"][0]["artifact_sha256"] =
+                serde_json::json!(format!("{:x}", sha2::Sha256::digest(&bytes)));
+            (index, Some(bytes))
+        });
+        let records = load_records(&bundle);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Invalid);
+        assert_eq!(records[0].reason.as_deref(), Some("producer_mismatch"));
+        // Zero evaluated cases.
+        let bundle = stage_security_bundle(temp.path(), "zero.eggb", |mut index, _| {
+            let bytes =
+                serde_json::to_vec_pretty(&security_result_json(0, 0, 0, "invalid")).unwrap();
+            index["checks"][0]["artifact_sha256"] =
+                serde_json::json!(format!("{:x}", sha2::Sha256::digest(&bytes)));
+            index["checks"][0]["evaluated_cases"] = serde_json::json!(0);
+            index["checks"][0]["disposition"] = serde_json::json!("invalid");
+            (index, Some(bytes))
+        });
+        let records = load_records(&bundle);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Invalid);
+        // Stored/recomputed disposition disagreement.
+        let bundle = stage_security_bundle(temp.path(), "disagree.eggb", |mut index, _| {
+            let bytes = serde_json::to_vec_pretty(&security_result_json(3, 2, 0, "pass")).unwrap();
+            index["checks"][0]["artifact_sha256"] =
+                serde_json::json!(format!("{:x}", sha2::Sha256::digest(&bytes)));
+            index["checks"][0]["successful_bypasses"] = serde_json::json!(2);
+            index["checks"][0]["disposition"] = serde_json::json!("pass");
+            (index, Some(bytes))
+        });
+        let records = load_records(&bundle);
+        assert_eq!(records[0].disposition, CorrectnessDisposition::Invalid);
+        assert_eq!(records[0].reason.as_deref(), Some("disposition_mismatch"));
+    }
+
+    #[test]
+    fn correctness_only_receipt_combines_without_metrics() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle =
+            stage_security_bundle(temp.path(), "only.eggb", |index, result| (index, result));
+        let candidate = load_comparison_input(&bundle).expect("bundle loads");
+        let receipt = compare(
+            &ComparisonRequest {
+                candidate: &candidate,
+                baseline: None,
+            },
+            &ComparisonOptions::default(),
+        );
+        assert_eq!(receipt.schema_version, COMPARISON_RECEIPT_SCHEMA_VERSION);
+        assert_eq!(receipt.performance_verdict, None);
+        let section = receipt.correctness.expect("correctness section");
+        assert_eq!(section.policy_id, SECURITY_CORRECTNESS_POLICY_V1);
+        assert_eq!(section.aggregate_verdict, AggregateVerdict::Pass);
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Pass));
+    }
+
+    #[test]
+    fn invalid_correctness_cannot_hide_behind_metrics() {
+        let temp = tempfile::tempdir().unwrap();
+        let bundle = stage_security_bundle(temp.path(), "invalid.eggb", |index, _| (index, None));
+        let candidate = load_comparison_input(&bundle).expect("bundle loads");
+        let receipt = compare(
+            &ComparisonRequest {
+                candidate: &candidate,
+                baseline: None,
+            },
+            &ComparisonOptions::default(),
+        );
+        assert_eq!(
+            receipt.correctness.as_ref().unwrap().aggregate_verdict,
+            AggregateVerdict::Invalid
+        );
+        assert_eq!(receipt.aggregate_verdict, Some(AggregateVerdict::Invalid));
+    }
+
+    #[test]
+    fn legacy_receipts_parse_with_historical_semantics() {
+        let v1_bytes = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("fixtures")
+                .join("receipt-v1.json"),
+        )
+        .expect("v1 fixture");
+        let v1 = parse_comparison_receipt(&v1_bytes).expect("v1 parses");
+        assert_eq!(v1.schema_version, COMPARISON_RECEIPT_SCHEMA_VERSION_1);
+        assert_eq!(v1.aggregate_verdict, Some(AggregateVerdict::Pass));
+        // Legacy receipts carry no v3 sections: readers project the
+        // historical aggregate as performance-only for display.
+        assert_eq!(v1.performance_verdict, None);
+        assert!(v1.correctness.is_none());
+        let v2_bytes = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("fixtures")
+                .join("receipt-v2-paired.json"),
+        )
+        .expect("v2 fixture");
+        let v2 = parse_comparison_receipt(&v2_bytes).expect("v2 parses");
+        assert_eq!(v2.schema_version, COMPARISON_RECEIPT_SCHEMA_VERSION_2);
+        assert!(v2.paired.is_some());
+        assert_eq!(v2.performance_verdict, None);
+        assert!(v2.correctness.is_none());
+    }
+
+    #[test]
+    fn receipt_parser_rejects_unknown_versions_and_fields() {
+        let mut v3: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests")
+                    .join("golden")
+                    .join("comparison-pass.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(parse_comparison_receipt(&serde_json::to_vec(&v3).unwrap()).is_ok());
+        v3["schema_version"] = serde_json::json!(99);
+        assert!(parse_comparison_receipt(&serde_json::to_vec(&v3).unwrap()).is_err());
+        let mut v3: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests")
+                    .join("golden")
+                    .join("comparison-pass.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        v3["future_field"] = serde_json::json!(1);
+        assert!(parse_comparison_receipt(&serde_json::to_vec(&v3).unwrap()).is_err());
+    }
+
+    #[test]
+    fn security_evidence_never_enters_trial_metrics() {
+        // Same metric evidence with opposite correctness outcomes: the
+        // performance verdict and metric bytes are identical; only the
+        // correctness section and the combined verdict differ.
+        let metric = latency_request(Gate::Absolute { value: 500.0 });
+        let mut pass_input = input_with_values(
+            &"aa".repeat(32),
+            metric.clone(),
+            EnvironmentPolicy::StrictSameTestbed,
+            &[100.0; 3],
+            standard_environment(),
+        );
+        let mut fail_input = input_with_values(
+            &"bb".repeat(32),
+            metric,
+            EnvironmentPolicy::StrictSameTestbed,
+            &[100.0; 3],
+            standard_environment(),
+        );
+        pass_input.security_records = Some(vec![correctness_record_with(
+            CorrectnessDisposition::Pass,
+            3,
+            0,
+            0,
+        )]);
+        fail_input.security_records = Some(vec![correctness_record_with(
+            CorrectnessDisposition::Fail,
+            3,
+            2,
+            0,
+        )]);
+        let pass_receipt = compare(
+            &ComparisonRequest {
+                candidate: &pass_input,
+                baseline: None,
+            },
+            &ComparisonOptions::default(),
+        );
+        let fail_receipt = compare(
+            &ComparisonRequest {
+                candidate: &fail_input,
+                baseline: None,
+            },
+            &ComparisonOptions::default(),
+        );
+        assert_eq!(
+            pass_receipt.performance_verdict,
+            fail_receipt.performance_verdict
+        );
+        assert_eq!(
+            serde_json::to_value(&pass_receipt.metrics).unwrap(),
+            serde_json::to_value(&fail_receipt.metrics).unwrap()
+        );
+        // No successful-bypass count ever becomes a metric sample.
+        for receipt in [&pass_receipt, &fail_receipt] {
+            for metric in &receipt.metrics {
+                assert!(!metric.name.as_str().contains("bypass"));
+                assert!(!metric.name.as_str().contains("security"));
+            }
+        }
+        assert_eq!(
+            pass_receipt.aggregate_verdict,
+            pass_receipt.performance_verdict
+        );
+        assert_eq!(fail_receipt.aggregate_verdict, Some(AggregateVerdict::Fail));
+    }
     #[test]
     fn paired_golden_receipts_are_stable() {
         for kind in ["paired-pass", "paired-fail", "paired-inconclusive"] {

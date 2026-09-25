@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "policy_id": "eggbench.trial-bootstrap-paired.v1",
   "created_by_version": "0.1.0",
   "candidate_identity": {
@@ -104,6 +104,7 @@
     }
   ],
   "aggregate_verdict": "inconclusive",
+  "performance_verdict": "inconclusive",
   "paired": {
     "schedule": "alternating-baseline-first",
     "pairs_declared": 6,

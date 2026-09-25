@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "policy_id": "eggbench.trial-bootstrap.v1",
   "created_by_version": "0.1.0",
   "candidate_identity": {
@@ -106,5 +106,6 @@
     }
   ],
   "aggregate_verdict": "pass",
+  "performance_verdict": "pass",
   "warnings": []
 }

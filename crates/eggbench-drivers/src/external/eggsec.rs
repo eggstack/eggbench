@@ -879,8 +879,7 @@ pub fn parse_waf_stdout(
         }
         cases.push(case);
     }
-    let case_count =
-        u32::try_from(cases.len()).map_err(|_| reject("finding count exceeds u32"))?;
+    let case_count = u32::try_from(cases.len()).map_err(|_| reject("finding count exceeds u32"))?;
     let expected_rate = 100.0 * f64::from(successful) / f64::from(case_count);
     if (rate - expected_rate).abs() > BYPASS_RATE_TOLERANCE {
         return Err(reject(
