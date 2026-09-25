@@ -44,9 +44,9 @@ Canonical direction remains in:
 | post-M003 live external-tool qualification corrective | closed | plans/subsystems/post-m003-live-tool-qualification-corrective-addendum.md | C001 stopped with evidence; C002 closed | Live-binary interoperability qualified by C002 (implementation 98f16e6; hosted live-tool run 36177440371; four-lane run 36177440220); historical M003 closure preserved; M004 implementation unblocked |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001/M002/M003 closed/hosted-qualified; live-tool corrective closed (C001 stopped, C002 closed) | M003 historical closure remains valid; C001 proved an M003b adapter dialect defect against real v0.1.1; C002 corrected the adapter and completed live qualification (runs 36177440371/36177440220); M004 implementation unblocked subject to its own plan |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001-M003 closed/qualified; M004a ready; M004b authored/blocked | Execute M004a first; M004b closes M004 after M004a closure |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
+| Security qualification | active planning | plans/subsystems/security-qualification-roadmap.md | M001 research/planning; implementation gated | Measurement is closed; M001 implementation waits for Eggstack M004b closure and then builds reusable security profiles on that substrate |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -68,17 +68,17 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| post-M003 live external-tool qualification corrective | C001 EggReplay + Eggprobe live contract qualification | stopped | plans/implementation/post-m003-live-tool-qualification-corrective/001-eggreplay-eggprobe-live-contract-qualification.md | Stopped with evidence: real v0.1.1 rejects the Eggbench plan dialect; closure: plans/closure/post-m003-live-tool-qualification-corrective/001-status.md; successor C002 is closed |
-| post-M003 live external-tool qualification corrective | C002 Eggprobe adapter contract correction | closed | plans/implementation/post-m003-live-tool-qualification-corrective/002-eggprobe-adapter-contract-correction.md | Adapter corrected to real 0.3 dialect + deferred live qualification complete (20/20 local, hosted runs 36177440371/36177440220 green on 98f16e6); closure: plans/closure/post-m003-live-tool-qualification-corrective/002-status.md |
+| Eggstack integrations | M004a Eggsec strict WAF correctness adapter | ready | plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md | External strict-scope Eggsec WAF seam; schema-v6 security checks; distinct correctness execution/evidence; no security-as-performance metric |
 
-Historical M003 remains closed at plans/closure/eggstack-integration/003b-status.md. The live-tool corrective is additive qualification and does not rewrite that closure.
+Historical post-M003 live-tool C001 stopped with evidence and successor C002 is closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`. No corrective handoff remains open.
 
 ## Authored but dependency-blocked implementation plans
 
-No authored capability implementation plan is currently blocked, and no
-corrective handoff is outstanding. Eggstack M004/Eggsec may now proceed to
-implementation planning (capability implementation unblocked by C002
-closure). External Oracles M003 netem remains separate.
+| Subsystem | Milestone | Status | Implementation plan | Blocker |
+|---|---|---|---|---|
+| Eggstack integrations | M004b security correctness gate family + M004 closure | blocked | plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md | M004a must close first |
+
+Security Qualification M001 may be researched in parallel but implementation remains gated on M004b closure. External Oracles M003 netem remains separate.
 
 ## Current execution order and dependency gates
 
@@ -131,43 +131,28 @@ C001 correctly stopped under its frozen-contract rule. Its successor C002 (imple
 
 ### Gate F — Drivers and integrations
 
-External Oracles M001/M002 are hosted-qualified. Eggstack M001/M002 are closed and hosted-qualified.
+External Oracles M001/M002 are hosted-qualified. Eggstack M001-M003 are closed and hosted-qualified, including additive real-binary EggReplay/Eggprobe interoperability through post-M003 live-tool C002 (implementation `98f16e6`; hosted runs `36177440371` and `36177440220`).
 
-Eggstack M003 is historically closed and hosted-qualified by:
+Eggstack M004 is now planned as two ordered stages:
 
-- M003a implementation `adc3c15`, closure `plans/closure/eggstack-integration/003a-status.md`;
-- M003b implementation `7712995`, umbrella closure `plans/closure/eggstack-integration/003b-status.md`;
-- hosted run `36140143375`;
-- closure-head run `36140843461`.
+1. **M004a Eggsec strict WAF correctness adapter** — dependency-ready:
+   `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`
+2. **M004b security correctness gate family and M004 closure** — authored but blocked on M004a closure:
+   `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`
 
-Those closure records explicitly state that no real `eggreplay` or `eggprobe` binary was available during qualification. The additive live external-tool corrective now owns that evidence gap:
+M004a consumes Eggsec through an external strict-scope CLI boundary, initially only the bounded `waf --json` bypass semantics on local/private targets. It introduces a distinct correctness execution/evidence category and never turns Eggsec security results into performance metrics.
 
-`plans/implementation/post-m003-live-tool-qualification-corrective/001-eggreplay-eggprobe-live-contract-qualification.md`
+M004b consumes M004a's sanitized evidence through a dedicated correctness gate family. ComparisonReceipt v3 records a performance-only verdict, a typed correctness section, and a conservative combined verdict. Performance cannot override failed correctness. Security Qualification M001 remains the owner of broader reusable profiles/corpora and is gated on M004b closure.
 
-C001 pins:
-
-- EggReplay source `d39f4b794620a2d0647688a914e0e7a6be42e184`;
-- Eggprobe positive control `v0.1.1` / `53ea53d` / schema 0.3;
-- Eggprobe current `0ce9597a...` only as a negative schema-0.4 rejection control.
-
-The corrective must prove real matching/mismatch replay, schema-0.3 diagnostics, schema-0.4 rejection, combined pre/workload/post execution, absolute gate behavior, timing exclusion, and cleanup. Historical M003 closure is not reopened.
-
-C001 live execution stopped with evidence: the EggReplay side matches the
-real binary exactly, but the M003b adapter's plan/report dialect is rejected
-by real `eggprobe v0.1.1` (closure
-`plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`).
-C002 corrected the adapter and closed with full live qualification
-(implementation `98f16e6`; closure
-`plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`;
-hosted live-tool run `36177440371`; four-lane run `36177440220`).
-
-Eggstack M004/Eggsec implementation is unblocked subject to its own plan.
+Audited Eggsec source baseline for M004 planning: `0509ac668adfd78e9899cd3428a807d0b3c9f27b` (workspace 0.1.0, Rust 1.89; evolving source tree, no immutable release selected for this machine contract).
 
 External Oracles M003 netem remains a separate later system-level impairment boundary.
 
 ### Gate G — Security profiles
 
-Security qualification retains separate correctness and performance gates. Faster execution never overrides a security-correctness failure.
+Security qualification retains separate correctness and performance gate families. Faster execution never overrides a security-correctness failure.
+
+Measurement prerequisites are already closed. Eggstack M004a/M004b now own the generic execution/evidence and combined-verdict substrate. Security Qualification M001 may be researched while M004 is implemented but must not be handed off until M004b closes; it then owns reusable named profiles, corpus/config digests, expected-outcome matrices, SynVoid qualification semantics, and expansion beyond the initial WAF-bypass family.
 
 ### Gate H — Distributed execution
 
@@ -207,6 +192,15 @@ M003 handoff re-audit on 2026-09-25:
 - Eggprobe qualified release of record: `v0.1.1` at `53ea53d`, machine schema 0.3. Current main has unreleased schema 0.4 work while retaining package version 0.1.1, so M003b performs an explicit machine-schema handshake and consumes DNS/TCP/TLS/HTTP only.
 - Both integrations use existing trusted external-process machinery and preserve sibling ownership. No EggReplay/Eggprobe production Rust dependency is planned.
 
+M004 Eggsec handoff re-audit on 2026-09-25:
+
+- Eggsec audited HEAD `0509ac668adfd78e9899cd3428a807d0b3c9f27b`, workspace 0.1.0 / Rust 1.89; no immutable release was selected for the M004 machine contract.
+- The broad Eggsec Rust crate and generic `scan --json` pipeline are not selected. `eggsec-report-model` is narrow but is not the WAF CLI output contract.
+- Initial production seam is external `eggsec waf --json` with generated exact local/private scope, global `--strict-scope`, and guarded no-network preflight. Manual override flags, stress/flood, raw packets, NSE, remote/C2, db/web-proxy, credentials, and public targets are outside M004.
+- M004a consumes only Eggsec's explicit `bypass_successful` boolean plus structural report consistency; it does not interpret payload text or severity.
+- M004b keeps security correctness out of TrialMetrics/bootstrap and introduces an independent correctness receipt section with conservative combined verdict precedence.
+- Security Qualification M001 owns later reusable profile/corpus semantics rather than duplicating the M004 structural substrate.
+
 ## Planning review checklist for new implementation plans
 
 Before marking a plan ready, verify:
@@ -225,7 +219,12 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-No corrective handoff is outstanding: the live-tool corrective is closed
-(C002) and M004 implementation is unblocked subject to its own future
-implementation plan. The next Eggstack step is authoring the M004/Eggsec
-plan (research may begin immediately).
+The sole dependency-ready capability handoff is:
+
+`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`
+
+After M004a closes, execute:
+
+`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`
+
+M004b closes the Eggstack M004 milestone and unblocks Security Qualification M001 implementation planning/handoff. External Oracles M003 netem remains separate.
