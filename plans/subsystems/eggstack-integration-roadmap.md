@@ -41,6 +41,27 @@ The M002 implementation handoff re-audited the sibling public surfaces after C00
 - eggchaos-eggfetch is not the M002 composition seam because its ChaosDialer establishes a direct TCP connection itself. Eggbench needs Eggress route establishment first, then eggchaos-core wrapping of the returned logical stream.
 - Eggchaos has newer datagram work on main, but M002 remains explicitly stream-only. UDP/datagram impairment is not pulled into this milestone.
 
+## 2B. M003 handoff re-audit — 2026-09-25
+
+M003 re-audited EggReplay and Eggprobe after M002 closure.
+
+### EggReplay
+
+- Current default branch is workspace 0.1.0 / Rust 1.89 and continues active development beyond the originally qualified v0.1 line.
+- Current planning HEAD observed: `29ce133f9845aef2efb5080988796b7ae1dbc7f8`.
+- The JSON CLI is the stable seam selected for Eggbench: `validate` and `replay --output json`, envelope schema 1, RegressionReport schema 2, and documented stable exit classes.
+- Long-running `serve` is not selected because the bound address is currently exposed as human stderr while running and the JSON result arrives only on shutdown.
+- Eggbench therefore uses EggReplay as an external semantic workload and takes no EggReplay Rust production dependency in M003a.
+
+### Eggprobe
+
+- The qualified release of record is `v0.1.1` at `53ea53d`, Rust 1.89, with machine plan/report schema 0.3.
+- Current main also reports package version 0.1.1 but has moved to unreleased schema 0.4/native work; SemVer alone is therefore not an adequate compatibility check.
+- M003b consumes the external JSON CLI, generates schema-0.3 plans, and performs an explicit schema handshake before managed startup.
+- Initial diagnostic families are DNS/TCP/TLS/HTTP only. Schema-0.4 native families, Eggprobe compare statistics, and routed diagnostic translation are outside M003.
+
+The milestone is decomposed because replay is a workload contract while diagnostics are one-shot lifecycle evidence with different timing/failure semantics.
+
 ## 3. Invariants
 
 - No copied sibling protocol implementation.
@@ -118,7 +139,7 @@ Every adapter needs:
 
 ## 8. Risks and decision points
 
-- Eggchaos v0.1.0 is published, but its API may still evolve rapidly; EggReplay/Eggprobe remain evolving integration seams. Pin published versions and preserve narrow ownership boundaries.
+- Eggchaos v0.1.0 is published but may evolve rapidly. EggReplay remains an actively evolving 0.1 workspace, so M003a isolates through its machine CLI. Eggprobe has a qualified v0.1.1/schema-0.3 release while main has unreleased schema 0.4 work, so M003b pins the machine schema contract rather than trusting SemVer alone.
 - Eggsec is broad; importing it as a library may be unjustifiably heavy.
 - Eggress exposes many crates; only the smallest necessary seam should be used.
 - Eggfetch native workloads are not independent oracles when Eggfetch itself is the subject.
@@ -148,8 +169,17 @@ Status: closed. Implementation plan: `plans/implementation/eggstack-integration/
 
 ### M003 — Replay and diagnostics
 
-Status: ready for plan authoring/research; M001/M002 integration seams are closed and hosted-qualified. No M003 implementation plan is registered yet.
+Status: planned/active handoff sequence. M003a is ready; M003b is authored and blocked on M003a closure.
+
+Implementation plans:
+
+- `plans/implementation/eggstack-integration/003a-eggreplay-semantic-replay-workload.md` — **ready**. External EggReplay semantic workload using the JSON CLI, immutable fixture identity, and semantic finding evidence.
+- `plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md` — **blocked on M003a closure**. Adds the generic diagnostic lifecycle seam, Eggprobe schema-0.3 external adapter, and combined M003 closure qualification.
+
+M003a planning commit: `5e67fd0`. M003b planning commit: `46e7aa0`.
+
+M003 deliberately does not import EggReplay/Eggprobe Rust networking engines. M003a uses EggReplay's machine CLI as a workload; M003b uses Eggprobe's qualified machine CLI as pre/post diagnostic evidence outside measured intervals.
 
 ### M004 — Eggsec workload/correctness adapter
 
-Status: blocked on measurement comparison plus preceding integration seams.
+Status: blocked on M003 closure. Measurement/comparison prerequisites are already closed/qualified; after M003b closes the combined integration layer, M004 may be re-audited and planned.
