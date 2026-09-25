@@ -5,8 +5,9 @@
 //! implements route discipline: the exact configured path returns the
 //! configured status with a deterministic fixed-length body; every other
 //! target returns `501 Not Implemented`. No filesystem, timestamp, or random
-//! body is involved, so repeated runs against the same config are
-//! byte-identical.
+//! body is involved, and the runtime `Date` header is suppressed, so repeated
+//! runs against the same config are byte-identical (a requirement for
+//! semantic-replay fixture stability).
 //!
 //! Ownership recap: `EggServe` owns inbound HTTP/runtime semantics; Eggbench
 //! owns configuration, bindings, lifecycle, and evidence. This adapter never
@@ -18,7 +19,7 @@ use eggbench_runner::{
     BoxFuture, ManagedServiceAdapter, ManagedServiceHandle, RuntimeBindings, ServiceStartRequest,
 };
 use eggserve_primitives::{Response, ResponseBody, StatusCode};
-use eggserve_server::{Request, Server, service_fn};
+use eggserve_server::{Request, RuntimeConfig, Server, response_policy::DatePolicy, service_fn};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -211,8 +212,18 @@ async fn start_origin(
     // Loopback-only by construction: the bind address is fixed and never
     // sourced from plan config.
     let bind = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-    let server = Server::builder()
+    // Deterministic by construction: suppress the runtime `Date` header so
+    // responses carry no timestamp and repeated runs against the same config
+    // stay byte-identical for semantic-replay fixture stability. This is
+    // origin configuration, not a measurement semantic: status, body, route
+    // discipline, lifecycle, and evidence behavior are unchanged.
+    let runtime = RuntimeConfig::builder()
         .bind(bind)
+        .date_policy(DatePolicy::Suppress)
+        .build()
+        .map_err(|error| format!("eggserve origin runtime config failed: {error}"))?;
+    let server = Server::builder()
+        .runtime(runtime)
         .build()
         .map_err(|error| format!("eggserve origin build failed: {error}"))?;
     let handle = tokio::select! {

@@ -1,7 +1,10 @@
 """Deterministic raw-socket loopback origin for M003 live qualification.
 
-Emits no Date/Server/timestamp headers: every response carries exactly
-Content-Length (deterministic), Content-Type, Connection: close, then closes.
+Mimics the controlled EggServe origin's exact response header set (C002):
+every response carries exactly Content-Length (deterministic) and then
+closes. No Content-Type, no Connection, no Date/timestamp header — the
+managed origin (with runtime `Date` suppression) emits the same minimal
+shape, so fixtures recorded here replay with zero findings there.
 
   GET /bench -> <STATUS> + exactly <BODY_LEN> bytes of 0x42
   anything else -> 404 + b"not found"
@@ -41,8 +44,6 @@ def handle(conn: socket.socket) -> None:
         head = (
             f"HTTP/1.1 {status} {REASON.get(status, 'OK')}\r\n"
             f"Content-Length: {len(body)}\r\n"
-            "Content-Type: application/octet-stream\r\n"
-            "Connection: close\r\n"
             "\r\n"
         ).encode("latin1")
         conn.sendall(head + body)

@@ -1,0 +1,45 @@
+name: Live external-tool qualification
+
+# Post-M003 live-tool corrective (C002) interoperability job: executes the
+# Eggbench M003 adapters against the REAL pinned sibling binaries
+# (EggReplay @ d39f4b7, Eggprobe v0.1.1 schema 0.3 positive control plus the
+# schema-0.4 negative control) and fails on any contract mismatch.
+#
+# Linux-only by design: the normal four-lane CI already qualifies Eggbench's
+# platform-specific process/runtime behavior. This job proves
+# machine-contract interoperability, not sibling platform portability.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  EGGBENCH_PARENT_SENTINEL_26CE: set-in-parent-process
+
+jobs:
+  live-tools-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Eggbench release binary with all features
+        run: cargo build --locked --release --all-features -p eggbench-cli
+      - name: Run live external-tool qualification harness
+        run: |
+          set -u
+          bash scripts/qualification/m003-live-tools/run-live-qualification.sh >live-qualification.log 2>&1
+          rc=$?
+          tail -45 live-qualification.log
+          exit "$rc"
+      - name: Upload bounded provenance and evidence summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-qualification-log
+          path: live-qualification.log
+          retention-days: 30

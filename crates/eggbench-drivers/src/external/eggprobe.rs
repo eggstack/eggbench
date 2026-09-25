@@ -107,7 +107,8 @@ pub struct HandshakeProof {
 /// Parsed ProbeReport outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeReportParsed {
-    /// Report-level status label (`pass`, `fail`, or another bounded label).
+    /// Report-level status label (real `ReportStatus` vocabulary: `ok`,
+    /// `failed`, `unsupported`, or `cancelled`).
     pub status: String,
     /// Per-probe `(family, status)` pairs in report order.
     pub probes: Vec<(DiagnosticProbe, String)>,
@@ -446,7 +447,9 @@ fn skipped_probe_labels(
 ///
 /// Returns the plan value, the effective (post-skip) probe set, and
 /// lowering warnings. The plan carries no credentials: only the bound host,
-/// port, TLS flag, and HTTP URL cross into the generated JSON.
+/// port, and HTTP URL cross into the generated JSON, shaped in the real
+/// `ProbePlan` dialect (typed `kind`/`port`/`url` probes, microsecond
+/// `deadline`, host-and-port-only target).
 fn build_probe_plan(
     context: &DiagnosticContext,
     lowered: &LoweredTarget,
@@ -460,23 +463,47 @@ fn build_probe_plan(
             ));
         }
     }
-    let probes: Vec<&str> = effective
+    // Typed schema-0.3 probe objects: DNS carries no address, TCP/TLS carry
+    // the bound port, and HTTP carries the bound URL.
+    let probes: Vec<serde_json::Value> = effective
         .iter()
-        .map(|probe| probe_family_name(*probe))
+        .map(|probe| match probe {
+            DiagnosticProbe::Dns => serde_json::json!({"kind": "dns"}),
+            DiagnosticProbe::Tcp => serde_json::json!({"kind": "tcp", "port": lowered.port}),
+            DiagnosticProbe::Tls => serde_json::json!({"kind": "tls", "port": lowered.port}),
+            DiagnosticProbe::Http => {
+                serde_json::json!({"kind": "http", "url": lowered.http_url})
+            }
+        })
         .collect();
-    let deadline_ms =
-        u64::try_from(context.timeout.as_millis().min(u128::from(u64::MAX))).unwrap_or(u64::MAX);
+    // Microsecond `deadline` (real `ExecutionPolicy` dialect).
+    let deadline =
+        u64::try_from(context.timeout.as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX);
+    // Minimal `{host, port}` target: the real `TargetSpec` uses
+    // `deny_unknown_fields`, so no `tls`/`http_url` members may cross the
+    // seam. When an HTTP probe is present the target authority is read back
+    // from the bound HTTP URL so the sibling's host/port cross-check passes
+    // trivially; port-oriented probes carry their own ports regardless.
+    let (target_host, target_port) = if effective.contains(&DiagnosticProbe::Http) {
+        let default_port = if lowered.http_url.starts_with("https://") {
+            443
+        } else {
+            80
+        };
+        authority_host_port(&lowered.http_url, default_port)
+            .unwrap_or((lowered.host.clone(), lowered.port))
+    } else {
+        (lowered.host.clone(), lowered.port)
+    };
     let plan = serde_json::json!({
         "schema_version": EGGPROBE_MACHINE_SCHEMA,
         "target": {
-            "host": lowered.host,
-            "port": lowered.port,
-            "tls": lowered.use_tls,
-            "http_url": lowered.http_url,
+            "host": target_host,
+            "port": target_port,
         },
         "route": {"kind": "direct"},
         "probes": probes,
-        "execution": {"repetitions": 1, "retries": 0, "deadline_ms": deadline_ms},
+        "execution": {"deadline": deadline, "repetitions": 1, "retries": 0},
         "assertions": [],
     });
     (plan, effective, warnings)
@@ -539,7 +566,9 @@ fn require_loopback_url(url: &str) -> Result<(), String> {
 
 /// Classify an `eggprobe run -` exit code given the parsed report.
 ///
-/// - `0`: valid report; disposition follows the report status.
+/// - `0`: valid report with `ok` status; any other status with exit 0 is a
+///   contract surprise and maps to failure (the real binary only exits 0
+///   with `ok`).
 /// - `1`: valid negative diagnostic outcome, never a process failure.
 /// - `2`: invalid generated plan/invocation (adapter/contract error).
 /// - `3`: Eggprobe internal failure (operational failure).
@@ -548,8 +577,7 @@ fn require_loopback_url(url: &str) -> Result<(), String> {
 fn classify_probe_exit(exit_code: Option<i32>, parsed: Option<&ProbeReportParsed>) -> &'static str {
     match exit_code {
         Some(0) => match parsed.map(|report| report.status.as_str()) {
-            Some("pass") => "positive",
-            Some("fail") => "negative",
+            Some("ok") => "positive",
             _ => "failed",
         },
         Some(1) => {
@@ -593,7 +621,7 @@ struct ProbeRouteWire {
 
 #[derive(Debug, Deserialize)]
 struct ProbeEntryWire {
-    family: Option<String>,
+    kind: Option<String>,
     status: Option<String>,
 }
 
@@ -692,7 +720,7 @@ pub fn parse_probe_report(
 }
 
 fn family_name_len(entry: &ProbeEntryWire) -> usize {
-    entry.family.as_ref().map_or(0, String::len)
+    entry.kind.as_ref().map_or(0, String::len)
 }
 
 /// Validate reported probe entries against the requested families: every
@@ -706,12 +734,12 @@ fn validate_report_probes(
     let mut seen = BTreeSet::new();
     for entry in entries {
         let family = entry
-            .family
+            .kind
             .as_deref()
             .and_then(parse_probe_family)
-            .ok_or_else(|| "eggprobe report probe family is unknown or unbounded".to_owned())?;
+            .ok_or_else(|| "eggprobe report probe kind is unknown or unbounded".to_owned())?;
         if family_name_len(entry) > MAX_FAMILY_LEN {
-            return Err("eggprobe report probe family is unbounded".to_owned());
+            return Err("eggprobe report probe kind is unbounded".to_owned());
         }
         if !expected.contains(&family) {
             return Err("eggprobe report probe was not requested".to_owned());
@@ -742,7 +770,8 @@ fn validate_report_probes(
 /// loopback with route direct and an empty probe list. When the qualified
 /// schema rejects empty probe lists, one bounded no-external-network DNS
 /// probe for `localhost` is used instead. Requires exit 0, a valid
-/// schema-0.3 report, `eggprobe` provenance, and a direct route summary.
+/// schema-0.3 report, `eggprobe` provenance, an `ok` report status, and a
+/// direct route summary.
 ///
 /// A binary emitting schema `0.4` is incompatible even when its version
 /// string is still `0.1.1`.
@@ -756,10 +785,10 @@ pub async fn handshake_eggprobe(
 ) -> Result<HandshakeProof, DriverError> {
     let empty_plan = serde_json::json!({
         "schema_version": EGGPROBE_MACHINE_SCHEMA,
-        "target": {"host": "127.0.0.1", "port": 80, "tls": false},
+        "target": {"host": "127.0.0.1", "port": 80},
         "route": {"kind": "direct"},
         "probes": [],
-        "execution": {"repetitions": 1, "retries": 0, "deadline_ms": 5_000},
+        "execution": {"deadline": 5_000_000, "repetitions": 1, "retries": 0},
         "assertions": [],
     });
     match try_handshake_plan(executable, &empty_plan, &[], cancel).await {
@@ -771,10 +800,10 @@ pub async fn handshake_eggprobe(
     // a bounded no-external-network DNS probe for localhost.
     let dns_plan = serde_json::json!({
         "schema_version": EGGPROBE_MACHINE_SCHEMA,
-        "target": {"host": "localhost", "port": 80, "tls": false},
+        "target": {"host": "localhost", "port": 80},
         "route": {"kind": "direct"},
-        "probes": ["dns"],
-        "execution": {"repetitions": 1, "retries": 0, "deadline_ms": 5_000},
+        "probes": [{"kind": "dns"}],
+        "execution": {"deadline": 5_000_000, "repetitions": 1, "retries": 0},
         "assertions": [],
     });
     try_handshake_plan(executable, &dns_plan, &[DiagnosticProbe::Dns], cancel).await
@@ -803,7 +832,7 @@ async fn try_handshake_plan(
     }
     let parsed = parse_probe_report(outcome.stdout.retained(), expected)
         .map_err(|detail| contract(format!("diagnostic_contract_unsupported: {detail}")))?;
-    if parsed.status != "pass" {
+    if parsed.status != "ok" {
         return Err(contract(
             "diagnostic_contract_unsupported: handshake report did not pass".to_owned(),
         ));
@@ -948,12 +977,30 @@ mod tests {
             "schema_version": "0.3",
             "tool": {"name": "eggprobe", "version": "0.1.1"},
             "execution_id": "exec-1",
-            "target": {"summary": "127.0.0.1:18321"},
+            "target": {"host": "127.0.0.1", "port": 18321},
             "route": {"kind": "direct"},
-            "status": "pass",
+            "status": "ok",
             "probes": [
-                {"family": "dns", "status": "pass"},
-                {"family": "tcp", "status": "pass"},
+                {"kind": "dns", "status": "ok"},
+                {"kind": "tcp", "status": "ok"},
+            ],
+            "findings": [],
+            "warnings": [],
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    fn negative_report_json() -> Vec<u8> {
+        serde_json::json!({
+            "schema_version": "0.3",
+            "tool": {"name": "eggprobe", "version": "0.1.1"},
+            "execution_id": "exec-2",
+            "target": {"host": "127.0.0.1", "port": 9},
+            "route": {"kind": "direct"},
+            "status": "failed",
+            "probes": [
+                {"kind": "tcp", "status": "failed"},
             ],
             "findings": [],
             "warnings": [],
@@ -993,9 +1040,38 @@ mod tests {
             &[DiagnosticProbe::Dns, DiagnosticProbe::Tcp],
         )
         .expect("valid report parses");
-        assert_eq!(parsed.status, "pass");
+        assert_eq!(parsed.status, "ok");
         assert_eq!(parsed.probes.len(), 2);
         assert_eq!(parsed.finding_count, 0);
+    }
+
+    #[test]
+    fn report_parser_rejects_legacy_mock_dialect() {
+        // The pre-C002 adapter used a `family`/`pass` report dialect the real
+        // `eggprobe v0.1.1` binary never emitted (C001 P5/P6). That dialect
+        // must now fail closed instead of parsing.
+        let legacy = serde_json::json!({
+            "schema_version": "0.3",
+            "tool": {"name": "eggprobe", "version": "0.1.1"},
+            "execution_id": "exec-legacy",
+            "target": {"summary": "127.0.0.1:18321"},
+            "route": {"kind": "direct"},
+            "status": "pass",
+            "probes": [
+                {"family": "dns", "status": "pass"},
+                {"family": "tcp", "status": "pass"},
+            ],
+            "findings": [],
+            "warnings": [],
+        })
+        .to_string()
+        .into_bytes();
+        let error = parse_probe_report(&legacy, &[DiagnosticProbe::Dns, DiagnosticProbe::Tcp])
+            .expect_err("legacy mock dialect must fail");
+        assert!(
+            error.contains("kind") || error.contains("status"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -1024,7 +1100,7 @@ mod tests {
         assert!(parse_probe_report(&bytes, &[DiagnosticProbe::Dns, DiagnosticProbe::Tcp]).is_err());
         // Unrequested probe family.
         let mut value = serde_json::from_slice::<serde_json::Value>(&valid_report_json()).unwrap();
-        value["probes"] = serde_json::json!([{"family": "http", "status": "pass"}]);
+        value["probes"] = serde_json::json!([{"kind": "http", "status": "ok"}]);
         let bytes = serde_json::to_string(&value).unwrap().into_bytes();
         assert!(parse_probe_report(&bytes, &[DiagnosticProbe::Dns]).is_err());
         // Missing requested probe.
@@ -1057,6 +1133,14 @@ mod tests {
         assert_eq!(classify_probe_exit(None, Some(&parsed)), "failed");
         // Exit 1 without a parseable report is an operational failure.
         assert_eq!(classify_probe_exit(Some(1), None), "failed");
+        // The real binary only exits 0 with an `ok` report; any other status
+        // with exit 0 is a contract surprise and fails closed.
+        let negative = parse_probe_report(&negative_report_json(), &[DiagnosticProbe::Tcp])
+            .expect("negative report parses");
+        assert_eq!(negative.status, "failed");
+        assert_eq!(classify_probe_exit(Some(1), Some(&negative)), "negative");
+        assert_eq!(classify_probe_exit(Some(0), Some(&negative)), "failed");
+        assert_eq!(classify_probe_exit(Some(0), None), "failed");
     }
 
     #[test]
@@ -1092,6 +1176,113 @@ mod tests {
         assert_eq!(
             skipped_probe_labels(&optional_tls, &lowered),
             vec![("tls".to_owned(), "unavailable".to_owned())]
+        );
+    }
+
+    #[test]
+    fn generated_plan_uses_typed_schema_03_dialect() {
+        // Byte-faithful regression test for C001 P1-P4: the generated plan
+        // must use the real `ProbePlan` dialect (typed `kind`/`port`/`url`
+        // probes, microsecond `deadline`, host-and-port-only target). The
+        // pre-C002 dialect (plain-string probes, `deadline_ms`, `tls` /
+        // `http_url` target members) is rejected by real v0.1.1 with exit 2.
+        let context = diagnostic_context(
+            vec![
+                DiagnosticProbe::Dns,
+                DiagnosticProbe::Tcp,
+                DiagnosticProbe::Http,
+            ],
+            true,
+        );
+        let lowered = lower_target(&context).expect("lowers");
+        let (plan, effective, warnings) = build_probe_plan(&context, &lowered);
+        assert_eq!(effective.len(), 3);
+        assert!(warnings.is_empty());
+        assert_eq!(plan["schema_version"], serde_json::json!("0.3"));
+        assert_eq!(plan["route"], serde_json::json!({"kind": "direct"}));
+        assert_eq!(plan["assertions"], serde_json::json!([]));
+        assert_eq!(
+            plan["probes"],
+            serde_json::json!([
+                {"kind": "dns"},
+                {"kind": "tcp", "port": 18321},
+                {"kind": "http", "url": "http://localhost:18321/bench"},
+            ])
+        );
+        assert_eq!(
+            plan["execution"],
+            serde_json::json!({"deadline": 5_000_000, "repetitions": 1, "retries": 0})
+        );
+        assert_eq!(
+            plan["target"],
+            serde_json::json!({"host": "localhost", "port": 18321})
+        );
+        let text = serde_json::to_string(&plan).unwrap();
+        assert!(!text.contains("deadline_ms"), "{text}");
+        assert!(!text.contains("\"tls\""), "{text}");
+        assert!(!text.contains("http_url"), "{text}");
+        assert!(text.len() as u64 <= super::super::command::MAX_STDIN_BYTES);
+    }
+
+    #[test]
+    fn generated_plan_gives_tls_probe_the_https_port() {
+        let mut context =
+            diagnostic_context(vec![DiagnosticProbe::Tls, DiagnosticProbe::Tcp], true);
+        context
+            .bindings
+            .insert(
+                "origin",
+                "https_url",
+                "https://localhost:18443/bench".to_owned(),
+            )
+            .expect("test binding");
+        let lowered = lower_target(&context).expect("lowers");
+        assert_eq!(lowered.port, 18443);
+        assert!(lowered.use_tls);
+        let (plan, effective, _) = build_probe_plan(&context, &lowered);
+        assert_eq!(effective.len(), 2);
+        assert_eq!(
+            plan["probes"],
+            serde_json::json!([
+                {"kind": "tls", "port": 18443},
+                {"kind": "tcp", "port": 18443},
+            ])
+        );
+        // No HTTP probe, so the target uses the lowered (TLS) authority.
+        assert_eq!(
+            plan["target"],
+            serde_json::json!({"host": "localhost", "port": 18443})
+        );
+    }
+
+    #[test]
+    fn generated_plan_keeps_http_authority_when_tls_bound() {
+        // TLS + HTTP combined: the target authority follows the bound HTTP
+        // URL so the sibling's host/port cross-check passes trivially, while
+        // the TLS probe still carries the HTTPS port.
+        let mut context =
+            diagnostic_context(vec![DiagnosticProbe::Tls, DiagnosticProbe::Http], true);
+        context
+            .bindings
+            .insert(
+                "origin",
+                "https_url",
+                "https://localhost:18443/bench".to_owned(),
+            )
+            .expect("test binding");
+        let lowered = lower_target(&context).expect("lowers");
+        let (plan, effective, _) = build_probe_plan(&context, &lowered);
+        assert_eq!(effective.len(), 2);
+        assert_eq!(
+            plan["target"],
+            serde_json::json!({"host": "localhost", "port": 18321})
+        );
+        assert_eq!(
+            plan["probes"],
+            serde_json::json!([
+                {"kind": "tls", "port": 18443},
+                {"kind": "http", "url": "http://localhost:18321/bench"},
+            ])
         );
     }
 

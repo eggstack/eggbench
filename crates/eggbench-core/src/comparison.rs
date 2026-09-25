@@ -891,12 +891,18 @@ fn load_network_path_evidence_identity(
 struct StoredSemanticReplayEvidence {
     schema_version: SchemaVersion,
     driver: String,
+    adapter_version: String,
     fixture_digest: String,
+    fixture_relative: String,
     fixture_session_schema: u32,
     envelope_schema: u32,
     report_schema: u32,
     executable_version: String,
     executable_sha256: String,
+    // Accepted for schema completeness (the writer emits it); comparison
+    // identity keys on `fixture_digest`, not the flow count.
+    #[allow(dead_code)]
+    flow_count: u64,
 }
 
 fn semantic_replay_evidence_record(
@@ -964,11 +970,15 @@ fn load_semantic_replay_evidence_identity(
         .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
     if evidence.schema_version != SchemaVersion(1)
         || evidence.driver != "eggreplay-semantic"
+        || evidence.adapter_version.is_empty()
+        || evidence.adapter_version.len() > 128
         || evidence.fixture_digest.len() != 64
         || !evidence
             .fixture_digest
             .chars()
             .all(|c| c.is_ascii_hexdigit())
+        || evidence.fixture_relative.is_empty()
+        || evidence.fixture_relative.len() > 512
         || evidence.envelope_schema != 1
         || evidence.report_schema != 2
         || evidence.executable_version.is_empty()
@@ -1123,13 +1133,11 @@ fn diagnostics_evidence_record(
 ) -> Result<Option<ArtifactRecord>, ComparisonError> {
     let mut record = None;
     for artifact in &reader.manifest().artifacts {
-        let has_path = artifact.path.as_str() == "diagnostics.json";
-        let has_role = matches!(
-            &artifact.role,
-            ArtifactRole::Other { label } if label.as_str() == "diagnostics"
-        );
-        if has_path || has_role {
-            if record.is_some() || has_path != has_role {
+        // The run-level index is identified by path: per-diagnostic raw
+        // reports share the `diagnostics` role label but live under
+        // `diagnostics/pre|post/`, so role alone cannot select the index.
+        if artifact.path.as_str() == "diagnostics.json" {
+            if record.is_some() {
                 return Err(BundleError::InvalidManifest(
                     "diagnostics evidence path and role must occur exactly once",
                 )
@@ -1147,6 +1155,15 @@ fn diagnostics_evidence_record(
         }
         return Ok(None);
     };
+    if !matches!(
+        &record.role,
+        ArtifactRole::Other { label } if label.as_str() == "diagnostics"
+    ) {
+        return Err(BundleError::InvalidManifest(
+            "diagnostics evidence path and role must occur exactly once",
+        )
+        .into());
+    }
     if record.media_type != "application/json" {
         return Err(
             BundleError::InvalidManifest("diagnostics evidence metadata is invalid").into(),
