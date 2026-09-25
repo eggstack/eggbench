@@ -2,7 +2,7 @@
 
 `DriverDescriptor` records the canonical adapter name, adapter version, upstream identity/version, one category, structured capabilities, supported platforms, optional output schema, process-backed status, default status, and compatible service types. Capabilities are typed, including HTTP version, load model, corrected latency, proxy routing, network-path dialing, stream-fault plans, telemetry fields, and external-binary support.
 
-`resolve_plan` performs no I/O. Callers supply descriptors, selections/default policy, platform, executable paths, and extra requirements. The resolver always checks the requested workload load model, required telemetry, service/workload compatibility, and platform support. Unsupported, missing, mismatched, ambiguous, or incompatible behavior is an error before execution. Optional missing telemetry produces a warning only when the request marks it optional. The resolver does not search PATH or contact external services.
+`resolve_plan` performs no I/O. Callers supply descriptors, selections/default policy, platform, executable paths, and extra requirements. The resolver always checks the requested workload capability (load model, or `SemanticReplay` for replay plans), required telemetry, service/workload compatibility, and platform support. Unsupported, missing, mismatched, ambiguous, or incompatible behavior is an error before execution. Optional missing telemetry produces a warning only when the request marks it optional. The resolver does not search PATH or contact external services.
 
 Default selection is deterministic: use one marked category default, or the only available driver in the category. More than one candidate without a unique default is an error. Explicit selection removes ambiguity. A schema-v3 path does not introduce a second selection mechanism: the route and fault names in the plan must match the selected Route/Fault descriptors.
 
@@ -41,5 +41,17 @@ The route is established before the stream wrapper (`route-first/fault-second`).
 The `eggfetch-http` adapter owns one Eggfetch client per workload executor/run, not one client per request or trial. Warmups may populate its pool; measured trials may reuse physical connections, and a static fault policy stays attached to a reused connection. Physical dials are evidence distinct from request count.
 
 A path run stages `network-path.json` with redacted route/fault provenance, seed/RNG identity, static semantics, and bounded diagnostics. Existing `eggfetch-method.json` evidence is extended additively with a bounded `network_path` object. Neither artifact introduces a new normalized metric, and neither records secrets, payload bytes, or ephemeral socket addresses as comparison identity.
+
+## Semantic-replay capability matrix
+
+A `semantic_replay` workload requires the `SemanticReplay` capability plus `ExternalBinary` before resolution succeeds:
+
+| Category | Required capability | Production descriptor |
+|---|---|---|
+| Workload | `SemanticReplay` | `eggreplay-semantic` / `eggreplay` (external process) |
+
+The driver is never the default; `eggfetch-http` remains the native default where compiled. Explicit `--workload-driver eggreplay-semantic` selection is required when both are present. Compatible service types are `eggserve-origin` and any future service publishing the same HTTP binding contract. `SemanticReplay` never composes with `network_path`; the combination fails with `workload_path_incompatible`.
+
+Fixture identity is digest-based (sorted relative paths, file lengths, SHA-256 contents, aggregate SHA-256), never path-based. `eggreplay validate --output json` (envelope schema 1) runs before startup; `eggreplay replay --route direct --output json` runs once per warmup/measured invocation. `RegressionReport` schema 2 is enforced and `finding_count` must match the report sum. Semantic mismatches are successful observations with `semantic_findings > 0`; only process failures become `WorkloadFailed`. Run evidence is `semantic-replay.json` (schema v1); per-trial raw JSON plus `eggreplay-summary.json` stay bounded.
 
 See [Eggstack HTTP](eggstack-http.md), [experiment plans](experiment-plan.md), [evidence bundles](evidence-bundle.md), and [comparison](comparison.md).

@@ -38,9 +38,12 @@ pub use eggstack::{
     eggserve_origin_descriptor, eggstack_descriptors, eggstack_service_adapters,
 };
 pub use external::{
-    BinaryResolver, DriverError, ErrorCategory, ExternalCommandOutcome, ExternalCommandSpec,
+    BinaryResolver, DriverError, EGGREPLAY_DRIVER_NAME, EGGREPLAY_PARSER_ID, EggReplayParser,
+    EggReplayWorkload, ErrorCategory, ExternalCommandOutcome, ExternalCommandSpec,
     ExternalOutputParser, H2LOAD_DRIVER_NAME, H2loadParser, H2loadWorkload, IPERF3_DRIVER_NAME,
     Iperf3Parser, Iperf3Workload, OHA_DRIVER_NAME, OhaParser, OhaWorkload, ResolvedExecutable,
-    ToolVersion, executable_path_for, external_binary_present, h2load_descriptor,
-    iperf3_descriptor, is_external_workload, oha_descriptor, probe_external_workload,
+    SEMANTIC_REPLAY_EVIDENCE, SemanticReplayEvidence, ToolVersion, compute_fixture_identity,
+    eggreplay_descriptor, executable_path_for, external_binary_present, h2load_descriptor,
+    iperf3_descriptor, is_external_workload, oha_descriptor, preflight_semantic_replay,
+    probe_external_workload, semantic_replay_role_label,
 };

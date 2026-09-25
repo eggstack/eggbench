@@ -307,7 +307,9 @@ fn run_plan(workload: &Workload) -> Result<(&str, RunPlan), FailureCategory> {
                 },
             ))
         }
-        Workload::OpenLoop { .. } => Err(FailureCategory::WorkloadFailed),
+        Workload::OpenLoop { .. } | Workload::SemanticReplay { .. } => {
+            Err(FailureCategory::WorkloadFailed)
+        }
     }
 }
 

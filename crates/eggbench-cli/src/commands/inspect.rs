@@ -2,7 +2,7 @@
 
 use crate::envelope::{
     CliOutput, DriverSummary, EnvironmentSummary, NetworkPathInspectSummary,
-    PresentedCommandResult, SubjectSummary, TrialSummary,
+    PresentedCommandResult, SemanticReplayInspectSummary, SubjectSummary, TrialSummary,
 };
 use crate::error::CliError;
 use eggbench_core::BundleReader;
@@ -109,6 +109,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
         })?;
     }
     let network_path = network_path_inspect_summary(&reader, network_path_artifact_present)?;
+    let semantic_replay = semantic_replay_inspect_summary(&reader)?;
 
     let manifest_json = if emit_manifest_json {
         serde_json::to_string_pretty(manifest).ok()
@@ -138,6 +139,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
             artifact_bytes,
             manifest_json,
             network_path: Some(network_path),
+            semantic_replay: Some(semantic_replay),
         },
     ))
 }
@@ -161,12 +163,99 @@ fn trial_summary(
             id: descriptor.id.get(),
             terminal_status: "completed".to_owned(),
             measurement_elapsed_ns: None,
+            semantic_findings: None,
         });
     };
+    let semantic_findings =
+        reader
+            .trial_metrics(descriptor.id)
+            .ok()
+            .flatten()
+            .and_then(|metrics| {
+                metrics.observations.iter().find_map(|observation| {
+                    if observation.name.as_str() == "semantic_findings" {
+                        match observation.state {
+                            eggbench_core::ObservationState::Observed { value } => Some(value),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+            });
     Ok(TrialSummary {
         id: descriptor.id.get(),
         terminal_status: format!("{:?}", result.terminal_status).to_lowercase(),
         measurement_elapsed_ns: Some(result.measurement_elapsed_ns),
+        semantic_findings,
+    })
+}
+
+fn semantic_replay_inspect_summary(
+    reader: &BundleReader,
+) -> Result<SemanticReplayInspectSummary, CliError> {
+    let manifest = reader.manifest();
+    let record = manifest.artifacts.iter().find(|artifact| {
+        artifact.path.as_str() == "semantic-replay.json"
+            || matches!(
+                &artifact.role,
+                eggbench_core::ArtifactRole::Other { label } if label.as_str() == "semantic-replay"
+            )
+    });
+    let Some(record) = record else {
+        return Ok(SemanticReplayInspectSummary {
+            artifact_present: false,
+            driver: None,
+            fixture_digest: None,
+            fixture_session_schema: None,
+            envelope_schema: None,
+            report_schema: None,
+            executable_version: None,
+            flow_count: None,
+        });
+    };
+    let mut file = reader
+        .open_artifact(&record.path)
+        .map_err(CliError::Bundle)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::Io {
+            path: std::path::PathBuf::from(record.path.as_str()),
+            source: error,
+        })
+    })?;
+    let evidence: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::ManifestParse(error.to_string()))
+    })?;
+    Ok(SemanticReplayInspectSummary {
+        artifact_present: true,
+        driver: evidence
+            .get("driver")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        fixture_digest: evidence
+            .get("fixture_digest")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        fixture_session_schema: evidence
+            .get("fixture_session_schema")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        envelope_schema: evidence
+            .get("envelope_schema")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        report_schema: evidence
+            .get("report_schema")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        executable_version: evidence
+            .get("executable_version")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        flow_count: evidence
+            .get("flow_count")
+            .and_then(serde_json::Value::as_u64),
     })
 }
 

@@ -2002,7 +2002,7 @@ async fn doctor_reports_oracle_binary_presence() {
     // payload is retained on both paths.
     let body: Value = serde_json::to_value(&presented.envelope).unwrap();
     let drivers = body["result"]["drivers"].as_array().unwrap();
-    for tool in ["oha", "h2load", "iperf3"] {
+    for tool in ["oha", "h2load", "iperf3", "eggreplay-semantic"] {
         let entry = drivers
             .iter()
             .find(|driver| driver["name"] == tool)
@@ -2254,4 +2254,92 @@ async fn doctor_reports_paired_design() {
     assert_eq!(body["result"]["paired"]["pairs"], 6);
     assert_eq!(body["result"]["paired"]["baseline_service"], "origin-a");
     assert_eq!(body["result"]["paired"]["candidate_service"], "origin-b");
+}
+
+fn write_semantic_replay_plan(dir: &std::path::Path) -> PathBuf {
+    let raw = std::fs::read_to_string(fixture_dir().join("minimal.json")).expect("read");
+    let mut value: Value = serde_json::from_str(&raw).expect("parse");
+    value["schema_version"] = serde_json::json!(4);
+    value["services"] = serde_json::json!([{
+        "name": "origin",
+        "kind": {"kind": "named", "service_type": "eggserve-origin"},
+        "lifecycle": "external",
+        "depends_on": [],
+        "config": {},
+        "readiness": null,
+        "shutdown": null,
+        "working_directory": null,
+        "log_limit_bytes": 4096,
+    }]);
+    value["workload"] = serde_json::json!({
+        "kind": "semantic_replay", "target": "origin", "fixture": "fixtures/replay",
+    });
+    value["metrics"] = serde_json::json!([{
+        "name": "semantic_findings", "unit": "count",
+        "direction": {"kind": "lower_is_better"}, "intent": "primary",
+        "gate": {"kind": "absolute", "value": 0.0},
+    }]);
+    let path = dir.join("semantic-replay.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).expect("write");
+    path
+}
+
+#[tokio::test]
+async fn validate_accepts_semantic_replay_v4() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_semantic_replay_plan(tmp.path());
+    let presented = execute(
+        Command::Validate {
+            plan,
+            input_format: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(presented.envelope.ok);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["schema_version"], 4);
+}
+
+#[tokio::test]
+async fn doctor_reports_eggreplay_descriptor_and_absence_safe_preflight() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_semantic_replay_plan(tmp.path());
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: Some("eggreplay-semantic".to_owned()),
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    let drivers = body["result"]["drivers"].as_array().unwrap();
+    let entry = drivers
+        .iter()
+        .find(|driver| driver["name"] == "eggreplay-semantic")
+        .expect("eggreplay descriptor reported");
+    assert_eq!(entry["category"], "Workload");
+    assert_eq!(entry["external_process"], true);
+    assert!(
+        entry["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|cap| cap.as_str().unwrap().contains("SemanticReplay")),
+        "SemanticReplay capability advertised"
+    );
+    // Without an installed binary the plan cannot resolve; doctor stays
+    // truthful instead of claiming readiness.
+    if !presented.envelope.ok {
+        let category = body["error"]["category"].as_str().unwrap();
+        assert!(
+            matches!(
+                category,
+                "missing_executable_path" | "missing_driver" | "unsupported_capability"
+            ),
+            "absence-safe category {category}"
+        );
+    }
 }

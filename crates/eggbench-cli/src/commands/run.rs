@@ -149,6 +149,7 @@ pub async fn run(
     // well, so this gate only moves the failure earlier, never wider.
     if let Some(driver) = workload_driver
         && eggbench_drivers::is_external_workload(&driver.descriptor.name)
+        && driver.descriptor.name.as_str() != eggbench_drivers::EGGREPLAY_DRIVER_NAME
     {
         let probe_cancel = CancellationToken::new();
         if let Err(error) =
@@ -159,6 +160,32 @@ pub async fn run(
                 error.to_string(),
                 ExitCode::CapabilityPreflight,
             );
+            return Ok(PresentedCommandResult::failure("run", &failure));
+        }
+    }
+
+    // M003a semantic-replay preflight: trusted binary resolution, version
+    // probe, workspace-confined fixture identity, and `eggreplay validate`
+    // machine-contract verification before any managed startup.
+    if let eggbench_core::Workload::SemanticReplay { fixture, .. } = &resolved.workload {
+        let workspace_root =
+            std::env::current_dir().map_err(|error| CliError::Internal(error.to_string()))?;
+        let preflight_cancel = CancellationToken::new();
+        if let Err(error) =
+            eggbench_drivers::preflight_semantic_replay(&workspace_root, fixture, &preflight_cancel)
+                .await
+        {
+            let category = if error.to_string().contains("fixture")
+                || error.to_string().contains("validate")
+                || error.to_string().contains("envelope")
+                || error.to_string().contains("schema")
+            {
+                "invalid_fixture"
+            } else {
+                "external_tool"
+            };
+            let failure =
+                CliFailure::new(category, error.to_string(), ExitCode::CapabilityPreflight);
             return Ok(PresentedCommandResult::failure("run", &failure));
         }
     }
@@ -450,14 +477,24 @@ fn resolution_options(
             options.executable_paths.insert(driver.clone(), path);
         }
     }
-    let workload_mode = workload_load_mode(plan);
     let mut caps = BTreeMap::new();
-    caps.insert(
-        DriverCategory::Workload,
-        std::collections::BTreeSet::from([eggbench_core::Capability::LoadMode {
-            mode: workload_mode,
-        }]),
-    );
+    if matches!(
+        plan.workload,
+        eggbench_core::Workload::SemanticReplay { .. }
+    ) {
+        caps.insert(
+            DriverCategory::Workload,
+            std::collections::BTreeSet::from([eggbench_core::Capability::SemanticReplay]),
+        );
+    } else {
+        let workload_mode = workload_load_mode(plan);
+        caps.insert(
+            DriverCategory::Workload,
+            std::collections::BTreeSet::from([eggbench_core::Capability::LoadMode {
+                mode: workload_mode,
+            }]),
+        );
+    }
     options.required_capabilities = caps;
     options
 }
@@ -472,10 +509,16 @@ fn platform_name() -> Result<Name, CliError> {
         .map_err(|error| CliError::Internal(format!("invalid platform label {label:?}: {error}")))
 }
 
+#[allow(clippy::match_same_arms)]
 fn workload_load_mode(plan: &eggbench_core::ExperimentPlan) -> LoadMode {
     use eggbench_core::Workload;
     match &plan.workload {
-        Workload::ClosedLoop { .. } | Workload::FiniteCount { .. } => LoadMode::ClosedLoop,
+        // SemanticReplay never reaches here: the caller selects the
+        // SemanticReplay capability instead. The fallback keeps the helper
+        // total for exhaustive matching.
+        Workload::ClosedLoop { .. }
+        | Workload::FiniteCount { .. }
+        | Workload::SemanticReplay { .. } => LoadMode::ClosedLoop,
         Workload::OpenLoop { .. } => LoadMode::OpenLoop,
         Workload::TimeBounded { mode, .. } => *mode,
     }

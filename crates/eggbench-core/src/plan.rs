@@ -1,7 +1,7 @@
 use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_3, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
-    RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4, Name, NetworkPathRequest,
+    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -203,6 +203,14 @@ pub enum Workload {
         concurrency: Option<PositiveCount>,
         /// Open-loop offered rate.
         rate_milli_rps: Option<RateMilliRps>,
+    },
+    /// Semantic replay workload (schema v4): one complete immutable
+    /// `EggReplay` fixture replay equals one Eggbench trial observation.
+    SemanticReplay {
+        /// Destination service or external target publishing an HTTP binding.
+        target: Name,
+        /// Relative workspace path to the immutable `.eggr` fixture directory.
+        fixture: String,
     },
 }
 /// Explicit load model discriminator.
@@ -592,8 +600,33 @@ impl ExperimentPlan {
         if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_2
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_3
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
+        }
+        // SemanticReplay is a schema-v4 workload; earlier schemas fail closed
+        // rather than silently accepting future semantics.
+        if matches!(self.workload, Workload::SemanticReplay { .. })
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
+        {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "SemanticReplay workload requires schema version 4 (got {})",
+                    self.schema_version.0
+                ),
+            );
+        }
+        // M003a: SemanticReplay never composes with network_path; the
+        // replay uses `--route direct` explicitly and diagnostics bypass the
+        // benchmark path by design. This specific incompatibility is checked
+        // before the generic schema-version gate so callers see the stable
+        // workload_path_incompatible category.
+        if matches!(self.workload, Workload::SemanticReplay { .. }) && self.network_path.is_some() {
+            return invalid(
+                "workload_path_incompatible",
+                "SemanticReplay workload is incompatible with network_path in M003a",
+            );
         }
         // Schema-v3 is the only schema where `network_path` is permitted.
         if self.network_path.is_some() && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_3 {
@@ -762,6 +795,21 @@ impl ExperimentPlan {
                         format!("informational metric {} cannot be gated", metric.name),
                     );
                 }
+                // M003a: semantic mismatch counts are correctness quantities,
+                // not smooth performance quantities for ratio/bootstrap
+                // inference. Only absolute gates are supported.
+                if metric.name.as_str() == "semantic_findings"
+                    && matches!(self.workload, Workload::SemanticReplay { .. })
+                    && matches!(
+                        gate,
+                        Gate::RelativeRegression { .. } | Gate::StatisticalRelative { .. }
+                    )
+                {
+                    return invalid(
+                        "unsupported_gate",
+                        "semantic_findings supports only absolute gates in M003a",
+                    );
+                }
             }
         }
         if self.bounds.artifact_bytes == 0
@@ -834,6 +882,10 @@ impl Workload {
                 concurrency: *concurrency,
                 rate_milli_rps: *rate_milli_rps,
             },
+            Self::SemanticReplay { fixture, .. } => Self::SemanticReplay {
+                target,
+                fixture: fixture.clone(),
+            },
         }
     }
 }
@@ -842,7 +894,8 @@ fn workload_target(workload: &Workload) -> &Name {
         Workload::ClosedLoop { target, .. }
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
-        | Workload::TimeBounded { target, .. } => target,
+        | Workload::TimeBounded { target, .. }
+        | Workload::SemanticReplay { target, .. } => target,
     }
 }
 fn validate_workload(w: &Workload) -> Result<(), PlanError> {
@@ -879,7 +932,75 @@ fn validate_workload(w: &Workload) -> Result<(), PlanError> {
             ),
         },
         Workload::FiniteCount { .. } => Ok(()),
+        Workload::SemanticReplay { fixture, .. } => validate_semantic_fixture_path(fixture),
     }
+}
+
+/// Validate the M003a semantic-replay fixture path: relative, workspace
+/// confined by construction, bounded, and free of absolute/traversal/control
+/// characters. Filesystem existence and symlink-escape checks happen in
+/// driver preflight against `RunnerOptions.workspace_root`.
+fn validate_semantic_fixture_path(fixture: &str) -> Result<(), PlanError> {
+    if fixture.is_empty() || fixture.len() > 512 {
+        return invalid(
+            "invalid_fixture",
+            "SemanticReplay fixture path must be 1..=512 bytes",
+        );
+    }
+    if fixture.contains('\0') || fixture.chars().any(char::is_control) {
+        return invalid(
+            "invalid_fixture",
+            "SemanticReplay fixture path must not contain NUL or control characters",
+        );
+    }
+    if fixture.starts_with('/') || fixture.starts_with('\\') {
+        return invalid(
+            "invalid_fixture",
+            "SemanticReplay fixture must be a relative workspace path",
+        );
+    }
+    // Reject Windows drive prefixes and UNC-style leading separators.
+    if fixture.len() >= 2 && fixture.as_bytes()[1] == b':' {
+        return invalid(
+            "invalid_fixture",
+            "SemanticReplay fixture must be a relative workspace path",
+        );
+    }
+    let mut depth = 0usize;
+    for component in fixture.split('/') {
+        if component.is_empty() || component == "." {
+            return invalid(
+                "invalid_fixture",
+                "SemanticReplay fixture path contains an empty or dot component",
+            );
+        }
+        if component == ".." {
+            return invalid(
+                "invalid_fixture",
+                "SemanticReplay fixture must not contain parent traversal",
+            );
+        }
+        if component.len() > 128 {
+            return invalid(
+                "invalid_fixture",
+                "SemanticReplay fixture path component exceeds 128 bytes",
+            );
+        }
+        depth += 1;
+        if depth > 16 {
+            return invalid(
+                "invalid_fixture",
+                "SemanticReplay fixture path exceeds 16 components",
+            );
+        }
+    }
+    if fixture.contains('\\') {
+        return invalid(
+            "invalid_fixture",
+            "SemanticReplay fixture path must use forward slashes",
+        );
+    }
+    Ok(())
 }
 fn validate_paired(
     plan: &ExperimentPlan,
@@ -1546,5 +1667,120 @@ mod tests {
             }
             _ => panic!("expected finite-count workloads"),
         }
+    }
+
+    fn semantic_value() -> serde_json::Value {
+        let mut value: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        value["schema_version"] = 4.into();
+        value["services"] = serde_json::json!([{
+            "name": "origin",
+            "kind": {"kind": "named", "service_type": "eggserve-origin"},
+            "lifecycle": "external",
+            "depends_on": [],
+            "config": {},
+            "readiness": null,
+            "shutdown": null,
+            "working_directory": null,
+            "log_limit_bytes": 4096,
+        }]);
+        value["workload"] = serde_json::json!({
+            "kind": "semantic_replay", "target": "origin", "fixture": "fixtures/replay",
+        });
+        value["metrics"] = serde_json::json!([{
+            "name": "semantic_findings", "unit": "count",
+            "direction": {"kind": "lower_is_better"}, "intent": "primary",
+            "gate": {"kind": "absolute", "value": 0.0},
+        }]);
+        value
+    }
+
+    #[test]
+    fn v4_semantic_replay_round_trip_preserves_intent() {
+        let plan = ExperimentPlan::from_json(&semantic_value().to_string()).unwrap();
+        assert_eq!(plan.schema_version.0, 4);
+        assert!(matches!(plan.workload, Workload::SemanticReplay { .. }));
+        let round = ExperimentPlan::from_json(&plan.to_json().unwrap()).unwrap();
+        assert_eq!(plan, round);
+        let toml = ExperimentPlan::from_toml(&plan.to_toml().unwrap()).unwrap();
+        assert_eq!(plan, toml);
+        // Target rewriting preserves the fixture for paired designs.
+        let retargeted = plan.workload.with_target(Name::new("origin-b").unwrap());
+        match retargeted {
+            Workload::SemanticReplay { target, fixture } => {
+                assert_eq!(target.as_str(), "origin-b");
+                assert_eq!(fixture, "fixtures/replay");
+            }
+            _ => panic!("expected semantic replay"),
+        }
+    }
+
+    #[test]
+    fn v1_v3_reject_semantic_replay_and_v4_stays_compatible() {
+        // v1-v3 plans remain readable.
+        assert!(ExperimentPlan::from_json(VALID).is_ok());
+        // A v3 plan carrying SemanticReplay fails closed.
+        let mut value: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        value["workload"] = serde_json::json!({
+            "kind": "semantic_replay", "target": "api", "fixture": "fixtures/replay",
+        });
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "unsupported_option"
+        );
+    }
+
+    #[test]
+    fn semantic_fixture_paths_fail_closed() {
+        for bad in [
+            "",
+            "/abs/path",
+            "../escape",
+            "a/../b",
+            "bad\\slash",
+            "a/./b",
+            "a//b",
+        ] {
+            let mut value = semantic_value();
+            value["workload"]["fixture"] = bad.into();
+            assert_eq!(
+                error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+                "invalid_fixture",
+                "fixture={bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_replay_rejects_network_path() {
+        let mut value = semantic_value();
+        value["schema_version"] = 4.into();
+        value["network_path"] = serde_json::json!({
+            "route": {"driver": "eggress-route", "mode": {"kind": "direct"}},
+        });
+        // v4 forbids network_path entirely; the semantic-specific
+        // workload_path_incompatible gate fires first for replay plans.
+        let result = ExperimentPlan::from_json(&value.to_string()).map(|_| ());
+        assert_eq!(error_category(result), "workload_path_incompatible");
+    }
+
+    #[test]
+    fn semantic_findings_rejects_relative_and_statistical_gates() {
+        for gate in [
+            serde_json::json!({"kind": "relative_regression", "allowance": 100}),
+            serde_json::json!({
+                "kind": "statistical_relative",
+                "allowance": 100,
+                "min_trials": 5,
+            }),
+        ] {
+            let mut value = semantic_value();
+            value["metrics"][0]["gate"] = gate;
+            assert_eq!(
+                error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+                "unsupported_gate"
+            );
+        }
+        // Absolute zero gate is the primary correctness use case.
+        assert!(ExperimentPlan::from_json(&semantic_value().to_string()).is_ok());
     }
 }

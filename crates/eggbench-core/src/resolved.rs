@@ -84,6 +84,10 @@ pub enum Capability {
     /// Driver produces a static, deterministic stream-fault plan
     /// (Eggstack M002).
     StreamFaultPlan,
+    /// Driver executes one complete immutable `EggReplay` fixture as one
+    /// `Eggbench` trial (Eggstack M003a). No `ClosedLoop`/`OpenLoop` claim is
+    /// required for this capability.
+    SemanticReplay,
 }
 
 /// Stable identity and advertised capabilities of one adapter.
@@ -380,12 +384,22 @@ pub fn resolve_plan(
     }
 
     let mut required = BTreeMap::<DriverCategory, BTreeSet<Capability>>::new();
-    required
-        .entry(DriverCategory::Workload)
-        .or_default()
-        .insert(Capability::LoadMode {
-            mode: workload_mode(&plan.workload),
-        });
+    match &plan.workload {
+        Workload::SemanticReplay { .. } => {
+            required
+                .entry(DriverCategory::Workload)
+                .or_default()
+                .insert(Capability::SemanticReplay);
+        }
+        _ => {
+            required
+                .entry(DriverCategory::Workload)
+                .or_default()
+                .insert(Capability::LoadMode {
+                    mode: workload_mode(&plan.workload),
+                });
+        }
+    }
     if plan.network_path.is_some() {
         // Network-path requests require a workload driver that owns a
         // custom dialer so route/fault plumbing lives in the executor.
@@ -704,7 +718,8 @@ fn workload_target(workload: &Workload) -> &Name {
         Workload::ClosedLoop { target, .. }
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
-        | Workload::TimeBounded { target, .. } => target,
+        | Workload::TimeBounded { target, .. }
+        | Workload::SemanticReplay { target, .. } => target,
     }
 }
 
@@ -810,11 +825,18 @@ fn validate_network_path_driver_contract(
     Ok(())
 }
 
+#[allow(clippy::match_same_arms)]
 fn workload_mode(workload: &Workload) -> LoadMode {
     match workload {
         Workload::OpenLoop { .. } => LoadMode::OpenLoop,
         Workload::TimeBounded { mode, .. } => *mode,
-        Workload::ClosedLoop { .. } | Workload::FiniteCount { .. } => LoadMode::ClosedLoop,
+        // SemanticReplay has no load mode; resolution requires the
+        // SemanticReplay capability instead. This fallback is unreachable
+        // through `resolve_plan` but keeps the helper total for callers
+        // that only handle load-model workloads.
+        Workload::ClosedLoop { .. }
+        | Workload::FiniteCount { .. }
+        | Workload::SemanticReplay { .. } => LoadMode::ClosedLoop,
     }
 }
 
@@ -1126,5 +1148,60 @@ mod tests {
             resolve_plan(&plan, &[workload, service], &options()),
             Err(ResolveError::IncompatibleService { .. })
         ));
+    }
+
+    #[test]
+    fn semantic_replay_requires_semantic_capability_and_pins_binary() {
+        use crate::{EXPERIMENT_PLAN_SCHEMA_VERSION_4, Workload};
+        let mut plan =
+            super::super::ExperimentPlan::from_json(include_str!("../tests/fixtures/minimal.json"))
+                .unwrap();
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_4;
+        plan.services = vec![crate::Service {
+            name: name("origin"),
+            kind: crate::ServiceKind::Named {
+                service_type: name("eggserve-origin"),
+            },
+            lifecycle: crate::Lifecycle::External,
+            depends_on: Vec::new(),
+            config: std::collections::BTreeMap::new(),
+            readiness: None,
+            shutdown: None,
+            working_directory: None,
+            log_limit_bytes: 4096,
+        }];
+        plan.workload = Workload::SemanticReplay {
+            target: name("origin"),
+            fixture: "fixtures/replay".to_owned(),
+        };
+        // A ClosedLoop-only driver cannot satisfy SemanticReplay.
+        let mut closed = driver("closed-load", DriverCategory::Workload);
+        closed.default = true;
+        let mut service = driver("fake-service", DriverCategory::Service);
+        service.default = true;
+        assert!(matches!(
+            resolve_plan(&plan, &[closed.clone(), service.clone()], &options()),
+            Err(ResolveError::UnsupportedCapability { .. })
+        ));
+        // A SemanticReplay external driver resolves with an explicit path.
+        let mut replay = driver("eggreplay-semantic", DriverCategory::Workload);
+        replay.default = true;
+        replay.external_process = true;
+        replay.capabilities.insert(Capability::SemanticReplay);
+        replay.capabilities.insert(Capability::ExternalBinary);
+        assert!(matches!(
+            resolve_plan(&plan, &[replay.clone(), service.clone()], &options()),
+            Err(ResolveError::MissingExecutablePath(_))
+        ));
+        let mut opts = options();
+        opts.executable_paths
+            .insert(name("eggreplay-semantic"), "/opt/eggreplay".into());
+        let resolved = resolve_plan(&plan, &[replay, service], &opts).unwrap();
+        assert_eq!(
+            resolved.drivers[&DriverCategory::Workload]
+                .executable_path
+                .as_deref(),
+            Some("/opt/eggreplay")
+        );
     }
 }

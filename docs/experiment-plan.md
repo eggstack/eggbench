@@ -7,6 +7,7 @@ An ExperimentPlan is a versioned request, not an execution script. JSON is the c
 - **v1** describes ordinary workloads and service topology. It remains supported unchanged.
 - **v2** adds the optional predeclared `paired` baseline/candidate design. It remains supported unchanged.
 - **v3** adds the optional first-class `network_path`. A v3 plan may omit it. v1 and v2 plans must omit it; a network path in either legacy schema fails validation rather than being reinterpreted as Direct.
+- **v4** adds the `semantic_replay` workload (`target` plus relative workspace `fixture`). v1-v3 plans must omit it; a replay intent in a legacy schema fails validation. v4 plans must omit `network_path`; replay uses `--route direct` explicitly and never composes with the M002 path.
 
 A workload target must name a declared service or the explicitly named external subject. A closed/open workload specifies exactly one of request count or duration. Time-bounded closed-loop plans require concurrency; open-loop plans require an offered rate. Services have stable names, managed/external lifecycle intent, acyclic dependencies, and bounded typed fields. Metric direction, unit, intent, and gates are explicit; diagnostic or informational metrics cannot gate. Secret material is referenced, never embedded.
 
@@ -63,4 +64,16 @@ Eggchaos faults are **user-space accepted byte-stream impairments, never packet/
 
 `network_path` requires a transport-owning workload. It is incompatible with `Subject::External` (including an external oracle) and with the v2/v3 paired design; both fail during validation before startup. This is deliberate: paired arms share a run-scoped client/pool, so a physical connection cannot be assigned unambiguously to an arm. The current supported execution combination is the native `eggfetch-http` workload with an `eggserve-origin` target; external oracles do not advertise the custom network-path capability.
 
-Resolved snapshots currently use ResolvedPlan schema v3 and add selected Route/Fault provenance when a path is present. ResolvedPlan v1 and v2 remain readable for legacy evidence; new path resolution always records v3. See [driver capabilities](driver-capabilities.md) and the complete [schema-v3 example](../examples/eggstack-path.json). The paired rejection example is [intentionally invalid](../examples/eggstack-path-paired-unsupported.json).
+Resolved snapshots currently use ResolvedPlan schema v3 and add selected Route/Fault provenance when a path is present. ResolvedPlan v1 and v2 remain readable for legacy evidence; new path resolution always records v3. Semantic-replay resolution records the same v3 envelope with a `SemanticReplay` workload capability and an external `eggreplay-semantic` descriptor; fixture digest identity lives in `semantic-replay.json`, not in the resolved path. See [driver capabilities](driver-capabilities.md), the complete [schema-v3 example](../examples/eggstack-path.json), and the [schema-v4 replay example](../examples/eggstack-replay.json). The paired rejection example is [intentionally invalid](../examples/eggstack-path-paired-unsupported.json).
+
+## Schema-v4 `semantic_replay`
+
+A v4 replay workload names a target service (or external target) publishing an `http_url` binding and a relative workspace fixture directory:
+
+```json
+{ "kind": "semantic_replay", "target": "origin", "fixture": "fixtures/replay" }
+```
+
+Fixture paths are relative, forward-slash, bounded (512 bytes, 16 components, 128 bytes per component), and free of absolute prefixes, parent traversal, and control characters. Existence, symlink-escape, directory, traversal-bound, and digest checks run in driver preflight against `RunnerOptions.workspace_root` before managed startup.
+
+One complete fixture replay is one trial observation. `semantic_findings` (`count`, lower-is-better) is the correctness metric; `semantic_flows` is diagnostic-only. Process wall-clock time never becomes latency. Only absolute gates are supported for `semantic_findings`; relative/statistical gates fail validation with `unsupported_gate`.

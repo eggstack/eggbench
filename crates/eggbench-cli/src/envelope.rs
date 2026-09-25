@@ -131,6 +131,9 @@ pub enum CliOutput {
         /// Verified network-path evidence summary.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         network_path: Option<NetworkPathInspectSummary>,
+        /// Verified semantic-replay evidence summary (Eggstack M003a).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        semantic_replay: Option<SemanticReplayInspectSummary>,
     },
 }
 
@@ -520,7 +523,7 @@ pub struct SubjectSummary {
 }
 
 /// Trial summary used by `inspect`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrialSummary {
     /// Stable trial identity.
@@ -529,4 +532,29 @@ pub struct TrialSummary {
     pub terminal_status: String,
     /// Measured elapsed nanoseconds when the trial completed.
     pub measurement_elapsed_ns: Option<u64>,
+    /// Semantic finding count for `EggReplay` trials, when retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_findings: Option<f64>,
+}
+
+/// Verified semantic-replay summary used by `inspect` (`Eggstack` M003a).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticReplayInspectSummary {
+    /// Whether a manifest-listed semantic-replay artifact exists.
+    pub artifact_present: bool,
+    /// Canonical driver name.
+    pub driver: Option<String>,
+    /// Fixture aggregate digest (comparison-critical identity).
+    pub fixture_digest: Option<String>,
+    /// Fixture session schema.
+    pub fixture_session_schema: Option<u32>,
+    /// CLI envelope schema version.
+    pub envelope_schema: Option<u32>,
+    /// `RegressionReport` schema version.
+    pub report_schema: Option<u32>,
+    /// Observed tool version.
+    pub executable_version: Option<String>,
+    /// Flow count from preflight.
+    pub flow_count: Option<u64>,
 }

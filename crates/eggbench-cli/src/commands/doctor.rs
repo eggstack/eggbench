@@ -143,14 +143,24 @@ fn run_with_descriptors(
             ),
         ));
     }
-    let workload_mode = workload_load_mode(&plan);
     let mut required_capabilities = std::collections::BTreeMap::new();
-    required_capabilities.insert(
-        DriverCategory::Workload,
-        BTreeSet::from([eggbench_core::Capability::LoadMode {
-            mode: workload_mode,
-        }]),
-    );
+    if matches!(
+        plan.workload,
+        eggbench_core::Workload::SemanticReplay { .. }
+    ) {
+        required_capabilities.insert(
+            DriverCategory::Workload,
+            BTreeSet::from([eggbench_core::Capability::SemanticReplay]),
+        );
+    } else {
+        let workload_mode = workload_load_mode(&plan);
+        required_capabilities.insert(
+            DriverCategory::Workload,
+            BTreeSet::from([eggbench_core::Capability::LoadMode {
+                mode: workload_mode,
+            }]),
+        );
+    }
     options.required_capabilities = required_capabilities;
 
     let resolved = eggbench_core::resolve_plan(&plan, descriptors, &options);
@@ -436,10 +446,13 @@ fn cli_failure_from_resolve(error: &ResolveError) -> CliFailure {
     CliFailure::new(category, error.to_string(), exit_code)
 }
 
+#[allow(clippy::match_same_arms)]
 fn workload_load_mode(plan: &eggbench_core::ExperimentPlan) -> LoadMode {
     use eggbench_core::Workload;
     match &plan.workload {
-        Workload::ClosedLoop { .. } | Workload::FiniteCount { .. } => LoadMode::ClosedLoop,
+        Workload::ClosedLoop { .. }
+        | Workload::FiniteCount { .. }
+        | Workload::SemanticReplay { .. } => LoadMode::ClosedLoop,
         Workload::OpenLoop { .. } => LoadMode::OpenLoop,
         Workload::TimeBounded { mode, .. } => *mode,
     }

@@ -489,6 +489,29 @@ pub struct ComparisonInput {
     pub paired: Option<PairedRunSummary>,
     /// Verified network-path evidence identity, present only for path runs.
     pub network_path_evidence: Option<NetworkPathEvidenceIdentity>,
+    /// Verified semantic-replay evidence identity, present only for
+    /// semantic-replay runs (Eggstack M003a).
+    pub semantic_replay_evidence: Option<SemanticReplayEvidenceIdentity>,
+}
+
+/// Comparison-critical identity loaded from `semantic-replay.json`.
+///
+/// The workstation-local fixture path is never part of this identity;
+/// the aggregate digest plus schema/policy/provenance is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticReplayEvidenceIdentity {
+    /// Deterministic aggregate digest over the confined fixture tree.
+    pub fixture_digest: String,
+    /// `EggReplay` fixture session schema accepted at preflight.
+    pub fixture_session_schema: u32,
+    /// `EggReplay` CLI envelope schema version (M003a pins 1).
+    pub envelope_schema: u32,
+    /// `EggReplay` `RegressionReport` schema version (M003a pins 2).
+    pub report_schema: u32,
+    /// Observed `eggreplay` tool version.
+    pub executable_version: String,
+    /// SHA-256 of the selected `eggreplay` executable.
+    pub executable_sha256: String,
 }
 
 /// Comparison-critical identity loaded from `network-path.json`.
@@ -841,6 +864,109 @@ fn load_network_path_evidence_identity(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredSemanticReplayEvidence {
+    schema_version: SchemaVersion,
+    driver: String,
+    fixture_digest: String,
+    fixture_session_schema: u32,
+    envelope_schema: u32,
+    report_schema: u32,
+    executable_version: String,
+    executable_sha256: String,
+}
+
+fn semantic_replay_evidence_record(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<ArtifactRecord>, ComparisonError> {
+    let mut record = None;
+    for artifact in &reader.manifest().artifacts {
+        let has_path = artifact.path.as_str() == "semantic-replay.json";
+        let has_role = matches!(
+            &artifact.role,
+            ArtifactRole::Other { label } if label.as_str() == "semantic-replay"
+        );
+        if has_path || has_role {
+            if record.is_some() || has_path != has_role {
+                return Err(BundleError::InvalidManifest(
+                    "semantic-replay evidence path and role must occur exactly once",
+                )
+                .into());
+            }
+            record = Some(artifact);
+        }
+    }
+    let Some(record) = record else {
+        if matches!(resolved.workload, Workload::SemanticReplay { .. }) {
+            return Err(BundleError::InvalidManifest(
+                "semantic-replay workload bundle lacks semantic-replay evidence",
+            )
+            .into());
+        }
+        return Ok(None);
+    };
+    if record.media_type != "application/json" {
+        return Err(
+            BundleError::InvalidManifest("semantic-replay evidence metadata is invalid").into(),
+        );
+    }
+    Ok(Some(record.clone()))
+}
+
+fn load_semantic_replay_evidence_identity(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<SemanticReplayEvidenceIdentity>, ComparisonError> {
+    let Some(record) = semantic_replay_evidence_record(reader, resolved)? else {
+        return Ok(None);
+    };
+    if !matches!(resolved.workload, Workload::SemanticReplay { .. }) {
+        return Err(BundleError::InvalidManifest(
+            "path-free bundle contains semantic-replay evidence",
+        )
+        .into());
+    }
+    let mut file = reader.open_artifact(&record.path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| BundleError::Io {
+            path: PathBuf::from(record.path.as_str()),
+            source: error,
+        })?;
+    if bytes.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest("semantic-replay evidence exceeds bound").into());
+    }
+    let evidence: StoredSemanticReplayEvidence = serde_json::from_slice(&bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if evidence.schema_version != SchemaVersion(1)
+        || evidence.driver != "eggreplay-semantic"
+        || evidence.fixture_digest.len() != 64
+        || !evidence
+            .fixture_digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+        || evidence.envelope_schema != 1
+        || evidence.report_schema != 2
+        || evidence.executable_version.is_empty()
+        || evidence.executable_version.len() > 128
+        || evidence.executable_sha256.len() != 64
+    {
+        return Err(
+            BundleError::InvalidManifest("semantic-replay evidence contract is invalid").into(),
+        );
+    }
+    Ok(Some(SemanticReplayEvidenceIdentity {
+        fixture_digest: evidence.fixture_digest.to_ascii_lowercase(),
+        fixture_session_schema: evidence.fixture_session_schema,
+        envelope_schema: evidence.envelope_schema,
+        report_schema: evidence.report_schema,
+        executable_version: evidence.executable_version,
+        executable_sha256: evidence.executable_sha256.to_ascii_lowercase(),
+    }))
+}
+
 /// Load a verified comparison-ready input from an opened bundle.
 ///
 /// Verifies the bundle before deriving identity or reading evidence.
@@ -884,6 +1010,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         pairs: record.pairs,
     });
     let network_path_evidence = load_network_path_evidence_identity(reader, &resolved)?;
+    let semantic_replay_evidence = load_semantic_replay_evidence_identity(reader, &resolved)?;
     Ok(ComparisonInput {
         identity,
         resolved,
@@ -891,6 +1018,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         trials,
         paired,
         network_path_evidence,
+        semantic_replay_evidence,
     })
 }
 
@@ -1758,8 +1886,7 @@ fn evaluate_comparability(
             outcome,
         });
     }
-    let (workload_match, workload_detail) =
-        compare_workload(&candidate.resolved, &baseline.resolved);
+    let (workload_match, workload_detail) = compare_workload(candidate, baseline);
     let (driver_match, driver_detail) = compare_driver(candidate, baseline);
     let (topology_match, topology_detail) =
         compare_topology(&candidate.resolved, &baseline.resolved);
@@ -1827,6 +1954,12 @@ fn workload_summary(workload: &Workload) -> String {
             concurrency.map(crate::PositiveCount::get),
             rate_milli_rps.map(crate::RateMilliRps::get),
         ),
+        // The workstation-local fixture path is never comparison-critical;
+        // digest/schema/provenance identity lives in `semantic-replay.json`
+        // evidence and is checked by `compare_semantic_replay`. The workload
+        // summary keeps only kind + target so semantic vs non-semantic
+        // bundles are incomparable without leaking local paths.
+        Workload::SemanticReplay { target, .. } => format!("semantic_replay target={target}"),
     }
 }
 
@@ -1838,15 +1971,67 @@ fn termination_summary(requests: Option<u32>, duration_ms: Option<u64>) -> Strin
     }
 }
 
-fn compare_workload(candidate: &ResolvedPlan, baseline: &ResolvedPlan) -> (bool, String) {
-    let left = workload_summary(&candidate.workload);
-    let right = workload_summary(&baseline.workload);
-    if left == right {
+fn compare_workload(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
+    let left = workload_summary(&candidate.resolved.workload);
+    let right = workload_summary(&baseline.resolved.workload);
+    if left != right {
+        return (
+            false,
+            format!("workload semantics differ: candidate {left} vs baseline {right}"),
+        );
+    }
+    let (replay_match, replay_detail) = compare_semantic_replay(candidate, baseline);
+    if !replay_match {
+        return (
+            false,
+            format!("workload semantics match ({left}); {replay_detail}"),
+        );
+    }
+    if left.contains("semantic_replay") {
+        (
+            true,
+            format!("workload semantics match ({left}); {replay_detail}"),
+        )
+    } else {
         (true, format!("workload semantics match ({left})"))
+    }
+}
+
+fn semantic_replay_summary(input: &ComparisonInput) -> String {
+    if !matches!(input.resolved.workload, Workload::SemanticReplay { .. }) {
+        return "absent".to_owned();
+    }
+    match &input.semantic_replay_evidence {
+        None => "missing-evidence".to_owned(),
+        Some(evidence) => format!(
+            "digest={} session={} envelope={} report={} tool={}:{}",
+            evidence.fixture_digest,
+            evidence.fixture_session_schema,
+            evidence.envelope_schema,
+            evidence.report_schema,
+            evidence.executable_version,
+            evidence.executable_sha256,
+        ),
+    }
+}
+
+fn compare_semantic_replay(
+    candidate: &ComparisonInput,
+    baseline: &ComparisonInput,
+) -> (bool, String) {
+    let left_is_replay = matches!(candidate.resolved.workload, Workload::SemanticReplay { .. });
+    let right_is_replay = matches!(baseline.resolved.workload, Workload::SemanticReplay { .. });
+    if !left_is_replay && !right_is_replay {
+        return (true, "semantic replay absent on both sides".to_owned());
+    }
+    let left = semantic_replay_summary(candidate);
+    let right = semantic_replay_summary(baseline);
+    if left == right {
+        (true, format!("semantic replay semantics match ({left})"))
     } else {
         (
             false,
-            format!("workload semantics differ: candidate {left} vs baseline {right}"),
+            format!("semantic replay differs: candidate {left} vs baseline {right}"),
         )
     }
 }
@@ -2879,6 +3064,7 @@ mod tests {
             trials,
             paired: None,
             network_path_evidence: None,
+            semantic_replay_evidence: None,
         }
     }
 
@@ -3662,6 +3848,86 @@ mod tests {
         assert_eq!(disposition_of(&receipt), Some(GateDisposition::Invalid));
     }
 
+    fn semantic_input(digest: &str) -> ComparisonInput {
+        let (mut candidate, _, _) = statistical_inputs(&[0.0; 7], &[0.0; 7]);
+        candidate.resolved.workload = Workload::SemanticReplay {
+            target: metric_name("origin"),
+            fixture: "fixtures/replay".to_owned(),
+        };
+        candidate.semantic_replay_evidence = Some(SemanticReplayEvidenceIdentity {
+            fixture_digest: digest.to_owned(),
+            fixture_session_schema: 2,
+            envelope_schema: 1,
+            report_schema: 2,
+            executable_version: "0.1.0".to_owned(),
+            executable_sha256: "ab".repeat(32),
+        });
+        candidate
+    }
+
+    #[test]
+    fn semantic_replay_digest_mismatch_invalidates() {
+        let candidate = semantic_input(&"aa".repeat(32));
+        let mut baseline = semantic_input(&"aa".repeat(32));
+        let receipt = compare(
+            &ComparisonRequest {
+                candidate: &candidate,
+                baseline: Some(BaselineSide {
+                    reference: BaselineReference::Bundle {
+                        identity: baseline.identity.clone(),
+                        path: "baseline.eggb".to_owned(),
+                    },
+                    input: &baseline,
+                }),
+            },
+            &ComparisonOptions::default(),
+        );
+        assert!(receipt.comparability.workload_match);
+        baseline.semantic_replay_evidence = Some(SemanticReplayEvidenceIdentity {
+            fixture_digest: "bb".repeat(32),
+            fixture_session_schema: 2,
+            envelope_schema: 1,
+            report_schema: 2,
+            executable_version: "0.1.0".to_owned(),
+            executable_sha256: "ab".repeat(32),
+        });
+        let receipt = compare(
+            &ComparisonRequest {
+                candidate: &candidate,
+                baseline: Some(BaselineSide {
+                    reference: BaselineReference::Bundle {
+                        identity: baseline.identity.clone(),
+                        path: "baseline.eggb".to_owned(),
+                    },
+                    input: &baseline,
+                }),
+            },
+            &ComparisonOptions::default(),
+        );
+        assert!(!receipt.comparability.workload_match);
+        assert!(receipt.comparability.critical_mismatch);
+    }
+
+    #[test]
+    fn semantic_vs_non_semantic_workloads_are_incomparable() {
+        let candidate = semantic_input(&"aa".repeat(32));
+        let (baseline, _, _) = statistical_inputs(&[0.0; 7], &[0.0; 7]);
+        let receipt = compare(
+            &ComparisonRequest {
+                candidate: &candidate,
+                baseline: Some(BaselineSide {
+                    reference: BaselineReference::Bundle {
+                        identity: baseline.identity.clone(),
+                        path: "baseline.eggb".to_owned(),
+                    },
+                    input: &baseline,
+                }),
+            },
+            &ComparisonOptions::default(),
+        );
+        assert!(!receipt.comparability.workload_match);
+    }
+
     #[test]
     fn subject_digest_difference_alone_does_not_invalidate() {
         let (candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
@@ -3951,6 +4217,7 @@ mod tests {
                 pairs: pair_count,
             }),
             network_path_evidence: None,
+            semantic_replay_evidence: None,
         }
     }
 

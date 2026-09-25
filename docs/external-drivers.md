@@ -9,10 +9,10 @@ execution. See [external oracles](external-oracles.md).
 ## Catalog ownership
 
 Production driver inventory lives in `eggbench-drivers::DriverCatalog`. The
-catalog always registers the external-process oracles (`oha`, `h2load`,
-`iperf3`); native drivers join per feature. `doctor` truthfully reports the
-inventory (including per-driver `binary_present` without spawning tools)
-and production `run` fails before startup with
+catalog always registers the external-process drivers (`oha`, `h2load`,
+`iperf3`, `eggreplay-semantic`); native drivers join per feature. `doctor`
+truthfully reports the inventory (including per-driver `binary_present`
+without spawning tools) and production `run` fails before startup with
 `missing_driver`/`unsupported_workload`/`ambiguous_selection`/`missing_executable_path`
 when no driver resolves. The CLI no longer owns the
 authoritative registry. The qualification fake stays test-only.

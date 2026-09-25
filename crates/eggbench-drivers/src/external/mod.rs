@@ -7,6 +7,7 @@
 mod artifact;
 mod command;
 mod common;
+pub mod eggreplay;
 mod error;
 mod h2load;
 mod iperf3;
@@ -18,6 +19,11 @@ mod version;
 
 pub use artifact::{artifact_candidates, command_metadata_json, workload_output_from_outcome};
 pub use command::{CapturedStream, ExternalCommandOutcome, ExternalCommandSpec, run_command};
+pub use eggreplay::{
+    EGGREPLAY_DRIVER_NAME, EGGREPLAY_PARSER_ID, EggReplayParser, EggReplayWorkload,
+    SEMANTIC_REPLAY_EVIDENCE, SemanticReplayEvidence, compute_fixture_identity,
+    eggreplay_descriptor, preflight_semantic_replay, semantic_replay_role_label,
+};
 pub use error::{DriverError, ErrorCategory};
 pub use h2load::{
     H2LOAD_DRIVER_NAME, H2LOAD_PARSER_ID, H2LOAD_STATUS_ARTIFACT, H2loadParser, H2loadWorkload,

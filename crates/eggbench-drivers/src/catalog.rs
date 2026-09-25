@@ -2,10 +2,11 @@
 //!
 //! The catalog is the authoritative production driver inventory. With the
 //! `eggstack-http` feature it registers the `EggServe` controlled origin
-//! (`eggserve-origin`) and the Eggfetch native HTTP workload
-//! (`eggfetch-http`); with the `gregg` feature it registers the Gregg
+//! (`eggserve-origin`) and the `Eggfetch` native HTTP workload
+//! (`eggfetch-http`); with the `gregg` feature it registers the `Gregg`
 //! host-telemetry driver (`gregg`). The external-process oracles (`oha`,
-//! `h2load`, `iperf3`) register unconditionally. Without features and
+//! `h2load`, `iperf3`) and the `EggReplay` semantic workload
+//! (`eggreplay-semantic`) register unconditionally. Without features and
 //! without installed tools only the external descriptors remain.
 //! Qualification fakes remain test/qualification-only and are never linked
 //! through this catalog.
@@ -55,6 +56,7 @@ impl DriverCatalog {
             crate::external::oha_descriptor(),
             crate::external::h2load_descriptor(),
             crate::external::iperf3_descriptor(),
+            crate::external::eggreplay_descriptor(),
         ]);
         Self { descriptors }
     }
@@ -117,8 +119,12 @@ mod tests {
     #[test]
     fn production_catalog_matches_feature() {
         let catalog = production_catalog();
-        let mut expected: Vec<String> =
-            vec!["h2load".to_owned(), "iperf3".to_owned(), "oha".to_owned()];
+        let mut expected: Vec<String> = vec![
+            "eggreplay-semantic".to_owned(),
+            "h2load".to_owned(),
+            "iperf3".to_owned(),
+            "oha".to_owned(),
+        ];
         #[cfg(feature = "eggstack-http")]
         expected.extend(["eggfetch-http".to_owned(), "eggserve-origin".to_owned()]);
         #[cfg(feature = "eggstack-path")]
@@ -141,7 +147,7 @@ mod tests {
             assert!(!descriptor.external_process);
             assert!(descriptor.default);
         }
-        for tool in ["oha", "h2load", "iperf3"] {
+        for tool in ["oha", "h2load", "iperf3", "eggreplay-semantic"] {
             let name = Name::new(tool).unwrap();
             let descriptor = catalog.workload(&name).expect("oracle registered");
             assert!(descriptor.external_process);

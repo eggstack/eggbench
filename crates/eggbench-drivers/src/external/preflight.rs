@@ -9,8 +9,8 @@
 
 use super::error::{DriverError, ErrorCategory};
 use super::version::ToolVersion;
-use super::{H2LOAD_DRIVER_NAME, IPERF3_DRIVER_NAME, OHA_DRIVER_NAME};
-use super::{H2loadWorkload, Iperf3Workload, OhaWorkload};
+use super::{EGGREPLAY_DRIVER_NAME, H2LOAD_DRIVER_NAME, IPERF3_DRIVER_NAME, OHA_DRIVER_NAME};
+use super::{EggReplayWorkload, H2loadWorkload, Iperf3Workload, OhaWorkload};
 use eggbench_core::Name;
 use tokio_util::sync::CancellationToken;
 
@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 pub fn is_external_workload(name: &Name) -> bool {
     matches!(
         name.as_str(),
-        OHA_DRIVER_NAME | H2LOAD_DRIVER_NAME | IPERF3_DRIVER_NAME
+        OHA_DRIVER_NAME | H2LOAD_DRIVER_NAME | IPERF3_DRIVER_NAME | EGGREPLAY_DRIVER_NAME
     )
 }
 
@@ -33,6 +33,7 @@ pub fn external_binary_present(name: &Name) -> Option<bool> {
         OHA_DRIVER_NAME => Some(OhaWorkload::resolve().is_ok()),
         H2LOAD_DRIVER_NAME => Some(H2loadWorkload::resolve().is_ok()),
         IPERF3_DRIVER_NAME => Some(Iperf3Workload::resolve().is_ok()),
+        EGGREPLAY_DRIVER_NAME => Some(EggReplayWorkload::resolve().is_ok()),
         _ => None,
     }
 }
@@ -49,6 +50,7 @@ pub fn executable_path_for(name: &Name) -> Option<String> {
         OHA_DRIVER_NAME => OhaWorkload::resolve().ok(),
         H2LOAD_DRIVER_NAME => H2loadWorkload::resolve().ok(),
         IPERF3_DRIVER_NAME => Iperf3Workload::resolve().ok(),
+        EGGREPLAY_DRIVER_NAME => EggReplayWorkload::resolve().ok(),
         _ => None,
     }?;
     Some(resolved.canonical_path.to_string_lossy().into_owned())
@@ -80,6 +82,17 @@ pub async fn probe_external_workload(
             let executable = Iperf3Workload::resolve()?;
             let probed = Iperf3Workload::probe(&executable, cancel).await?;
             Iperf3Workload::new(executable, probed.version.clone())?;
+            Ok(probed)
+        }
+        EGGREPLAY_DRIVER_NAME => {
+            let executable = EggReplayWorkload::resolve()?;
+            let probed = EggReplayWorkload::probe(&executable, cancel).await?;
+            EggReplayWorkload::new(
+                executable,
+                probed.version.clone(),
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                "fixture".to_owned(),
+            )?;
             Ok(probed)
         }
         _ => Err(DriverError::resolution(

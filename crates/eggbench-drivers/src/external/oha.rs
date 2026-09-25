@@ -188,7 +188,8 @@ fn workload_target_name(workload: &Workload) -> &str {
         Workload::ClosedLoop { target, .. }
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
-        | Workload::TimeBounded { target, .. } => target.as_str(),
+        | Workload::TimeBounded { target, .. }
+        | Workload::SemanticReplay { target, .. } => target.as_str(),
     }
 }
 
@@ -197,6 +198,7 @@ fn workload_target_name(workload: &Workload) -> &str {
 /// ClosedLoop/FiniteCount counts map to `-n/-c`, durations to `-z`;
 /// `OpenLoop` rates map to `-q/--latency-correction`. Mutually exclusive
 /// count+duration pairs fail closed (oha silently ignores `-n` under `-z`).
+#[allow(clippy::too_many_lines)]
 fn oha_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverError> {
     let unsupported = |detail: &str| {
         DriverError::execution(
@@ -291,6 +293,11 @@ fn oha_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverError
                 args.push(humantime(duration_ms.get()).into());
             }
         },
+        Workload::SemanticReplay { .. } => {
+            return Err(unsupported(
+                "SemanticReplay requires the eggreplay-semantic driver",
+            ));
+        }
     }
     args.push(url.into());
     Ok(args)

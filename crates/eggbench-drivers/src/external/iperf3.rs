@@ -186,7 +186,8 @@ fn workload_target_name(workload: &Workload) -> &str {
         Workload::ClosedLoop { target, .. }
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
-        | Workload::TimeBounded { target, .. } => target.as_str(),
+        | Workload::TimeBounded { target, .. }
+        | Workload::SemanticReplay { target, .. } => target.as_str(),
     }
 }
 
@@ -235,6 +236,11 @@ fn iperf3_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverEr
         Workload::OpenLoop { .. } | Workload::FiniteCount { .. } => {
             return Err(unsupported(
                 "only duration-bound closed-loop maps to iperf3",
+            ));
+        }
+        Workload::SemanticReplay { .. } => {
+            return Err(unsupported(
+                "SemanticReplay requires the eggreplay-semantic driver",
             ));
         }
     };

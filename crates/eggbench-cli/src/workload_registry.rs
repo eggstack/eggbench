@@ -420,6 +420,27 @@ pub fn production_workload_executor(
             executable,
         )));
     }
+    if driver.as_str() == eggbench_drivers::EGGREPLAY_DRIVER_NAME {
+        let Some(resolved) = resolved else {
+            return Err("eggreplay-semantic executor requires a resolved plan".to_owned());
+        };
+        let eggbench_core::Workload::SemanticReplay { fixture, .. } = &resolved.workload else {
+            return Err(
+                "eggreplay-semantic executor requires a SemanticReplay workload".to_owned(),
+            );
+        };
+        let workspace_root = std::env::current_dir()
+            .map_err(|error| format!("workspace root is not accessible: {error}"))?;
+        let executable =
+            eggbench_drivers::EggReplayWorkload::resolve().map_err(|error| error.to_string())?;
+        return Ok(Box::new(
+            eggbench_drivers::EggReplayWorkload::from_resolved(
+                executable,
+                workspace_root,
+                fixture.clone(),
+            ),
+        ));
+    }
     #[cfg(feature = "eggstack-http")]
     {
         if driver.as_str() == eggbench_drivers::EGGFETCH_HTTP_DRIVER_NAME {
@@ -650,9 +671,10 @@ mod tests {
     #[test]
     fn production_registry_contains_no_fake_driver() {
         let registry = WorkloadRegistry::production();
-        // The external oracles register unconditionally; only the native
-        // Eggfetch driver is feature-gated (and remains the unique default).
-        let mut expected = vec!["h2load", "iperf3", "oha"];
+        // The external oracles plus EggReplay register unconditionally; only
+        // the native Eggfetch driver is feature-gated (and remains the unique
+        // default).
+        let mut expected = vec!["eggreplay-semantic", "h2load", "iperf3", "oha"];
         #[cfg(feature = "eggstack-http")]
         expected.push("eggfetch-http");
         let inventory = registry.inventory();
@@ -677,7 +699,7 @@ mod tests {
     #[test]
     fn legacy_builtin_constructor_is_production_empty() {
         let registry = WorkloadRegistry::with_builtin();
-        // The legacy constructor mirrors production: oracles always
+        // The legacy constructor mirrors production: external drivers always
         // present, native Eggfetch only with the feature.
         assert!(registry.has_workload_driver());
         #[cfg(feature = "eggstack-http")]
@@ -701,10 +723,11 @@ mod tests {
     #[test]
     fn production_runtime_reports_no_driver() {
         let runtime = ProductionRuntime::new();
-        // Workload inventory always carries the three external oracles;
-        // the native descriptors join with eggstack-http (+gregg).
-        let expected_workload: usize = 3 + usize::from(cfg!(feature = "eggstack-http"));
-        let expected_descriptors: usize = 3
+        // Workload inventory always carries the external drivers (three
+        // oracles plus EggReplay); the native descriptors join with
+        // eggstack-http (+gregg).
+        let expected_workload: usize = 4 + usize::from(cfg!(feature = "eggstack-http"));
+        let expected_descriptors: usize = 4
             + 2 * usize::from(cfg!(feature = "eggstack-http"))
             + 2 * usize::from(cfg!(feature = "eggstack-path"))
             + usize::from(cfg!(feature = "gregg"));
