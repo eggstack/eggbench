@@ -96,6 +96,33 @@ verdict semantics).
 
 M004 implementation is unblocked subject to its own implementation plan.
 
+## 2D. M004 Eggsec handoff re-audit — 2026-09-25
+
+M004 re-audited Eggsec after M003 live-tool qualification closed.
+
+Audited Eggsec default-branch HEAD:
+
+`0509ac668adfd78e9899cd3428a807d0b3c9f27b`
+
+Relevant findings:
+
+- Eggsec remains workspace version 0.1.0 / Rust 1.89 and continues active development; no immutable Git release/tag was selected by this audit for the M004 machine contract.
+- The broad Eggsec application crate is not an acceptable Eggbench production dependency.
+- `eggsec-report-model` is a narrow data-contract crate, but the selected WAF CLI does not emit that model; importing it would not remove the external machine-contract problem.
+- Generic `eggsec scan --json` emits `PipelineReport`, whose stage success primarily means execution success and whose WAF stage does not preserve a WAF regression result in the pipeline report. It is therefore not the initial correctness authority.
+- `eggsec ci` is a passive gate over pre-existing findings and does not execute the assessment.
+- Eggsec's internal `WafRegressionReport` is useful architecture evidence but is not the selected stable CLI seam.
+- The narrow usable seam is strict-scope `eggsec waf --json`: its `ScanResults` carries explicit per-finding `bypass_successful` semantics owned by Eggsec.
+- Eggsec provides no-network `preflight ... --profile guarded --json`, global `--scope`, and `--strict-scope`; these are selected to fail closed before traffic.
+- Initial M004 deliberately excludes public targets, arbitrary scan profiles, stress/flood, raw packets, NSE, db-pentest, web-proxy, C2/post-exploitation, remote/cluster, credentials, custom routes, and manual enforcement overrides.
+
+M004 is split because security execution/evidence and comparison-verdict composition are separate contracts:
+
+1. `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md` — **ready**.
+2. `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md` — **authored, blocked on M004a closure**.
+
+M004a adds a distinct correctness execution category and sanitized Eggsec evidence. M004b adds ComparisonReceipt v3 correctness-gate plumbing and conservative combined verdict precedence. Security results are never converted into performance metrics.
+
 ## 3. Invariants
 
 - No copied sibling protocol implementation.
@@ -218,4 +245,16 @@ Live-tool corrective addendum (2026-09-25): C001 proved live that the M003b adap
 
 ### M004 — Eggsec workload/correctness adapter
 
-Status: implementation-unblocked (the post-M003 live-tool qualification corrective is closed). Measurement/comparison prerequisites are closed/qualified and M003a/M003b are closed with additive live-binary qualification. M004 implementation may proceed subject to its own implementation plan; no M004 implementation plan exists yet.
+Status: planned/active handoff sequence. M004a is ready; M004b is authored and blocked on M004a closure.
+
+Implementation plans:
+
+- `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md` — **ready**. Adds schema-v6 security-check intent, a distinct correctness executor/category, strict local/private Eggsec WAF execution, sanitized evidence, and real-tool qualification.
+- `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md` — **blocked on M004a closure**. Adds the independent security-correctness gate family, ComparisonReceipt v3, conservative combined verdict precedence, and umbrella M004 closure.
+
+Planning commits:
+
+- M004a: `aeed8f7`
+- M004b: `5b5ef97`
+
+M004 intentionally starts with the narrow Eggsec WAF bypass semantic seam. It does not make Eggbench a generic scanner and does not encode security correctness as a performance metric.
