@@ -43,7 +43,7 @@ Canonical direction remains in:
 | post-M003 combined hosted qualification corrective | closed | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped (historical); C002 closed | Combined qualification closed by hosted run 36029547565 (four lanes green); closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 hosted-qualified; M002 ready for handoff | Implementation plan: plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md; no dependency blocker |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001 hosted-qualified; M002 closed/hosted-qualified; M003 plan-authorable | M002 closure: plans/closure/eggstack-integration/002-status.md; M003 requires an authored implementation plan before execution |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
@@ -65,17 +65,15 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 ## Dependency-ready implementation plans
 
-| Subsystem | Milestone | Status | Implementation plan | Handoff note |
-|---|---|---|---|---|
-| Eggstack integrations | M002 Route and stream-fault topology | ready | plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md | First-class schema-v3 network path; listener-free Eggress route -> Eggchaos stream wrapper -> Eggfetch; no route fallback, no packet-fault claims |
+No capability implementation plan is currently dependency-ready. Eggstack M002 is closed; Eggstack M003 is ready for plan authoring/research only.
 
 Historical corrective C002 is closed at plans/closure/post-m003-hosted-qualification-corrective/002-status.md. C001 remains stopped historical work and must not be re-executed.
 
 ## Authored but dependency-blocked implementation plans
 
-No additional authored capability plan is dependency-ready.
+No authored capability plan is dependency-ready.
 
-Eggstack M003 replay/diagnostics remains blocked on M002 closure. External Oracles M003 netem remains the later oracle milestone. Security qualification remains blocked on the integration layer.
+Eggstack M003 replay/diagnostics is unblocked for plan authoring now that M002 is closed, but no M003 implementation plan exists yet. External Oracles M003 netem remains the later oracle milestone. Security qualification remains blocked on the integration layer.
 
 ## Current execution order and dependency gates
 
@@ -210,6 +208,6 @@ The closed M002 implementation is:
 
 plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
 
-Implementation commit `f816a65` is locally verified and hosted-qualified by run `36085136434`; the closure record is `plans/closure/eggstack-integration/002-status.md`. Eggstack M003 replay/diagnostics may now be activated against these stable contracts.
+Implementation commit `f816a65` is locally verified and hosted-qualified by run `36085136434`; the closure record is `plans/closure/eggstack-integration/002-status.md`. Eggstack M003 replay/diagnostics may now be researched and authored against these stable contracts; implementation begins only after an M003 plan is registered.
 
 External Oracles M003 netem remains a separate later impairment boundary and must not be folded into M002.
