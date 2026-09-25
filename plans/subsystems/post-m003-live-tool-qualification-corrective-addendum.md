@@ -99,8 +99,11 @@ C001 may:
 - build real sibling binaries from the exact qualification inputs;
 - add qualification-only fixtures/scripts/docs under Eggbench if useful;
 - add tests that invoke those binaries when explicitly configured;
-- make a narrow Eggbench compatibility fix only if a real machine-contract
-  mismatch is discovered and the fix preserves M003 semantics.
+- add narrowly scoped CI wiring required to execute the live qualification.
+
+C001 is evidence-only with respect to production Eggbench semantics. If a real
+machine-contract mismatch reveals an adapter defect, C001 stops and a follow-up
+C002 must authorize the production compatibility correction.
 
 C001 may not:
 
