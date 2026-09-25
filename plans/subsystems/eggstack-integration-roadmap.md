@@ -169,12 +169,12 @@ Status: closed. Implementation plan: `plans/implementation/eggstack-integration/
 
 ### M003 — Replay and diagnostics
 
-Status: active handoff sequence. M003a is closed; M003b is ready.
+Status: active handoff sequence. M003a is closed; M003b is closed; M003 is closed/hosted-qualified.
 
 Implementation plans:
 
 - `plans/implementation/eggstack-integration/003a-eggreplay-semantic-replay-workload.md` — **closed**. External EggReplay semantic workload using the JSON CLI, immutable fixture identity, and semantic finding evidence. Implementation `adc3c15`; closure `plans/closure/eggstack-integration/003a-status.md`.
-- `plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md` — **ready**. Adds the generic diagnostic lifecycle seam, Eggprobe schema-0.3 external adapter, and combined M003 closure qualification.
+- `plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md` — **closed**. Generic diagnostic lifecycle seam, Eggprobe schema-0.3 external adapter, and combined M003 closure qualification. Implementation `7712995`; closure `plans/closure/eggstack-integration/003b-status.md`; hosted qualification run `36140143375` (Linux stable, Linux MSRV, macOS stable, Windows stable).
 
 M003a planning commit: `5e67fd0`. M003b planning commit: `46e7aa0`.
 
@@ -182,4 +182,4 @@ M003 deliberately does not import EggReplay/Eggprobe Rust networking engines. M0
 
 ### M004 — Eggsec workload/correctness adapter
 
-Status: blocked on M003 closure. Measurement/comparison prerequisites are already closed/qualified; after M003b closes the combined integration layer, M004 may be re-audited and planned.
+Status: unblocked for planning on M003 closure. Measurement/comparison prerequisites are already closed/qualified; M003a/M003b are closed and the combined integration layer is hosted-qualified by run `36140143375`. M004 may now be re-audited and planned; no M004 implementation plan exists yet.
