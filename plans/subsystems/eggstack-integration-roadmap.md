@@ -62,6 +62,25 @@ M003 re-audited EggReplay and Eggprobe after M002 closure.
 
 The milestone is decomposed because replay is a workload contract while diagnostics are one-shot lifecycle evidence with different timing/failure semantics.
 
+## 2C. Post-M003 live-tool qualification corrective — 2026-09-25
+
+Historical M003 remains closed and hosted-qualified for Eggbench-owned contracts, but both M003 closure records explicitly lacked real external binary execution.
+
+The additive corrective is:
+
+- `plans/subsystems/post-m003-live-tool-qualification-corrective-addendum.md`
+- `plans/implementation/post-m003-live-tool-qualification-corrective/001-eggreplay-eggprobe-live-contract-qualification.md`
+
+Qualification inputs are pinned:
+
+- EggReplay exact source revision `d39f4b794620a2d0647688a914e0e7a6be42e184`, which retains envelope schema 1 / session schema 2 / RegressionReport schema 2 after the EggServe 0.3 runtime adoption;
+- Eggprobe immutable `v0.1.1` at `53ea53d`, machine schema 0.3;
+- current Eggprobe `0ce9597a...` only as a negative control proving real schema-0.4 rejection despite the same package-version line.
+
+The corrective is evidence-first and expects no production Rust change. It adds real binary interoperability qualification and must preserve the historical M003 closure records unchanged.
+
+M004 may continue research/plan authoring while this corrective is active, but M004 implementation should wait for the live-tool corrective to close.
+
 ## 3. Invariants
 
 - No copied sibling protocol implementation.
@@ -169,7 +188,7 @@ Status: closed. Implementation plan: `plans/implementation/eggstack-integration/
 
 ### M003 — Replay and diagnostics
 
-Status: active handoff sequence. M003a is closed; M003b is closed; M003 is closed/hosted-qualified.
+Status: M003a/M003b are closed and M003 is hosted-qualified for Eggbench-owned contracts. Additive real-binary interoperability qualification is active under the post-M003 live-tool corrective; historical closure remains unchanged.
 
 Implementation plans:
 
@@ -182,4 +201,4 @@ M003 deliberately does not import EggReplay/Eggprobe Rust networking engines. M0
 
 ### M004 — Eggsec workload/correctness adapter
 
-Status: unblocked for planning on M003 closure. Measurement/comparison prerequisites are already closed/qualified; M003a/M003b are closed and the combined integration layer is hosted-qualified by run `36140143375`. M004 may now be re-audited and planned; no M004 implementation plan exists yet.
+Status: unblocked for research/plan authoring on historical M003 closure. Measurement/comparison prerequisites are closed/qualified and M003a/M003b are closed, but M004 implementation is held until the post-M003 live-tool qualification corrective closes. No M004 implementation plan exists yet.
