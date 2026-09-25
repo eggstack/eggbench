@@ -72,9 +72,7 @@ Historical M002 is closed at plans/closure/eggstack-integration/002-status.md. H
 
 ## Authored but dependency-blocked implementation plans
 
-No authored plan remains blocked on M003. External Oracles M003 netem remains the later oracle milestone. Security qualification/Eggstack M004 is unblocked for planning on M003 closure; no M004 implementation plan exists yet.
-
-External Oracles M003 netem remains the later oracle milestone. Security qualification/Eggstack M004 is unblocked for planning; re-audit Eggsec and author M004 before any implementation handoff.
+No authored capability plan is currently dependency-blocked. External Oracles M003 netem remains the later oracle milestone. Security qualification/Eggstack M004 is unblocked for planning on M003 closure; re-audit Eggsec and author M004 before any capability implementation handoff.
 
 ## Current execution order and dependency gates
 
