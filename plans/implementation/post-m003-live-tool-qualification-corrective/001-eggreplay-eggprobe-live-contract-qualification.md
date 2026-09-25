@@ -1,6 +1,6 @@
 # Post-M003 Live External-Tool Qualification Corrective C001 — EggReplay + Eggprobe
 
-Status: ready for handoff
+Status: stopped with evidence (closure plans/closure/post-m003-live-tool-qualification-corrective/001-status.md; successor C002 plans/implementation/post-m003-live-tool-qualification-corrective/002-eggprobe-adapter-contract-correction.md)
 
 Repository baseline: `17a3adefb079dcc4591ade47a88f2b41726e0749`
 

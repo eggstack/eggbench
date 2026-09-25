@@ -79,7 +79,14 @@ Qualification inputs are pinned:
 
 The corrective is evidence-first and expects no production Rust change. It adds real binary interoperability qualification and must preserve the historical M003 closure records unchanged.
 
-M004 may continue research/plan authoring while this corrective is active, but M004 implementation should wait for the live-tool corrective to close.
+C001 outcome (2026-09-25): STOPPED with evidence
+(`plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`).
+Live execution proved the EggReplay side matches the real binary exactly but
+the M003b adapter's plan/report dialect is rejected by real `eggprobe v0.1.1`.
+The narrow correction and deferred live qualification are handed off as C002
+(`plans/implementation/post-m003-live-tool-qualification-corrective/002-eggprobe-adapter-contract-correction.md`).
+
+M004 may continue research/plan authoring while this corrective is active, but M004 implementation should wait for the live-tool corrective to close (now: C002).
 
 ## 3. Invariants
 
@@ -188,7 +195,7 @@ Status: closed. Implementation plan: `plans/implementation/eggstack-integration/
 
 ### M003 — Replay and diagnostics
 
-Status: M003a/M003b are closed and M003 is hosted-qualified for Eggbench-owned contracts. Additive real-binary interoperability qualification is active under the post-M003 live-tool corrective; historical closure remains unchanged.
+Status: M003a/M003b are closed and M003 is hosted-qualified for Eggbench-owned contracts. Additive real-binary interoperability qualification is active under the post-M003 live-tool corrective (C001 stopped with evidence, C002 ready); historical closure remains unchanged.
 
 Implementation plans:
 
@@ -199,6 +206,8 @@ M003a planning commit: `5e67fd0`. M003b planning commit: `46e7aa0`.
 
 M003 deliberately does not import EggReplay/Eggprobe Rust networking engines. M003a uses EggReplay's machine CLI as a workload; M003b uses Eggprobe's qualified machine CLI as pre/post diagnostic evidence outside measured intervals.
 
+Live-tool corrective addendum (2026-09-25): C001 proved live that the M003b adapter's plan/report dialect does not match real `eggprobe v0.1.1` (closure `plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`); C002 (`plans/implementation/post-m003-live-tool-qualification-corrective/002-eggprobe-adapter-contract-correction.md`) owns the narrow correction and the deferred live qualification.
+
 ### M004 — Eggsec workload/correctness adapter
 
-Status: unblocked for research/plan authoring on historical M003 closure. Measurement/comparison prerequisites are closed/qualified and M003a/M003b are closed, but M004 implementation is held until the post-M003 live-tool qualification corrective closes. No M004 implementation plan exists yet.
+Status: unblocked for research/plan authoring on historical M003 closure. Measurement/comparison prerequisites are closed/qualified and M003a/M003b are closed, but M004 implementation is held until the post-M003 live-tool qualification corrective closes (now: C002, successor of stopped C001). No M004 implementation plan exists yet.

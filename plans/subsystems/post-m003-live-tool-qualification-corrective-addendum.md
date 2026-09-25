@@ -16,6 +16,10 @@ Historical M003 evidence:
 Implementation handoff:
 
 - `plans/implementation/post-m003-live-tool-qualification-corrective/001-eggreplay-eggprobe-live-contract-qualification.md`
+  — STOPPED with evidence
+  (`plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`)
+- `plans/implementation/post-m003-live-tool-qualification-corrective/002-eggprobe-adapter-contract-correction.md`
+  — ready (sole dependency-ready handoff)
 
 ## 1. Purpose
 
@@ -119,7 +123,8 @@ C001 may not:
 
 ## 5. Qualification disposition
 
-Until C001 closes:
+C001 stopped with evidence on 2026-09-25 (section 7); its disposition no
+longer changes. Until C002 closes:
 
 - M003 remains historically closed and hosted-qualified for Eggbench-owned
   behavior;
@@ -128,7 +133,7 @@ Until C001 closes:
 - M004 implementation should not begin because M003 is the integration layer
   on which the security adapter will depend.
 
-C001 is the sole dependency-ready implementation/qualification handoff.
+C002 is the sole dependency-ready implementation/qualification handoff.
 
 ## 6. Closure conditions
 
@@ -153,3 +158,22 @@ C001 closes only when one evidence set demonstrates all of the following:
 If the external binaries reveal a substantive contract defect, stop and
 re-plan rather than marking the historical M003 closure incorrect or silently
 changing sibling ownership.
+
+## 7. C001 outcome (2026-09-25): stopped, C002 registered
+
+C001 executed live against the exact pins and stopped per its own sections 18
+and 22. The real `eggprobe v0.1.1` rejects the exact Eggbench-generated
+schema-0.3 plan (exit 2, invalid plan) because the M003b adapter emits a
+dialect the real binary never spoke: plain-string `probes`, `deadline_ms`
+execution, and `tls`/`http_url` target fields (real: typed `kind`/`port`/`url`
+probes, microsecond `deadline`, host-and-port-only target); the report reader
+likewise expects `family`/`pass`/`fail` where the real binary emits
+`kind`/`ok`/`failed`. No production file was modified; the EggReplay side
+matched exactly. Full evidence:
+
+- `plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`
+
+The narrow production correction plus the deferred live qualification is
+handed off as C002 (section: Implementation handoff, above). Until C002
+closes, the live external-tool contract remains qualification-outstanding and
+M004 implementation remains held, now on C002.
