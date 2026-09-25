@@ -1,6 +1,6 @@
 # Post-M003/M001 Qualification Corrective C001 — CLI Truthfulness, Portability, and Hosted Qualification
 
-Status: ready for handoff
+Status: closed (implementation `e924f2a` + `a5f8260`; closure `plans/closure/post-m003-m001-qualification-corrective/001-status.md`; hosted qualification CI run `35808371805`, four lanes green; re-verified at current HEAD 2026-09-25)
 
 Repository baseline: `c73c00a5530d1e0b188528152f68ef855e516135`
 
