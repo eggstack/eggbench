@@ -1,6 +1,6 @@
 # Local Runner M003 — Environment Fingerprint and CLI Lifecycle
 
-Status: ready for handoff
+Status: closed
 
 Repository baseline: `9d143584c18cc3d7a49e0271f452587736b118d9`
 
