@@ -1,6 +1,6 @@
 # Eggstack Integration M003a — EggReplay Semantic Replay Workload
 
-Status: ready for handoff
+Status: closed (implementation adc3c15; closure plans/closure/eggstack-integration/003a-status.md)
 
 Repository baseline: 2437ddb406153fda8140b0e93838a7e9fe6004c9
 

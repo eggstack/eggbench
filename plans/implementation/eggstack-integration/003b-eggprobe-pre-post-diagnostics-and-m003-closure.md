@@ -1,6 +1,6 @@
 # Eggstack Integration M003b — Eggprobe Pre/Post Diagnostic Evidence and M003 Closure
 
-Status: authored; blocked on M003a closure
+Status: ready for handoff (M003a closed at plans/closure/eggstack-integration/003a-status.md)
 
 Repository baseline: 5e67fd03e8331cabacb8ae6f4f4e1fcdd9e45f5a
 

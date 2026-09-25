@@ -43,7 +43,7 @@ Canonical direction remains in:
 | post-M003 combined hosted qualification corrective | closed | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped (historical); C002 closed | Combined qualification closed by hosted run 36029547565 (four lanes green); closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
 | Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
-| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001/M002 hosted-qualified; M003a ready; M003b authored/blocked | Execute M003a first; M003b closes M003 after M003a closure |
+| Eggstack integrations | active | plans/subsystems/eggstack-integration-roadmap.md | M001/M002 hosted-qualified; M003a closed; M003b ready | M003a closed at plans/closure/eggstack-integration/003a-status.md (implementation adc3c15); execute M003b to close M003 |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
 | Security qualification | proposed | plans/subsystems/security-qualification-roadmap.md | M001 blocked | Measurement + integration layers |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
@@ -67,15 +67,13 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Implementation plan | Handoff note |
 |---|---|---|---|---|
-| Eggstack integrations | M003a EggReplay semantic replay workload | ready | plans/implementation/eggstack-integration/003a-eggreplay-semantic-replay-workload.md | External JSON-CLI workload; immutable .eggr fixture identity; semantic findings as correctness metric; no EggReplay Rust dependency |
+| Eggstack integrations | M003b Eggprobe pre/post diagnostics + M003 closure | ready | plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md | External JSON-CLI diagnostics outside measured intervals; schema-0.3 handshake; combined M003 closure proof |
 
-Historical M002 is closed at plans/closure/eggstack-integration/002-status.md. Historical corrective C002 is closed at plans/closure/post-m003-hosted-qualification-corrective/002-status.md.
+Historical M002 is closed at plans/closure/eggstack-integration/002-status.md. Historical corrective C002 is closed at plans/closure/post-m003-hosted-qualification-corrective/002-status.md. M003a is closed at plans/closure/eggstack-integration/003a-status.md (implementation adc3c15).
 
 ## Authored but dependency-blocked implementation plans
 
-| Subsystem | Milestone | Status | Implementation plan | Blocker |
-|---|---|---|---|---|
-| Eggstack integrations | M003b Eggprobe pre/post diagnostics + M003 closure | blocked | plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md | M003a must close first |
+No authored plan remains blocked on M003a. External Oracles M003 netem remains the later oracle milestone. Security qualification/Eggstack M004 remains blocked on M003 closure.
 
 External Oracles M003 netem remains the later oracle milestone. Security qualification/Eggstack M004 remains blocked on M003 closure.
 
@@ -209,10 +207,6 @@ Before marking a plan ready, verify:
 
 The only dependency-ready capability handoff is:
 
-`plans/implementation/eggstack-integration/003a-eggreplay-semantic-replay-workload.md`
-
-After M003a closes, execute:
-
 `plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md`
 
-M003b must produce the combined EggServe/EggReplay/Eggprobe qualification and close M003 before Eggstack M004/Eggsec is activated. External Oracles M003 netem remains separate.
+M003a is closed at `plans/closure/eggstack-integration/003a-status.md`. M003b must produce the combined EggServe/EggReplay/Eggprobe qualification and close M003 before Eggstack M004/Eggsec is activated. External Oracles M003 netem remains separate.

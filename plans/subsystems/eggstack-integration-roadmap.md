@@ -169,12 +169,12 @@ Status: closed. Implementation plan: `plans/implementation/eggstack-integration/
 
 ### M003 — Replay and diagnostics
 
-Status: planned/active handoff sequence. M003a is ready; M003b is authored and blocked on M003a closure.
+Status: active handoff sequence. M003a is closed; M003b is ready.
 
 Implementation plans:
 
-- `plans/implementation/eggstack-integration/003a-eggreplay-semantic-replay-workload.md` — **ready**. External EggReplay semantic workload using the JSON CLI, immutable fixture identity, and semantic finding evidence.
-- `plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md` — **blocked on M003a closure**. Adds the generic diagnostic lifecycle seam, Eggprobe schema-0.3 external adapter, and combined M003 closure qualification.
+- `plans/implementation/eggstack-integration/003a-eggreplay-semantic-replay-workload.md` — **closed**. External EggReplay semantic workload using the JSON CLI, immutable fixture identity, and semantic finding evidence. Implementation `adc3c15`; closure `plans/closure/eggstack-integration/003a-status.md`.
+- `plans/implementation/eggstack-integration/003b-eggprobe-pre-post-diagnostics-and-m003-closure.md` — **ready**. Adds the generic diagnostic lifecycle seam, Eggprobe schema-0.3 external adapter, and combined M003 closure qualification.
 
 M003a planning commit: `5e67fd0`. M003b planning commit: `46e7aa0`.
 
