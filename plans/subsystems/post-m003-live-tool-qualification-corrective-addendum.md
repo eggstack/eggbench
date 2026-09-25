@@ -1,6 +1,6 @@
 # Post-M003 Live External-Tool Qualification Corrective Addendum
 
-Status: active
+Status: closed (C001 stopped with evidence; C002 closed 2026-09-25)
 
 Planning baseline: `338e97b7459f77dc19080cfc7c4b48759c7f0abd`
 
@@ -19,7 +19,10 @@ Implementation handoff:
   — STOPPED with evidence
   (`plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`)
 - `plans/implementation/post-m003-live-tool-qualification-corrective/002-eggprobe-adapter-contract-correction.md`
-  — ready (sole dependency-ready handoff)
+  — CLOSED
+  (`plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`;
+  implementation `98f16e6`; hosted live-tool run `36177440371`; four-lane
+  run `36177440220`)
 
 ## 1. Purpose
 
@@ -124,16 +127,16 @@ C001 may not:
 ## 5. Qualification disposition
 
 C001 stopped with evidence on 2026-09-25 (section 7); its disposition no
-longer changes. Until C002 closes:
+longer changes. C002 closed on 2026-09-25
+(`plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`):
 
 - M003 remains historically closed and hosted-qualified for Eggbench-owned
-  behavior;
-- the live external-tool contract is explicitly qualification-outstanding;
-- M004/Eggsec may be researched and planned;
-- M004 implementation should not begin because M003 is the integration layer
-  on which the security adapter will depend.
-
-C002 is the sole dependency-ready implementation/qualification handoff.
+  behavior, now with additive real-binary interoperability evidence;
+- the live external-tool contract is qualified; recorded deviations are
+  limited to controlled-origin `Date` suppression (D1) and
+  compare-reader/writer alignment (D2), neither changing metric,
+  lifecycle, or verdict semantics;
+- M004 implementation is unblocked subject to its own implementation plan.
 
 ## 6. Closure conditions
 
@@ -174,6 +177,19 @@ matched exactly. Full evidence:
 - `plans/closure/post-m003-live-tool-qualification-corrective/001-status.md`
 
 The narrow production correction plus the deferred live qualification is
-handed off as C002 (section: Implementation handoff, above). Until C002
-closes, the live external-tool contract remains qualification-outstanding and
-M004 implementation remains held, now on C002.
+handed off as C002 (section: Implementation handoff, above).
+
+## 8. C002 outcome (2026-09-25): closed, M004 unblocked
+
+C002 corrected the adapter to the real schema-0.3 contract and completed
+the deferred live qualification: harness 20/20 PASS locally against the
+exact pins, full default/all-feature/MSRV matrix green, hosted live-tool
+run `36177440371` green, four-lane run `36177440220` green on
+implementation `98f16e6`. Live execution additionally proved two latent
+defects, fixed as recorded deviations D1 (controlled-origin `Date`
+suppression) and D2 (compare-reader/writer alignment); neither changes
+metric, lifecycle, or verdict semantics. Full evidence:
+
+- `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`
+
+M004 implementation is unblocked subject to its own implementation plan.

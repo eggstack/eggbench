@@ -1,6 +1,6 @@
 # Post-M003 Live-Tool Corrective C002 — M003b Eggprobe Adapter Contract Correction
 
-Status: ready for handoff
+Status: closed (implementation `98f16e6`; closure `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`; hosted live-tool run `36177440371` green; four-lane run `36177440220` green)
 
 Repository baseline: `5aa12cd57d8f47e09301391768827f055a0a9bbd` plus the
 committed C001 stopped-evidence HEAD (harness + closure).
