@@ -6,8 +6,9 @@
 //! (`eggfetch-http`); with the `gregg` feature it registers the `Gregg`
 //! host-telemetry driver (`gregg`). The external-process oracles (`oha`,
 //! `h2load`, `iperf3`), the `EggReplay` semantic workload
-//! (`eggreplay-semantic`), and the `Eggprobe` pre/post diagnostic driver
-//! (`eggprobe`) register unconditionally. Without features and
+//! (`eggreplay-semantic`), the `Eggprobe` pre/post diagnostic driver
+//! (`eggprobe`), and the `Eggsec` strict-scope WAF correctness driver
+//! (`eggsec-waf`) register unconditionally. Without features and
 //! without installed tools only the external descriptors remain.
 //! Qualification fakes remain test/qualification-only and are never linked
 //! through this catalog.
@@ -59,6 +60,7 @@ impl DriverCatalog {
             crate::external::iperf3_descriptor(),
             crate::external::eggreplay_descriptor(),
             crate::external::eggprobe_descriptor(),
+            crate::external::eggsec_descriptor(),
         ]);
         Self { descriptors }
     }
@@ -103,6 +105,14 @@ impl DriverCatalog {
             .find(|d| d.category == DriverCategory::Diagnostic && d.name == *name)
     }
 
+    /// Look up a correctness adapter by canonical name.
+    #[must_use]
+    pub fn correctness(&self, name: &Name) -> Option<&DriverDescriptor> {
+        self.descriptors
+            .iter()
+            .find(|d| d.category == DriverCategory::Correctness && d.name == *name)
+    }
+
     /// Number of registered production drivers.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -132,6 +142,7 @@ mod tests {
         let mut expected: Vec<String> = vec![
             "eggprobe".to_owned(),
             "eggreplay-semantic".to_owned(),
+            "eggsec-waf".to_owned(),
             "h2load".to_owned(),
             "iperf3".to_owned(),
             "oha".to_owned(),
@@ -169,6 +180,15 @@ mod tests {
         assert!(descriptor.external_process);
         assert!(!descriptor.default);
         assert!(catalog.workload(&probe).is_none());
+        let correctness = Name::new("eggsec-waf").unwrap();
+        let descriptor = catalog
+            .correctness(&correctness)
+            .expect("eggsec-waf registered");
+        assert!(descriptor.external_process);
+        assert!(!descriptor.default);
+        assert_eq!(descriptor.category, DriverCategory::Correctness);
+        assert!(catalog.workload(&correctness).is_none());
+        assert!(catalog.diagnostic(&correctness).is_none());
     }
 
     #[test]
@@ -179,5 +199,7 @@ mod tests {
         assert!(catalog.service(&name).is_none());
         assert!(catalog.telemetry(&name).is_none());
         assert!(catalog.diagnostic(&name).is_none());
+        let correctness = Name::new("eggsec-waf").unwrap();
+        assert!(catalog.correctness(&correctness).is_none());
     }
 }

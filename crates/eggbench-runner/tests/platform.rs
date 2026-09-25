@@ -72,6 +72,7 @@ fn plan() -> ResolvedPlan {
         paired: None,
         network_path: None,
         diagnostics: Vec::new(),
+        security_checks: Vec::new(),
         warnings: Vec::new(),
     }
 }

@@ -9,11 +9,11 @@ use eggbench_core::{
 };
 use eggbench_runner::test_support::FakeWorkload;
 use eggbench_runner::{
-    DrainContext, FailureCategory, InvocationContext, InvocationKind, LocalSession,
-    MapSecretProvider, OrchestrationError, PhaseEvent, PhaseKind, PlatformAdapter, PlatformSupport,
-    ResetContext, ResetHook, ResetRegistry, RunEvidenceArtifact, RunnerOptions,
-    ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform, WorkloadArtifact, WorkloadExecutor,
-    WorkloadOutput, execute_run,
+    CorrectnessRegistry, DiagnosticRegistry, DrainContext, FailureCategory, InvocationContext,
+    InvocationKind, LocalSession, MapSecretProvider, OrchestrationError, PhaseEvent, PhaseKind,
+    PlatformAdapter, PlatformSupport, ResetContext, ResetHook, ResetRegistry, RunEvidenceArtifact,
+    RunnerOptions, ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform, WorkloadArtifact,
+    WorkloadExecutor, WorkloadOutput, execute_run,
 };
 use std::{
     collections::BTreeMap,
@@ -75,6 +75,7 @@ fn plan() -> ResolvedPlan {
         paired: None,
         network_path: None,
         diagnostics: Vec::new(),
+        security_checks: Vec::new(),
         warnings: Vec::new(),
     }
 }
@@ -2007,7 +2008,7 @@ async fn paired_odd_warmup_count_alternates_deterministically() {
 // adapter unit tests.
 
 use eggbench_core::{DiagnosticPhase, DiagnosticProbe, DiagnosticRequest};
-use eggbench_runner::{DiagnosticRegistry, FakeDiagnosticExecutor, execute_run_with_diagnostics};
+use eggbench_runner::{FakeDiagnosticExecutor, execute_run_with_diagnostics};
 
 fn diagnostic_request(id: &str, phase: DiagnosticPhase, required: bool) -> DiagnosticRequest {
     DiagnosticRequest {
@@ -2092,6 +2093,7 @@ async fn pre_and_post_diagnostics_run_around_workload_and_stage_evidence() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -2176,6 +2178,7 @@ async fn required_pre_negative_invalidates_without_workload() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -2215,6 +2218,7 @@ async fn optional_pre_negative_continues_with_warning_evidence() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -2246,6 +2250,7 @@ async fn required_post_negative_invalidates_completed_run() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -2280,6 +2285,7 @@ async fn post_negative_never_masks_workload_failure() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -2315,6 +2321,7 @@ async fn cancelled_run_skips_diagnostics_and_still_tears_down() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &cancel,
     )
@@ -2383,6 +2390,7 @@ async fn diagnostic_evidence_never_enters_trial_metrics() {
         &ResetRegistry::default(),
         &mut TelemetryRegistry::new(),
         &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
         writer(temp.path()),
         &CancellationToken::new(),
     )
@@ -2406,4 +2414,336 @@ async fn diagnostic_evidence_never_enters_trial_metrics() {
     // Diagnostic evidence exists alongside, never inside, trial metrics.
     let index = read_diagnostics_index(&outcome);
     assert_eq!(index["executions"].as_array().unwrap().len(), 1);
+}
+
+// ---- Eggstack M004a security-correctness lifecycle tests ----
+//
+// These tests use FakeCorrectnessExecutor (no external binary) to prove
+// lifecycle placement, fail-continues semantics, operational-failure
+// precedence, and evidence staging; tool-contract parsing is covered by the
+// Eggsec adapter unit tests.
+
+use eggbench_core::{EggsecWafTestType, SecurityCheckRequest};
+use eggbench_runner::{CorrectnessRegistry as M004aCorrectnessRegistry, FakeCorrectnessExecutor};
+
+fn security_request(id: &str) -> SecurityCheckRequest {
+    SecurityCheckRequest {
+        id: name(id),
+        source: name("eggsec-waf"),
+        target: name("app"),
+        test_type: EggsecWafTestType::Sqli,
+        max_successful_bypasses: 0,
+        concurrency: PositiveCount::new(2).unwrap(),
+        timeout_ms: DurationMs::new(5_000).unwrap(),
+    }
+}
+
+fn correctness_registry_for(fail_ids: &[&str], invalid_ids: &[&str]) -> M004aCorrectnessRegistry {
+    let mut fake = FakeCorrectnessExecutor::new("eggsec-waf");
+    fake.fail_ids = fail_ids.iter().map(|id| (*id).to_owned()).collect();
+    fake.invalid_ids = invalid_ids.iter().map(|id| (*id).to_owned()).collect();
+    let mut registry = M004aCorrectnessRegistry::new();
+    registry.register(Box::new(fake));
+    registry
+}
+
+fn read_security_index(outcome: &eggbench_runner::RunOutcome) -> serde_json::Value {
+    let reader = BundleReader::open(&outcome.bundle_path).unwrap();
+    reader.verify().unwrap();
+    let record = outcome
+        .manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path.as_str() == "security-checks.json")
+        .expect("security index staged");
+    let mut file = reader.open_artifact(&record.path).unwrap();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn correctness_runs_after_readiness_before_warmups_and_stages_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.security_checks = vec![security_request("waf-sqli")];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = DiagnosticRegistry::new();
+    let mut correctness = correctness_registry_for(&[], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut correctness,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    // Correctness runs after readiness/before warmups.
+    let kinds = phase_kinds(&outcome);
+    let readiness = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::StartupReadiness)
+        .unwrap();
+    let correctness_pos = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::CorrectnessChecks)
+        .unwrap();
+    let first_warmup = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::Warmup)
+        .unwrap();
+    assert!(
+        readiness < correctness_pos,
+        "correctness after readiness: {kinds:?}"
+    );
+    assert!(
+        correctness_pos < first_warmup,
+        "correctness before warmups: {kinds:?}"
+    );
+    // Run-level index carries one pass execution with provenance.
+    let index = read_security_index(&outcome);
+    assert_eq!(index["schema_version"], 1);
+    assert_eq!(index["driver"], "eggsec-waf");
+    assert_eq!(index["operation"], "waf --json --bypass");
+    let checks = index["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["id"], "waf-sqli");
+    assert_eq!(checks[0]["disposition"], "pass");
+    assert!(!index["executable_sha256"].as_str().unwrap().is_empty());
+    assert!(!index["scope_sha256"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn correctness_fail_still_permits_warmups_and_trials() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.security_checks = vec![security_request("waf-sqli")];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = DiagnosticRegistry::new();
+    let mut correctness = correctness_registry_for(&["waf-sqli"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut correctness,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    // A valid Fail observation never fails execution and never suppresses
+    // performance trials.
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    assert!(outcome.primary_failure.is_none());
+    assert_eq!(outcome.manifest.trials.len(), 2);
+    let kinds = phase_kinds(&outcome);
+    assert!(kinds.contains(&PhaseKind::Warmup));
+    assert!(kinds.contains(&PhaseKind::MeasuredTrial));
+    let index = read_security_index(&outcome);
+    assert_eq!(
+        index["checks"].as_array().unwrap()[0]["disposition"],
+        "fail"
+    );
+}
+
+#[tokio::test]
+async fn correctness_operational_failure_invalidates_and_still_cleans_up() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.security_checks = vec![security_request("waf-sqli")];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = DiagnosticRegistry::new();
+    let mut correctness = correctness_registry_for(&[], &["waf-sqli"]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut correctness,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    // Operational correctness failure is an execution-validity problem:
+    // workload is skipped and cleanup still runs through the common tail.
+    assert_eq!(outcome.execution_status, ExecutionStatus::Invalid);
+    assert_eq!(
+        outcome.primary_failure,
+        Some(FailureCategory::CorrectnessFailed)
+    );
+    assert!(outcome.manifest.trials.is_empty());
+    assert!(!session.is_running(), "managed services must be torn down");
+    let kinds = phase_kinds(&outcome);
+    assert!(kinds.contains(&PhaseKind::CorrectnessChecks));
+    assert!(kinds.contains(&PhaseKind::Teardown));
+    assert!(!kinds.contains(&PhaseKind::Warmup));
+}
+
+#[tokio::test]
+async fn correctness_runs_between_pre_diagnostics_and_warmups() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.topology = vec![managed_sleep_service()];
+    resolved.diagnostics = vec![diagnostic_request(
+        "pre-check",
+        DiagnosticPhase::PreWorkload,
+        false,
+    )];
+    resolved.security_checks = vec![security_request("waf-sqli")];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&[], &[]);
+    let mut correctness = correctness_registry_for(&[], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut correctness,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    let kinds = phase_kinds(&outcome);
+    let pre = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::DiagnosticsPre)
+        .unwrap();
+    let correctness_pos = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::CorrectnessChecks)
+        .unwrap();
+    let warmup = kinds
+        .iter()
+        .position(|kind| *kind == PhaseKind::Warmup)
+        .unwrap();
+    assert!(
+        pre < correctness_pos,
+        "correctness after pre diagnostics: {kinds:?}"
+    );
+    assert!(
+        correctness_pos < warmup,
+        "correctness before warmups: {kinds:?}"
+    );
+}
+
+#[tokio::test]
+async fn correctness_fail_leaves_trial_metrics_untouched() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.security_checks = vec![security_request("waf-sqli")];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = DiagnosticRegistry::new();
+    let mut correctness = correctness_registry_for(&["waf-sqli"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut correctness,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    // Security observations never enter TrialMetrics: measured trials carry
+    // no security-derived observations.
+    let reader = BundleReader::open(&outcome.bundle_path).unwrap();
+    for descriptor in &outcome.manifest.trials {
+        let metrics = reader.trial_metrics(descriptor.id).unwrap().unwrap();
+        for observation in &metrics.observations {
+            assert!(
+                !observation.name.as_str().contains("bypass")
+                    && !observation.name.as_str().contains("security")
+                    && !observation.name.as_str().contains("waf"),
+                "no security metric in trials: {}",
+                observation.name.as_str()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn security_evidence_never_leaks_unrelated_secrets() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    // Secret-like sentinel in unrelated plan content (staged legitimately
+    // in the resolved plan): no security artifact may echo it.
+    let sentinel = "EGGBENCH_SENTINEL_SECRET_9f8e7d6c5b4a";
+    resolved.topology = vec![Service {
+        name: name("app"),
+        kind: ServiceKind::Named {
+            service_type: name("http"),
+        },
+        lifecycle: Lifecycle::External,
+        depends_on: Vec::new(),
+        config: [(String::from("note"), sentinel.to_owned())]
+            .into_iter()
+            .collect(),
+        readiness: None,
+        shutdown: None,
+        working_directory: None,
+        log_limit_bytes: 4096,
+    }];
+    resolved.security_checks = vec![security_request("waf-sqli")];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = DiagnosticRegistry::new();
+    let mut correctness = correctness_registry_for(&["waf-sqli"], &[]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut correctness,
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    let reader = BundleReader::open(&outcome.bundle_path).unwrap();
+    for artifact in &outcome.manifest.artifacts {
+        if artifact.path.as_str() == "security-checks.json"
+            || artifact.path.as_str().starts_with("security/")
+        {
+            let mut file = reader.open_artifact(&artifact.path).unwrap();
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(
+                !text.contains(sentinel),
+                "security artifact {} leaks unrelated secret",
+                artifact.path.as_str()
+            );
+        }
+    }
 }

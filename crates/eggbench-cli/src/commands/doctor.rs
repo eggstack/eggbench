@@ -2,7 +2,7 @@
 
 use crate::envelope::{
     CliEnvelope, CliOutput, DiagnosticsDoctorSummary, DoctorPairedDesign, DriverSummary,
-    EnvironmentSummary, ExitCode, NetworkPathDoctorSummary,
+    EnvironmentSummary, ExitCode, NetworkPathDoctorSummary, SecurityDoctorSummary,
 };
 use crate::envelope::{CliFailure, PresentedCommandResult};
 use crate::error::CliError;
@@ -45,11 +45,13 @@ pub async fn run(
     let runtime = ProductionRuntime::new();
     let input = load_plan(plan, input_format)?;
     let diagnostics = live_diagnostics_summary(&input.plan).await;
+    let security = live_security_summary(&input.plan).await;
     Ok(run_with_input(
         input,
         &runtime.driver_descriptors(),
         workload_driver.as_ref(),
         diagnostics,
+        security,
     ))
 }
 
@@ -91,7 +93,14 @@ pub fn run_with_registry(
         .collect();
     let input = load_plan(plan, input_format)?;
     let diagnostics = static_diagnostics_summary(&input.plan);
-    Ok(run_with_input(input, &descriptors, None, diagnostics))
+    let security = static_security_summary(&input.plan);
+    Ok(run_with_input(
+        input,
+        &descriptors,
+        None,
+        diagnostics,
+        security,
+    ))
 }
 
 /// Shared doctor flow over a loaded plan and an explicit driver inventory.
@@ -100,6 +109,7 @@ fn run_with_input(
     descriptors: &[eggbench_core::DriverDescriptor],
     workload_driver: Option<&Name>,
     diagnostics: DiagnosticsDoctorSummary,
+    security: SecurityDoctorSummary,
 ) -> PresentedCommandResult {
     let plan = input.plan;
     if plan.network_path.is_some() && !cfg!(feature = "eggstack-path") {
@@ -157,6 +167,20 @@ fn run_with_input(
             .expect("static driver name");
         if let Some(path) = eggbench_drivers::executable_path_for(&probe) {
             options.executable_paths.insert(probe, path);
+        }
+    }
+    // M004a: pin the resolved eggsec binary so correctness resolution
+    // records the exact executable. When the binary is missing the path
+    // stays absent and resolution reports MissingExecutablePath.
+    if plan
+        .security_checks
+        .as_deref()
+        .is_some_and(|all| !all.is_empty())
+    {
+        let eggsec = eggbench_core::Name::new(eggbench_drivers::EGGSEC_DRIVER_NAME)
+            .expect("static driver name");
+        if let Some(path) = eggbench_drivers::executable_path_for(&eggsec) {
+            options.executable_paths.insert(eggsec, path);
         }
     }
 
@@ -257,6 +281,7 @@ fn run_with_input(
                 paired: paired.clone(),
                 network_path: Some(Box::new(network_path.clone())),
                 diagnostics: Some(Box::new(diagnostics.clone())),
+                security: Some(Box::new(security.clone())),
             },
         );
         envelope.ok = false;
@@ -279,6 +304,7 @@ fn run_with_input(
                 paired,
                 network_path: Some(Box::new(network_path)),
                 diagnostics: Some(Box::new(diagnostics)),
+                security: Some(Box::new(security)),
             },
         ),
         Err(error) => envelope_for_resolution_error(
@@ -290,6 +316,7 @@ fn run_with_input(
             paired,
             network_path,
             diagnostics,
+            security,
         ),
     }
 }
@@ -455,6 +482,74 @@ async fn live_diagnostics_summary(
     summary
 }
 
+/// Static Eggsec correctness summary: no process is spawned.
+fn static_security_summary(plan: &eggbench_core::ExperimentPlan) -> SecurityDoctorSummary {
+    let requested = plan
+        .security_checks
+        .as_deref()
+        .is_some_and(|all| !all.is_empty());
+    let eggsec_name =
+        eggbench_core::Name::new(eggbench_drivers::EGGSEC_DRIVER_NAME).expect("static driver name");
+    SecurityDoctorSummary {
+        requested,
+        binary_present: eggbench_drivers::external_binary_present(&eggsec_name),
+        executable_version: None,
+        handshake: if requested {
+            "not-attempted".to_owned()
+        } else {
+            "not-requested".to_owned()
+        },
+        supported_family: eggbench_core::SECURITY_FAMILY_WAF_BYPASS.to_owned(),
+        supported_test_types: eggbench_drivers::eggsec_supported_test_type_names()
+            .iter()
+            .map(|test_type| (*test_type).to_owned())
+            .collect(),
+        unsupported_operations: eggbench_drivers::EGGSEC_UNSUPPORTED_OPERATIONS
+            .iter()
+            .map(|operation| (*operation).to_owned())
+            .collect(),
+        strict_scope_note: "external eggsec waf --json with generated exact local scope, global --strict-scope, and guarded no-network preflight; manual override flags are never used"
+            .to_owned(),
+        timing_note: eggbench_drivers::security_timing_label().to_owned(),
+    }
+}
+
+/// Live Eggsec correctness summary for production `doctor`.
+///
+/// When the plan requests security checks and the binary resolves, the
+/// version probe runs against the resolved binary (a short-lived version
+/// process, never a managed service and never security traffic). The
+/// strict guarded preflight needs the generated scope plus the resolved
+/// runtime target, so it runs in the correctness phase instead. Otherwise
+/// only filesystem binary presence is reported and no process is spawned.
+async fn live_security_summary(plan: &eggbench_core::ExperimentPlan) -> SecurityDoctorSummary {
+    let mut summary = static_security_summary(plan);
+    if !summary.requested || summary.binary_present != Some(true) {
+        if summary.requested {
+            "missing-binary".clone_into(&mut summary.handshake);
+        }
+        return summary;
+    }
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let Ok(executable) = eggbench_drivers::EggsecWafExecutor::resolve() else {
+        "missing-binary".clone_into(&mut summary.handshake);
+        return summary;
+    };
+    let Ok(probed) = eggbench_drivers::EggsecWafExecutor::probe(&executable, &cancel).await else {
+        "probe-failed".clone_into(&mut summary.handshake);
+        return summary;
+    };
+    summary.executable_version = Some(probed.version.clone());
+    if eggbench_drivers::EggsecWafExecutor::new(executable, probed.version, std::env::temp_dir())
+        .is_err()
+    {
+        "probe-failed".clone_into(&mut summary.handshake);
+        return summary;
+    }
+    "pass".clone_into(&mut summary.handshake);
+    summary
+}
+
 #[allow(clippy::too_many_arguments)] // Parallel doctor evidence summaries stay explicit.
 fn envelope_for_resolution_error(
     error: &ResolveError,
@@ -465,6 +560,7 @@ fn envelope_for_resolution_error(
     paired: Option<DoctorPairedDesign>,
     network_path: NetworkPathDoctorSummary,
     diagnostics: DiagnosticsDoctorSummary,
+    security: SecurityDoctorSummary,
 ) -> PresentedCommandResult {
     let failure = cli_failure_from_resolve(error);
     // Retain the doctor payload (including has_workload_driver) alongside the
@@ -480,6 +576,7 @@ fn envelope_for_resolution_error(
             paired,
             network_path: Some(Box::new(network_path)),
             diagnostics: Some(Box::new(diagnostics)),
+            security: Some(Box::new(security)),
         },
     );
     envelope.ok = false;
@@ -517,6 +614,9 @@ fn cli_failure_from_resolve(error: &ResolveError) -> CliFailure {
         ResolveError::MissingDriver {
             category: DriverCategory::Fault,
         } => "missing_fault_driver",
+        ResolveError::MissingDriver {
+            category: DriverCategory::Correctness,
+        } => "missing_correctness_driver",
         ResolveError::MissingDriver { .. } => "missing_driver",
         ResolveError::CategoryMismatch { .. } => "category_mismatch",
         ResolveError::AmbiguousSelection { .. } => "ambiguous_selection",
@@ -528,6 +628,10 @@ fn cli_failure_from_resolve(error: &ResolveError) -> CliFailure {
             capability: Capability::StreamFaultPlan,
             ..
         } => "unsupported_stream_fault_plan",
+        ResolveError::UnsupportedCapability {
+            capability: Capability::SecurityCheck { .. },
+            ..
+        } => "unsupported_correctness",
         ResolveError::UnsupportedCapability { .. } => "unsupported_capability",
         ResolveError::UnsupportedPlatform { .. } => "unsupported_platform",
         ResolveError::MissingExecutablePath(_) => "missing_executable_path",

@@ -43,3 +43,27 @@ jobs:
           name: live-qualification-log
           path: live-qualification.log
           retention-days: 30
+
+  live-eggsec-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Eggbench release binary with all features
+        run: cargo build --locked --release --all-features -p eggbench-cli
+      - name: Run M004a live Eggsec qualification harness
+        run: |
+          set -u
+          bash scripts/qualification/m004a-eggsec/run-live-qualification.sh >live-eggsec-qualification.log 2>&1
+          rc=$?
+          tail -45 live-eggsec-qualification.log
+          exit "$rc"
+      - name: Upload bounded provenance and evidence summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-eggsec-qualification-log
+          path: live-eggsec-qualification.log
+          retention-days: 30

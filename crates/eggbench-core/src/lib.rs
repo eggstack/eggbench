@@ -7,6 +7,7 @@ mod metrics;
 mod network_path;
 mod plan;
 mod resolved;
+mod security;
 mod types;
 
 pub use comparison::*;
@@ -15,6 +16,7 @@ pub use metrics::*;
 pub use network_path::*;
 pub use plan::*;
 pub use resolved::*;
+pub use security::*;
 pub use types::*;
 
 /// Namespace and version for normalized core schemas.
@@ -29,3 +31,5 @@ pub const EXPERIMENT_PLAN_SCHEMA_VERSION_3: SchemaVersion = SchemaVersion(3);
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_4: SchemaVersion = SchemaVersion(4);
 /// Diagnostic experiment-plan schema version (adds `diagnostics`).
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_5: SchemaVersion = SchemaVersion(5);
+/// Security-correctness experiment-plan schema version (adds `security_checks`).
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_6: SchemaVersion = SchemaVersion(6);

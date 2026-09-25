@@ -215,6 +215,40 @@ pub async fn run(
         }
     }
 
+    // M004a correctness preflight: trusted binary resolution and version
+    // probe before any managed startup when the plan requests security
+    // checks. The strict guarded preflight needs the generated scope plus
+    // the resolved runtime target, so it runs inside the correctness phase
+    // (still before any Eggsec network traffic).
+    let mut correctness_registry = eggbench_runner::CorrectnessRegistry::new();
+    let security_scope_dir = security_scope_dir();
+    if !resolved.security_checks.is_empty() {
+        let preflight_cancel = CancellationToken::new();
+        match eggbench_drivers::preflight_eggsec(&preflight_cancel).await {
+            Ok((executable, probed)) => {
+                correctness_registry.register(Box::new(
+                    eggbench_drivers::EggsecWafExecutor::from_resolved(
+                        executable,
+                        security_scope_dir.clone(),
+                    ),
+                ));
+                let _ = probed;
+            }
+            Err(error) => {
+                let detail = error.to_string();
+                let category = if detail.contains("security_driver_missing") {
+                    "security_driver_missing"
+                } else if detail.contains("security_contract_unsupported") {
+                    "security_contract_unsupported"
+                } else {
+                    "external_tool"
+                };
+                let failure = CliFailure::new(category, detail, ExitCode::CapabilityPreflight);
+                return Ok(PresentedCommandResult::failure("run", &failure));
+            }
+        }
+    }
+
     run_impl(
         RunPlan { input, bundle },
         &descriptors,
@@ -223,6 +257,8 @@ pub async fn run(
         driver_selection.as_ref(),
         Some(resolved),
         &mut diagnostic_registry,
+        &mut correctness_registry,
+        &security_scope_dir,
         wait_for_ctrl_c(),
     )
     .await
@@ -250,6 +286,8 @@ pub async fn run_with_qualification(
     let mut executor = QualificationRuntime::workload_executor(fake);
     let input = load_plan(plan, input_format)?;
     let mut diagnostic_registry = eggbench_runner::DiagnosticRegistry::new();
+    let mut correctness_registry = eggbench_runner::CorrectnessRegistry::new();
+    let security_scope_dir = security_scope_dir();
     run_impl(
         RunPlan { input, bundle },
         &descriptors,
@@ -258,6 +296,8 @@ pub async fn run_with_qualification(
         None,
         None,
         &mut diagnostic_registry,
+        &mut correctness_registry,
+        &security_scope_dir,
         signal,
     )
     .await
@@ -269,7 +309,7 @@ struct RunPlan<'a> {
     bundle: &'a Path,
 }
 
-#[allow(clippy::too_many_arguments)] // The diagnostic registry joins the established run context.
+#[allow(clippy::too_many_arguments)] // The correctness registry and scope dir join the established run context.
 async fn run_impl(
     input: RunPlan<'_>,
     descriptors: &[DriverDescriptor],
@@ -278,6 +318,8 @@ async fn run_impl(
     workload_driver: Option<&Name>,
     pre_resolved: Option<ResolvedPlan>,
     diagnostics: &mut eggbench_runner::DiagnosticRegistry,
+    correctness: &mut eggbench_runner::CorrectnessRegistry,
+    security_scope_dir: &Path,
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<PresentedCommandResult, CliError> {
     let plan = input.input.plan;
@@ -396,12 +438,17 @@ async fn run_impl(
         &resets,
         &mut telemetry_registry,
         diagnostics,
+        correctness,
         writer,
         &cancel,
     )
     .await;
     signal_handle.abort();
     let _ = signal_handle.await;
+    // Best-effort removal of the runner-owned Eggsec scope directory. Each
+    // generated manifest is already removed after its check; this only
+    // removes the (empty) directory itself and never fails the run.
+    let _ = std::fs::remove_dir(security_scope_dir);
 
     let outcome = match outcome {
         Ok(outcome) => outcome,
@@ -539,12 +586,38 @@ fn resolution_options(
     {
         options.executable_paths.insert(eggprobe_name(), path);
     }
+    // M004a: pin the resolved eggsec binary so correctness resolution
+    // records the exact executable before any managed startup. When the
+    // binary is missing the path stays absent and resolution reports
+    // MissingExecutablePath before startup.
+    if plan
+        .security_checks
+        .as_deref()
+        .is_some_and(|all| !all.is_empty())
+        && let Some(path) = eggbench_drivers::executable_path_for(&eggsec_name())
+    {
+        options.executable_paths.insert(eggsec_name(), path);
+    }
     options
 }
 
 /// Canonical `eggprobe` diagnostic driver name.
 fn eggprobe_name() -> Name {
     Name::new(eggbench_drivers::EGGPROBE_DRIVER_NAME).expect("static driver name")
+}
+
+/// Canonical `eggsec-waf` correctness driver name.
+fn eggsec_name() -> Name {
+    Name::new(eggbench_drivers::EGGSEC_DRIVER_NAME).expect("static driver name")
+}
+
+/// Runner-owned temporary directory for generated Eggsec scope manifests.
+///
+/// Each manifest is removed after its check; the directory itself is
+/// removed best-effort after the run. The path is unique per process so
+/// concurrent runs never share scope state.
+fn security_scope_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("eggbench-eggsec-{}", std::process::id()))
 }
 
 /// Resolve the platform label without a masked `unknown` fallback.

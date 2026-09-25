@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 
 mod bundle;
+mod correctness;
 mod diagnostics;
 mod environment;
 mod error;
@@ -45,6 +46,11 @@ mod telemetry;
 
 pub use bundle::{
     stage_lifecycle_logs, stage_lifecycle_metadata, stage_run_evidence, stage_runtime_topology,
+};
+pub use correctness::{
+    CorrectnessContext, CorrectnessDisposition, CorrectnessExecutionRecord, CorrectnessExecutor,
+    CorrectnessOutput, CorrectnessRegistry, FakeCorrectnessExecutor, correctness_timing_label,
+    security_operation_label, security_role_label,
 };
 pub use diagnostics::{
     DiagnosticContext, DiagnosticDisposition, DiagnosticExecutionRecord, DiagnosticExecutor,
@@ -81,6 +87,8 @@ pub use telemetry::{
 
 /// Deterministic adapters for runner integration tests and qualification.
 pub mod test_support {
+    /// Fake one-shot correctness executor with canned pass/fail outcomes.
+    pub use crate::correctness::FakeCorrectnessExecutor;
     /// Fake one-shot diagnostic executor with canned outcomes.
     pub use crate::diagnostics::FakeDiagnosticExecutor;
     /// Fake workload with configurable delay, failure, timeout, and drain behavior.

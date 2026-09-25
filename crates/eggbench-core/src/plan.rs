@@ -1,8 +1,8 @@
 use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
     EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_5, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
-    RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_5, EXPERIMENT_PLAN_SCHEMA_VERSION_6, Name, NetworkPathRequest,
+    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,6 +54,17 @@ pub struct ExperimentPlan {
         deserialize_with = "deserialize_present_optional"
     )]
     pub diagnostics: Option<Vec<DiagnosticRequest>>,
+    /// Optional Eggsec strict-scope WAF correctness checks (schema v6 only).
+    /// Presence is significant: an explicit field (even empty) on schemas
+    /// v1-v5 fails closed rather than silently accepting future semantics.
+    /// Checks run after readiness outside every measured interval and never
+    /// enter `TrialMetrics`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_optional"
+    )]
+    pub security_checks: Option<Vec<SecurityCheckRequest>>,
     /// Upper bounds for later evidence creation.
     pub bounds: ArtifactBounds,
 }
@@ -105,6 +116,79 @@ pub enum DiagnosticProbe {
     Tls,
     /// HTTP GET against the target `http_url` binding.
     Http,
+}
+
+/// One bounded Eggsec strict-scope WAF correctness check (schema v6,
+/// Eggstack M004a).
+///
+/// The check executes one `eggsec waf --json` bypass observation against a
+/// declared local/private runtime binding after readiness and outside every
+/// measured interval. `max_successful_bypasses` is declared before candidate
+/// execution; Eggsec owns the meaning of `bypass_successful` and Eggbench
+/// only applies the threshold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityCheckRequest {
+    /// Stable check identity (unique per plan; becomes `security/<id>.json`).
+    pub id: Name,
+    /// Correctness source; initially only `eggsec-waf` is supported.
+    pub source: Name,
+    /// Declared service or external target publishing a runtime HTTP binding.
+    pub target: Name,
+    /// Bounded WAF payload family (one typed family per check).
+    pub test_type: EggsecWafTestType,
+    /// Predeclared allowance for Eggsec-declared successful bypasses.
+    pub max_successful_bypasses: u32,
+    /// Per-check Eggsec concurrency (1..=32).
+    pub concurrency: PositiveCount,
+    /// Per-check Eggsec timeout (1s..=120s).
+    pub timeout_ms: DurationMs,
+}
+
+/// Bounded Eggsec WAF payload family for one correctness check.
+///
+/// `all` is deliberately not exposed initially: one typed family per check
+/// keeps expectations and evidence attributable and bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EggsecWafTestType {
+    /// SQL injection payloads.
+    Sqli,
+    /// Cross-site scripting payloads.
+    Xss,
+    /// Server-side request forgery payloads.
+    Ssrf,
+    /// Command injection payloads.
+    Cmd,
+    /// Path traversal payloads.
+    Traversal,
+}
+
+impl EggsecWafTestType {
+    /// CLI `--test-type` token consumed by `eggsec waf`.
+    #[must_use]
+    pub const fn as_cli_str(self) -> &'static str {
+        match self {
+            Self::Sqli => "sqli",
+            Self::Xss => "xss",
+            Self::Ssrf => "ssrf",
+            Self::Cmd => "cmd",
+            Self::Traversal => "traversal",
+        }
+    }
+
+    /// Parse a CLI `--test-type` token.
+    #[must_use]
+    pub fn from_cli_str(value: &str) -> Option<Self> {
+        match value {
+            "sqli" => Some(Self::Sqli),
+            "xss" => Some(Self::Xss),
+            "ssrf" => Some(Self::Ssrf),
+            "cmd" => Some(Self::Cmd),
+            "traversal" => Some(Self::Traversal),
+            _ => None,
+        }
+    }
 }
 
 /// Subject declaration.
@@ -661,32 +745,52 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_3
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
-        // Diagnostics are a schema-v5 contract; an explicit field on
+        // Security checks are a schema-v6 contract; an explicit field on
         // earlier schemas fails closed rather than silently accepting
         // future semantics (presence is significant, even when empty).
-        if self.diagnostics.is_some() && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5 {
+        if self.security_checks.is_some() && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+        {
             return invalid(
                 "unsupported_option",
                 format!(
-                    "diagnostics require schema version 5 (got {})",
+                    "security_checks require schema version 6 (got {})",
+                    self.schema_version.0
+                ),
+            );
+        }
+        // Diagnostics are a schema-v5 contract retained in v6; an explicit
+        // field on earlier schemas fails closed rather than silently
+        // accepting future semantics (presence is significant, even when
+        // empty).
+        if self.diagnostics.is_some()
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+        {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "diagnostics require schema version 5 or 6 (got {})",
                     self.schema_version.0
                 ),
             );
         }
         // SemanticReplay was introduced in schema v4 and remains supported
-        // in v5 (combined replay + diagnostics). Earlier schemas fail closed
-        // rather than silently accepting future semantics.
+        // in v5 (combined replay + diagnostics) and v6 (plus security
+        // checks). Earlier schemas fail closed rather than silently
+        // accepting future semantics.
         if matches!(self.workload, Workload::SemanticReplay { .. })
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
         {
             return invalid(
                 "unsupported_option",
                 format!(
-                    "SemanticReplay workload requires schema version 4 or 5 (got {})",
+                    "SemanticReplay workload requires schema version 4, 5, or 6 (got {})",
                     self.schema_version.0
                 ),
             );
@@ -717,6 +821,24 @@ impl ExperimentPlan {
             return invalid(
                 "diagnostic_path_incompatible",
                 "diagnostics are incompatible with network_path in M003b (diagnostics bypass the path)",
+            );
+        }
+        // M004a: Eggsec security checks bypass the benchmark network path
+        // by design (no Eggress proxy translation). Presenting direct
+        // security observations as evidence about a routed/faulted path
+        // would be misleading, so the combination fails closed. This
+        // specific incompatibility is checked before the generic
+        // schema-version gate so callers see the stable
+        // security_path_incompatible category.
+        if self.network_path.is_some()
+            && self
+                .security_checks
+                .as_deref()
+                .is_some_and(|all| !all.is_empty())
+        {
+            return invalid(
+                "security_path_incompatible",
+                "security_checks are incompatible with network_path in M004a (checks bypass the path)",
             );
         }
         // Schema-v3 is the only schema where `network_path` is permitted.
@@ -838,6 +960,21 @@ impl ExperimentPlan {
         // schema-version gate (see above) so callers see the stable
         // diagnostic_path_incompatible category.
         validate_diagnostics(self, &services)?;
+        // M004a: one run-level security check cannot truthfully represent
+        // two simultaneously live paired arms without an explicit per-arm
+        // correctness schedule. A later plan may define paired checks.
+        if self.paired.is_some()
+            && self
+                .security_checks
+                .as_deref()
+                .is_some_and(|all| !all.is_empty())
+        {
+            return invalid(
+                "paired_security_not_supported",
+                "security_checks are not supported together with paired experiments in M004a",
+            );
+        }
+        validate_security_checks(self, &services)?;
         if self.trials.warmup > 1_000 {
             return invalid("invalid_bound", "warmup count exceeds 1000");
         }
@@ -1196,6 +1333,118 @@ fn validate_diagnostics(
     }
     Ok(())
 }
+
+/// Validate M004a security-check requests: bounded, source-pinned,
+/// target-bound, and duplicate-free. Runtime binding checks (HTTP URL
+/// availability, local/private confinement) happen at execution time
+/// against startup-established bindings.
+fn validate_security_checks(
+    plan: &ExperimentPlan,
+    services: &BTreeMap<Name, &Service>,
+) -> Result<(), PlanError> {
+    let all = plan.security_checks.as_deref().unwrap_or(&[]);
+    if all.len() > crate::MAX_SECURITY_CHECKS {
+        return invalid(
+            "invalid_bound",
+            format!(
+                "at most {} security checks are allowed",
+                crate::MAX_SECURITY_CHECKS
+            ),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    for request in all {
+        if !seen.insert(request.id.clone()) {
+            return invalid(
+                "duplicate_identity",
+                format!("duplicate security check {}", request.id),
+            );
+        }
+        // Check IDs become bundle artifact path components
+        // (`security/<id>.json`); restrict to a safe alphabet so no
+        // escaping or ambiguous paths can be constructed.
+        if request.id.as_str().len() > 64
+            || !request
+                .id
+                .as_str()
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "security check {} id must be 1..=64 ASCII alphanumeric/_/-",
+                    request.id
+                ),
+            );
+        }
+        if request.source.as_str() != crate::SECURITY_SOURCE_EGGSEC_WAF {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "security check {} source must be {} in M004a (got {})",
+                    request.id,
+                    crate::SECURITY_SOURCE_EGGSEC_WAF,
+                    request.source
+                ),
+            );
+        }
+        if request.concurrency.get() < crate::MIN_SECURITY_CONCURRENCY
+            || request.concurrency.get() > crate::MAX_SECURITY_CONCURRENCY
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "security check {} concurrency must be {}..={} (got {})",
+                    request.id,
+                    crate::MIN_SECURITY_CONCURRENCY,
+                    crate::MAX_SECURITY_CONCURRENCY,
+                    request.concurrency.get()
+                ),
+            );
+        }
+        if request.timeout_ms.get() < crate::MIN_SECURITY_TIMEOUT_MS
+            || request.timeout_ms.get() > crate::MAX_SECURITY_TIMEOUT_MS
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "security check {} timeout must be {}..={}ms (got {}ms)",
+                    request.id,
+                    crate::MIN_SECURITY_TIMEOUT_MS,
+                    crate::MAX_SECURITY_TIMEOUT_MS,
+                    request.timeout_ms.get()
+                ),
+            );
+        }
+        if request.max_successful_bypasses > crate::MAX_SECURITY_CASES {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "security check {} max_successful_bypasses exceeds {}",
+                    request.id,
+                    crate::MAX_SECURITY_CASES
+                ),
+            );
+        }
+        let target = &request.target;
+        if !services.contains_key(target) {
+            let is_external =
+                matches!(&plan.subject, Subject::External { target: ext, .. } if ext == target);
+            if !is_external {
+                return invalid(
+                    "missing_reference",
+                    format!(
+                        "security check {} target {target} is neither a declared service nor the subject's external target",
+                        request.id
+                    ),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_paired(
     plan: &ExperimentPlan,
     services: &BTreeMap<Name, &Service>,
@@ -2105,6 +2354,178 @@ mod tests {
         assert_eq!(
             error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
             "diagnostic_path_incompatible"
+        );
+    }
+
+    fn security_value() -> serde_json::Value {
+        let mut value: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        value["schema_version"] = 6.into();
+        value["services"] = serde_json::json!([{
+            "name": "origin",
+            "kind": {"kind": "named", "service_type": "eggserve-origin"},
+            "lifecycle": "external",
+            "depends_on": [],
+            "config": {},
+            "readiness": null,
+            "shutdown": null,
+            "working_directory": null,
+            "log_limit_bytes": 4096,
+        }]);
+        value["workload"] = serde_json::json!({
+            "kind": "closed_loop", "target": "origin",
+            "concurrency": 1, "requests": 1,
+        });
+        value["security_checks"] = serde_json::json!([{
+            "id": "waf-sqli",
+            "source": "eggsec-waf",
+            "target": "origin",
+            "test_type": "sqli",
+            "max_successful_bypasses": 0,
+            "concurrency": 4,
+            "timeout_ms": 30_000,
+        }]);
+        value
+    }
+
+    #[test]
+    fn v6_security_checks_round_trip_and_v1_v5_compat() {
+        // v1-v5 plans without security checks remain readable.
+        assert!(ExperimentPlan::from_json(VALID).is_ok());
+        let plan = ExperimentPlan::from_json(&security_value().to_string()).unwrap();
+        assert_eq!(plan.schema_version.0, 6);
+        assert_eq!(plan.security_checks.as_deref().unwrap_or(&[]).len(), 1);
+        let round = ExperimentPlan::from_json(&plan.to_json().unwrap()).unwrap();
+        assert_eq!(plan, round);
+        let toml = ExperimentPlan::from_toml(&plan.to_toml().unwrap()).unwrap();
+        assert_eq!(plan, toml);
+        // Presence on v1-v5 fails closed even when the field is empty.
+        for version in [1, 2, 3, 4, 5] {
+            let mut value = security_value();
+            value["schema_version"] = version.into();
+            assert_eq!(
+                error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+                "unsupported_option"
+            );
+            let mut empty = security_value();
+            empty["schema_version"] = version.into();
+            empty["security_checks"] = serde_json::json!([]);
+            assert_eq!(
+                error_category(ExperimentPlan::from_json(&empty.to_string()).map(|_| ())),
+                "unsupported_option"
+            );
+        }
+    }
+
+    #[test]
+    fn security_check_validation_matrix_fails_closed() {
+        // Duplicate IDs fail closed.
+        let mut value = security_value();
+        value["security_checks"] = serde_json::json!([
+            {"id": "dup", "source": "eggsec-waf", "target": "origin",
+             "test_type": "sqli", "max_successful_bypasses": 0,
+             "concurrency": 1, "timeout_ms": 5000},
+            {"id": "dup", "source": "eggsec-waf", "target": "origin",
+             "test_type": "xss", "max_successful_bypasses": 0,
+             "concurrency": 1, "timeout_ms": 5000},
+        ]);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "duplicate_identity"
+        );
+
+        // Unsupported source fails closed.
+        let mut value = security_value();
+        value["security_checks"][0]["source"] = serde_json::json!("other");
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "unsupported_option"
+        );
+
+        // Unknown test family fails at parse (unknown variant).
+        let mut value = security_value();
+        value["security_checks"][0]["test_type"] = serde_json::json!("all");
+        assert!(ExperimentPlan::from_json(&value.to_string()).is_err());
+
+        // Concurrency/timeout bounds fail closed.
+        let mut value = security_value();
+        value["security_checks"][0]["concurrency"] = serde_json::json!(33);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+        let mut value = security_value();
+        value["security_checks"][0]["timeout_ms"] = serde_json::json!(999);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+        let mut value = security_value();
+        value["security_checks"][0]["timeout_ms"] = serde_json::json!(120_001);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+
+        // Oversized allowance fails closed.
+        let mut value = security_value();
+        value["security_checks"][0]["max_successful_bypasses"] =
+            serde_json::json!(crate::MAX_SECURITY_CASES + 1);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+
+        // Unknown target fails closed.
+        let mut value = security_value();
+        value["security_checks"][0]["target"] = serde_json::json!("missing");
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "missing_reference"
+        );
+
+        // Sixteen checks pass; seventeen fail closed.
+        let mut value = security_value();
+        let many: Vec<serde_json::Value> = (0..17)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("check-{i}"),
+                    "source": "eggsec-waf", "target": "origin",
+                    "test_type": "sqli", "max_successful_bypasses": 0,
+                    "concurrency": 1, "timeout_ms": 5000,
+                })
+            })
+            .collect();
+        value["security_checks"] = serde_json::Value::Array(many);
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "invalid_bound"
+        );
+    }
+
+    #[test]
+    fn security_checks_reject_paired_and_network_path_composition() {
+        // Paired + security checks fail closed (single run-level check
+        // cannot represent two live arms).
+        let mut value = paired_value();
+        value["schema_version"] = 6.into();
+        value["security_checks"] = security_value()["security_checks"].clone();
+        // The paired fixture targets origin-a/origin-b; retarget the check.
+        value["security_checks"][0]["target"] = serde_json::json!("origin-a");
+        // The paired fixture has no origin service; add the arm services is
+        // already present via paired_value, so only the target needs to exist.
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "paired_security_not_supported"
+        );
+
+        // network_path + security checks fail closed.
+        let mut value = security_value();
+        value["network_path"] = serde_json::json!({
+            "route": {"driver": "eggress-route", "mode": {"kind": "direct"}},
+        });
+        assert_eq!(
+            error_category(ExperimentPlan::from_json(&value.to_string()).map(|_| ())),
+            "security_path_incompatible"
         );
     }
 }

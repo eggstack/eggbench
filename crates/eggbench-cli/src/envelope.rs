@@ -73,6 +73,9 @@ pub enum CliOutput {
         /// Eggprobe diagnostic summary (Eggstack M003b).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diagnostics: Option<Box<DiagnosticsDoctorSummary>>,
+        /// Eggsec strict-scope correctness summary (Eggstack M004a).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        security: Option<Box<SecurityDoctorSummary>>,
     },
     /// `run` summary with finalized bundle path and execution status.
     Run {
@@ -140,6 +143,9 @@ pub enum CliOutput {
         /// Verified diagnostic evidence summary (Eggstack M003b).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diagnostics: Option<DiagnosticsInspectSummary>,
+        /// Verified security-correctness evidence summary (Eggstack M004a).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        security: Option<SecurityInspectSummary>,
     },
 }
 
@@ -622,4 +628,72 @@ pub struct DiagnosticsInspectSummary {
     pub machine_schema: Option<String>,
     /// Per-execution summaries in plan order.
     pub executions: Vec<DiagnosticExecutionSummary>,
+}
+
+/// Eggsec strict-scope correctness summary used by `doctor` (Eggstack M004a).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityDoctorSummary {
+    /// Whether the plan requests security checks.
+    pub requested: bool,
+    /// Filesystem-only binary presence (`None` when the descriptor is absent).
+    pub binary_present: Option<bool>,
+    /// Observed tool version when a version probe succeeded.
+    pub executable_version: Option<String>,
+    /// Probe outcome: `pass`, `probe-failed`, `missing-binary`, or
+    /// `not-requested`. The strict guarded preflight needs the resolved
+    /// runtime target, so it runs in the correctness phase (still before
+    /// any Eggsec network traffic), never in `doctor`.
+    pub handshake: String,
+    /// Correctness family claimed by the M004a adapter.
+    pub supported_family: String,
+    /// WAF test types claimed by the M004a adapter.
+    pub supported_test_types: Vec<String>,
+    /// Eggsec operations explicitly unsupported in M004a.
+    pub unsupported_operations: Vec<String>,
+    /// Strict-scope policy note.
+    pub strict_scope_note: String,
+    /// Evidence-only timing policy note.
+    pub timing_note: String,
+}
+
+/// One security-check execution summary used by `inspect` (Eggstack M004a).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityCheckExecutionSummary {
+    /// Check identity.
+    pub id: String,
+    /// Correctness source.
+    pub source: String,
+    /// Requested WAF test family.
+    pub test_type: String,
+    /// Typed observation disposition (`pass` / `fail` / `invalid`).
+    pub disposition: String,
+    /// Evaluated Eggsec case count.
+    pub evaluated_cases: u32,
+    /// Observed successful bypasses.
+    pub successful_bypasses: u32,
+    /// Predeclared allowance.
+    pub allowed_successful_bypasses: u32,
+    /// Bundle-relative artifact path (`security/<id>.json`).
+    pub artifact: String,
+    /// Producer tool version.
+    pub producer_version: Option<String>,
+}
+
+/// Verified security-correctness evidence summary used by `inspect`
+/// (Eggstack M004a). Payload strings never appear here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityInspectSummary {
+    /// Whether a manifest-listed security artifact exists.
+    pub artifact_present: bool,
+    /// Canonical driver name.
+    pub driver: Option<String>,
+    /// Observed tool version.
+    pub executable_version: Option<String>,
+    /// Audited Eggsec operation.
+    pub operation: Option<String>,
+    /// Per-check summaries in plan order.
+    pub checks: Vec<SecurityCheckExecutionSummary>,
 }

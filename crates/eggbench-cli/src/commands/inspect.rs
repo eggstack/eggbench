@@ -3,7 +3,8 @@
 use crate::envelope::{
     CliOutput, DiagnosticExecutionSummary, DiagnosticsInspectSummary, DriverSummary,
     EnvironmentSummary, NetworkPathInspectSummary, PresentedCommandResult,
-    SemanticReplayInspectSummary, SubjectSummary, TrialSummary,
+    SecurityCheckExecutionSummary, SecurityInspectSummary, SemanticReplayInspectSummary,
+    SubjectSummary, TrialSummary,
 };
 use crate::error::CliError;
 use eggbench_core::BundleReader;
@@ -112,6 +113,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
     let network_path = network_path_inspect_summary(&reader, network_path_artifact_present)?;
     let semantic_replay = semantic_replay_inspect_summary(&reader)?;
     let diagnostics = diagnostics_inspect_summary(&reader)?;
+    let security = security_inspect_summary(&reader)?;
 
     let manifest_json = if emit_manifest_json {
         serde_json::to_string_pretty(manifest).ok()
@@ -143,6 +145,7 @@ pub fn run(bundle: &Path, emit_manifest_json: bool) -> Result<PresentedCommandRe
             network_path: Some(network_path),
             semantic_replay: Some(semantic_replay),
             diagnostics: Some(diagnostics),
+            security: Some(security),
         },
     ))
 }
@@ -297,6 +300,115 @@ fn diagnostics_inspect_summary(
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
         executions,
+    })
+}
+
+/// Verified security-correctness evidence summary.
+///
+/// Shows check ID, source, test type, disposition, evaluated/successful/
+/// allowed counts, producer version, and evidence artifact. Payload strings
+/// never appear: only the sanitized index projection is read.
+fn security_inspect_summary(reader: &BundleReader) -> Result<SecurityInspectSummary, CliError> {
+    let manifest = reader.manifest();
+    let record = manifest.artifacts.iter().find(|artifact| {
+        artifact.path.as_str() == "security-checks.json"
+            || matches!(
+                &artifact.role,
+                eggbench_core::ArtifactRole::Other { label } if label.as_str() == "security"
+            )
+    });
+    let Some(record) = record else {
+        return Ok(SecurityInspectSummary {
+            artifact_present: false,
+            driver: None,
+            executable_version: None,
+            operation: None,
+            checks: Vec::new(),
+        });
+    };
+    let mut file = reader
+        .open_artifact(&record.path)
+        .map_err(CliError::Bundle)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::Io {
+            path: std::path::PathBuf::from(record.path.as_str()),
+            source: error,
+        })
+    })?;
+    let evidence: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        CliError::Bundle(eggbench_core::BundleError::ManifestParse(error.to_string()))
+    })?;
+    let checks = evidence
+        .get("checks")
+        .and_then(serde_json::Value::as_array)
+        .map(|checks| {
+            checks
+                .iter()
+                .map(|check| SecurityCheckExecutionSummary {
+                    id: check
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    source: check
+                        .get("source")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    test_type: check
+                        .get("test_type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    disposition: check
+                        .get("disposition")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    evaluated_cases: check
+                        .get("evaluated_cases")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .unwrap_or_default(),
+                    successful_bypasses: check
+                        .get("successful_bypasses")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .unwrap_or_default(),
+                    allowed_successful_bypasses: check
+                        .get("allowed_successful_bypasses")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .unwrap_or_default(),
+                    artifact: check
+                        .get("artifact")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    producer_version: evidence
+                        .get("executable_version")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(SecurityInspectSummary {
+        artifact_present: true,
+        driver: evidence
+            .get("driver")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        executable_version: evidence
+            .get("executable_version")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        operation: evidence
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        checks,
     })
 }
 

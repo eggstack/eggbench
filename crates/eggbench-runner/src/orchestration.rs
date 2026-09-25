@@ -1,6 +1,9 @@
 //! Local run phase orchestration above the process-owning [`LocalSession`].
 
 use crate::DEFAULT_SUBJECT_LOG_LIMIT_BYTES;
+use crate::correctness::{
+    CorrectnessContext, CorrectnessDisposition, CorrectnessExecutionRecord, CorrectnessRegistry,
+};
 use crate::diagnostics::{
     DiagnosticContext, DiagnosticDisposition, DiagnosticExecutionRecord, DiagnosticRegistry,
     DiagnosticsIndex,
@@ -279,6 +282,11 @@ pub enum FailureCategory {
     /// or operational failure. Optional diagnostic negatives never take this
     /// category; they are recorded as warnings/evidence only.
     DiagnosticFailed,
+    /// A security-correctness check failed operationally (spawn, timeout,
+    /// preflight denial, invalid tool output). A valid Eggsec observation
+    /// whose bypass count exceeds the predeclared allowance never takes
+    /// this category; it is a `Fail` observation and execution continues.
+    CorrectnessFailed,
 }
 
 /// Object-safe asynchronous workload adapter.
@@ -523,6 +531,9 @@ pub enum PhaseKind {
     DiagnosticsPre,
     /// Post-workload one-shot diagnostics (after drain, before teardown).
     DiagnosticsPost,
+    /// Security-correctness checks (after readiness and pre-workload
+    /// diagnostics, before warmups; outside every measured interval).
+    CorrectnessChecks,
     /// Workload-adapter cleanup.
     Drain,
     /// Managed-service teardown.
@@ -652,6 +663,8 @@ struct RunState {
     trials: Vec<TrialDescriptor>,
     /// Staged diagnostic execution records for the run-level index.
     diagnostics: Vec<DiagnosticExecutionRecord>,
+    /// Staged correctness execution records for the run-level index.
+    correctness: Vec<CorrectnessExecutionRecord>,
     /// Identities in spawn order.
     started: Vec<String>,
     /// Whether managed startup created at least one owned process.
@@ -673,6 +686,7 @@ impl RunState {
             cleanup_failures: Vec::new(),
             trials: Vec::new(),
             diagnostics: Vec::new(),
+            correctness: Vec::new(),
             started: Vec::new(),
             services_started: false,
             workload_entered: false,
@@ -711,6 +725,7 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
     cancel: &CancellationToken,
 ) -> Result<RunOutcome, OrchestrationError> {
     let mut diagnostics = DiagnosticRegistry::new();
+    let mut correctness = CorrectnessRegistry::new();
     execute_run_with_diagnostics(
         session,
         resolved,
@@ -718,22 +733,28 @@ pub async fn execute_run<E: WorkloadExecutor + ?Sized>(
         resets,
         telemetry,
         &mut diagnostics,
+        &mut correctness,
         writer,
         cancel,
     )
     .await
 }
 
-/// Run resolved work with one-shot pre/post workload diagnostics.
+/// Run resolved work with one-shot pre/post workload diagnostics and
+/// Eggstack M004a security-correctness checks.
 ///
-/// Lifecycle: startup/readiness → pre diagnostics → warmups → measured
-/// trials → drain → post diagnostics → teardown → evidence. Diagnostics run
-/// outside every measured interval and never enter `TrialMetrics`.
+/// Lifecycle: startup/readiness → pre diagnostics → correctness checks →
+/// warmups → measured trials → drain → post diagnostics → teardown →
+/// evidence. Diagnostics and correctness checks run outside every measured
+/// interval and never enter `TrialMetrics`. A correctness `Fail`
+/// observation never fails execution: warmups and measured trials still
+/// run so comparison can report "security failed and performance
+/// passed/regressed" independently.
 ///
 /// # Errors
 /// Returns an error for preflight or evidence finalization failures.
 #[allow(clippy::too_many_lines)] // Keep the canonical phase transition order auditable in one place.
-#[allow(clippy::too_many_arguments)] // The diagnostic registry joins the established run context.
+#[allow(clippy::too_many_arguments)] // The diagnostic/correctness registries join the established run context.
 pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     session: &mut LocalSession,
     resolved: &eggbench_core::ResolvedPlan,
@@ -741,6 +762,7 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     resets: &ResetRegistry,
     telemetry: &mut TelemetryRegistry,
     diagnostics: &mut DiagnosticRegistry,
+    correctness: &mut CorrectnessRegistry,
     writer: BundleWriter,
     cancel: &CancellationToken,
 ) -> Result<RunOutcome, OrchestrationError> {
@@ -748,6 +770,7 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     let trial_count = resolved.trials.measured.get();
     let warmup_count = resolved.trials.warmup;
     let diagnostic_executions = diagnostic_execution_count(resolved);
+    let correctness_executions = resolved.security_checks.len();
     let phase_bound = usize::try_from(warmup_count)
         .ok()
         .and_then(|warmups| {
@@ -755,7 +778,8 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
                 warmups
                     .checked_add(trials.checked_mul(3)?)?
                     .checked_add(2)?
-                    .checked_add(diagnostic_executions)
+                    .checked_add(diagnostic_executions)?
+                    .checked_add(correctness_executions)
             })
         })
         .ok_or(OrchestrationError::Preflight("phase event bound overflow"))?;
@@ -785,6 +809,16 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     // diagnostic ever runs without an explicit registry entry.
     if !cancel.is_cancelled() {
         preflight_diagnostics(diagnostics, resolved)?;
+    }
+
+    // ---- Correctness preflight ----
+    // Before managed startup: every requested security-check source must
+    // have a registered correctness executor. Missing executors fail before
+    // startup; no correctness check runs unregistered. The strict Eggsec
+    // scope preflight (which needs the resolved runtime target) runs inside
+    // the correctness phase, still before any Eggsec network traffic.
+    if !cancel.is_cancelled() {
+        preflight_correctness(correctness, resolved)?;
     }
 
     // ---- Startup / readiness ----
@@ -873,6 +907,25 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
             cancel,
             origin,
             eggbench_core::DiagnosticPhase::PreWorkload,
+        )
+        .await;
+    }
+
+    // ---- Security-correctness checks ----
+    // After readiness and pre-workload diagnostics, before warmups. Outside
+    // every measured interval. A valid Fail observation records evidence
+    // and continues into warmups/trials; an operational correctness failure
+    // sets Invalid/Failed and skips workload. Cleanup still runs through
+    // the common tail.
+    if state.status == ExecutionStatus::Completed && state.staging_error.is_none() {
+        run_correctness_phase(
+            &mut state,
+            resolved,
+            correctness,
+            session.runtime_bindings().clone(),
+            run_id,
+            cancel,
+            origin,
         )
         .await;
     }
@@ -1532,6 +1585,14 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     {
         state.staging_error = Some(error);
     }
+    // Security index stages after all per-check sanitized results exist.
+    // Only the sanitized projection is persisted; raw Eggsec stdout never
+    // reaches the bundle. Security evidence never enters TrialMetrics.
+    if state.staging_error.is_none()
+        && let Err(error) = stage_security_index(&mut state, resolved)
+    {
+        state.staging_error = Some(error);
+    }
     if state.staging_error.is_none() {
         match executor.run_evidence() {
             Ok(Some(evidence)) => {
@@ -1888,6 +1949,25 @@ fn preflight_diagnostics(
     Ok(())
 }
 
+/// Preflight correctness executors before managed startup.
+///
+/// Every requested security-check source must have a registered executor.
+/// Missing executors fail before startup; no correctness check runs
+/// unregistered.
+fn preflight_correctness(
+    correctness: &CorrectnessRegistry,
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<(), OrchestrationError> {
+    for request in &resolved.security_checks {
+        if correctness.lookup(request.source.as_str()).is_none() {
+            return Err(OrchestrationError::Preflight(
+                "required correctness executor is not registered",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Execute one lifecycle diagnostic slot (pre or post) in plan order.
 ///
 /// Pre slot: required negative/failed outcomes set `Invalid` and skip all
@@ -2114,6 +2194,295 @@ async fn run_diagnostic_phase(
             state.primary_failure = Some(FailureCategory::Cancelled);
         }
     }
+}
+
+/// Execute the M004a security-correctness phase in plan order.
+///
+/// Placement: after readiness and pre-workload diagnostics, before warmups;
+/// outside every measured interval. A valid `Fail` observation stages
+/// sanitized evidence and continues (phase `Completed`): it never fails
+/// execution and never suppresses performance trials. An operational
+/// correctness failure (spawn, timeout, preflight denial, invalid tool
+/// output) sets `Invalid` (or `Cancelled`) and skips workload, with
+/// mandatory cleanup through the common tail.
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)] // One correctness slot needs the full lifecycle context.
+async fn run_correctness_phase(
+    state: &mut RunState,
+    resolved: &eggbench_core::ResolvedPlan,
+    correctness: &mut CorrectnessRegistry,
+    bindings: RuntimeBindings,
+    run_id: RunId,
+    cancel: &CancellationToken,
+    origin: Instant,
+) {
+    for request in resolved.security_checks.clone() {
+        if cancel.is_cancelled() {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+            break;
+        }
+        let index = begin_phase(
+            &mut state.phases,
+            PhaseKind::CorrectnessChecks,
+            None,
+            None,
+            origin,
+        );
+        let Some(handle) = correctness.lookup(request.source.as_str()) else {
+            state.staging_error = Some(BundleError::InvalidManifest(
+                "correctness executor is not registered",
+            ));
+            state.status = ExecutionStatus::Failed;
+            finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+            break;
+        };
+        let context = CorrectnessContext {
+            run_id,
+            check_id: request.id.as_str().to_owned(),
+            source: request.source.as_str().to_owned(),
+            target: request.target.as_str().to_owned(),
+            test_type: request.test_type.as_cli_str().to_owned(),
+            max_successful_bypasses: request.max_successful_bypasses,
+            concurrency: request.concurrency.get(),
+            timeout_ms: request.timeout_ms.get(),
+            bindings: bindings.clone(),
+            cancellation: cancel.child_token(),
+            timeout: Duration::from_millis(request.timeout_ms.get()),
+        };
+        let outcome = {
+            let mut guard = handle.lock().await;
+            let exec_timeout = context
+                .timeout
+                .checked_add(Duration::from_secs(5))
+                .unwrap_or(context.timeout);
+            tokio::select! {
+                () = cancel.cancelled() => Err(FailureCategory::Cancelled),
+                result = timeout(exec_timeout, guard.execute(context)) => match result {
+                    Ok(result) => result,
+                    Err(_) => Err(FailureCategory::TimedOut),
+                },
+            }
+        };
+        match outcome {
+            Ok(output) => {
+                match stage_correctness_record(state, &request, &output) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        state.staging_error = Some(error);
+                        state.status = ExecutionStatus::Failed;
+                        finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+                        break;
+                    }
+                }
+                // Pass and Fail are both valid observations: execution
+                // continues into warmups and measured trials either way.
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    PhaseOutcome::Completed,
+                    None,
+                );
+            }
+            Err(category) => {
+                state.status = if category == FailureCategory::Cancelled {
+                    ExecutionStatus::Cancelled
+                } else {
+                    ExecutionStatus::Invalid
+                };
+                state.primary_failure = Some(match category {
+                    FailureCategory::Cancelled | FailureCategory::TimedOut => category,
+                    _ => FailureCategory::CorrectnessFailed,
+                });
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    outcome_for(category),
+                    state.primary_failure,
+                );
+                break;
+            }
+        }
+        if cancel.is_cancelled() && state.status == ExecutionStatus::Completed {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+        }
+    }
+}
+
+/// Stage one sanitized per-check result (`security/<id>.json`).
+///
+/// The executor returns only the sanitized projection: raw Eggsec stdout
+/// (payload strings) never reaches the bundle. The staged result is
+/// re-validated here and its disposition recomputed from the typed counts;
+/// any disagreement fails staging rather than persisting distrusted data.
+fn stage_correctness_record(
+    state: &mut RunState,
+    request: &eggbench_core::SecurityCheckRequest,
+    output: &crate::correctness::CorrectnessOutput,
+) -> Result<(), BundleError> {
+    let result: eggbench_core::SecurityCheckResultV1 =
+        serde_json::from_slice(&output.sanitized_result)
+            .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    result
+        .validate_contract()
+        .map_err(|_| BundleError::InvalidManifest("security result contract is invalid"))?;
+    if result.id.as_str() != request.id.as_str()
+        || result.source.as_str() != request.source.as_str()
+        || result.target.as_str() != request.target.as_str()
+        || result.test_type != request.test_type.as_cli_str()
+        || result.allowed_successful_bypasses != request.max_successful_bypasses
+        || result.producer_version != output.producer_version
+        || result.producer_sha256 != output.executable_sha256
+        || result.scope_sha256 != output.scope_sha256
+        || result.evaluated_cases != output.evaluated_cases
+        || result.successful_bypasses != output.successful_bypasses
+    {
+        return Err(BundleError::InvalidManifest(
+            "security result contradicts the resolved request",
+        ));
+    }
+    let expected_disposition = match output.disposition {
+        CorrectnessDisposition::Pass => "pass",
+        CorrectnessDisposition::Fail => "fail",
+    };
+    if result.disposition.as_str() != expected_disposition {
+        return Err(BundleError::InvalidManifest(
+            "security result disposition contradicts the executor observation",
+        ));
+    }
+    if output.sanitized_result.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest(
+            "security result exceeds the 128 KiB bound",
+        ));
+    }
+    let path = format!("security/{}.json", request.id.as_str());
+    let artifact_path = ArtifactPath::new(path.clone())?;
+    let digest = format!("{:x}", sha2::Sha256::digest(&output.sanitized_result));
+    state.writer.add_artifact(
+        artifact_path,
+        ArtifactRole::Other {
+            label: crate::correctness::security_role_label(),
+        },
+        "application/json",
+        Sensitivity::Redacted,
+        output.sanitized_result.as_slice(),
+    )?;
+    state.correctness.push(CorrectnessExecutionRecord {
+        id: request.id.as_str().to_owned(),
+        source: request.source.as_str().to_owned(),
+        target: request.target.as_str().to_owned(),
+        test_type: request.test_type.as_cli_str().to_owned(),
+        disposition: expected_disposition.to_owned(),
+        evaluated_cases: output.evaluated_cases,
+        successful_bypasses: output.successful_bypasses,
+        allowed_successful_bypasses: request.max_successful_bypasses,
+        artifact: path,
+        artifact_sha256: digest,
+        producer_version: output.producer_version.clone(),
+        executable_sha256: output.executable_sha256.clone(),
+        scope_sha256: output.scope_sha256.clone(),
+    });
+    Ok(())
+}
+
+/// Stage the run-level `security-checks.json` index when checks ran.
+fn stage_security_index(
+    state: &mut RunState,
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<(), BundleError> {
+    if resolved.security_checks.is_empty() {
+        return Ok(());
+    }
+    if state.correctness.is_empty() {
+        // No check executed (for example cancellation before readiness):
+        // there is nothing to index and no provenance to claim.
+        return Ok(());
+    }
+    if state.correctness.len() != resolved.security_checks.len() {
+        return Err(BundleError::InvalidManifest(
+            "security evidence check count contradicts the resolved plan",
+        ));
+    }
+    let correctness_driver = resolved
+        .drivers
+        .get(&eggbench_core::DriverCategory::Correctness);
+    let first = &state.correctness[0];
+    let adapter_version = correctness_driver.map_or_else(
+        || env!("CARGO_PKG_VERSION").to_owned(),
+        |driver| driver.descriptor.adapter_version.clone(),
+    );
+    let mut checks = Vec::with_capacity(state.correctness.len());
+    for record in &state.correctness {
+        checks.push(eggbench_core::SecurityCheckIndexRecord {
+            id: eggbench_core::Name::new(record.id.clone())
+                .map_err(|_| BundleError::InvalidManifest("security index id is invalid"))?,
+            source: eggbench_core::Name::new(record.source.clone())
+                .map_err(|_| BundleError::InvalidManifest("security index source is invalid"))?,
+            target: eggbench_core::Name::new(record.target.clone())
+                .map_err(|_| BundleError::InvalidManifest("security index target is invalid"))?,
+            test_type: record.test_type.clone(),
+            disposition: record.disposition.clone(),
+            evaluated_cases: record.evaluated_cases,
+            successful_bypasses: record.successful_bypasses,
+            allowed_successful_bypasses: record.allowed_successful_bypasses,
+            artifact: record.artifact.clone(),
+            artifact_sha256: record.artifact_sha256.clone(),
+        });
+    }
+    let index = eggbench_core::SecurityChecksIndex {
+        schema_version: eggbench_core::SchemaVersion(eggbench_core::SECURITY_CHECKS_INDEX_SCHEMA),
+        driver: eggbench_core::EGGSEC_WAF_DRIVER_NAME.to_owned(),
+        adapter_version,
+        executable_version: first.producer_version.clone(),
+        executable_sha256: first.executable_sha256.clone(),
+        operation: crate::correctness::security_operation_label().to_owned(),
+        scope_sha256: first.scope_sha256.clone(),
+        lifecycle_placement: eggbench_core::CORRECTNESS_ADAPTER_SEMANTIC_VERSION.to_owned()
+            + ":"
+            + crate::correctness::correctness_timing_label(),
+        checks,
+    };
+    index
+        .validate_contract()
+        .map_err(|_| BundleError::InvalidManifest("security index contract is invalid"))?;
+    let bytes = serde_json::to_vec_pretty(&index)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if bytes.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest(
+            "security index exceeds the 128 KiB bound",
+        ));
+    }
+    state.writer.add_artifact(
+        ArtifactPath::new("security-checks.json")?,
+        ArtifactRole::Other {
+            label: crate::correctness::security_role_label(),
+        },
+        "application/json",
+        Sensitivity::Redacted,
+        bytes.as_slice(),
+    )?;
+    Ok(())
+}
+
+/// Byte bound for `security-checks.json` plus per-check sanitized results.
+///
+/// Security-free plans reserve nothing.
+fn security_evidence_byte_estimate(
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<u64, OrchestrationError> {
+    if resolved.security_checks.is_empty() {
+        return Ok(0);
+    }
+    u64::try_from(resolved.security_checks.len())
+        .ok()
+        .and_then(|count| count.checked_mul(128 * 1024))
+        .and_then(|bytes| bytes.checked_add(128 * 1024))
+        .ok_or(OrchestrationError::Preflight(
+            "security artifact byte bound overflow",
+        ))
 }
 
 /// Record a skipped diagnostic without executing (cancellation path).
@@ -2446,6 +2815,20 @@ fn preflight_evidence_capacity(
     // Requested telemetry adds per-trial collector artifacts on top.
     let telemetry_artifact_count = telemetry_artifact_count(measured, resolved)?;
     let network_path_artifact_count = usize::from(resolved.network_path.is_some());
+    // Each security check stages `security/<id>.json` plus the run-level
+    // `security-checks.json` index when at least one check executed.
+    // Security-free plans reserve nothing.
+    let security_artifact_count = if resolved.security_checks.is_empty() {
+        0
+    } else {
+        resolved
+            .security_checks
+            .len()
+            .checked_add(1)
+            .ok_or(OrchestrationError::Preflight(
+                "evidence artifact count overflow",
+            ))?
+    };
     let required_count = warmups
         .checked_add(
             measured
@@ -2454,6 +2837,7 @@ fn preflight_evidence_capacity(
                     "evidence artifact count overflow",
                 ))?,
         )
+        .and_then(|count| count.checked_add(security_artifact_count))
         .and_then(|count| count.checked_add(3)) // phase timeline, lifecycle metadata, runtime topology
         .and_then(|count| count.checked_add(network_path_artifact_count))
         .and_then(|count| count.checked_add(log_artifact_count))
@@ -2500,6 +2884,7 @@ fn preflight_evidence_capacity(
         .checked_add(lifecycle_bytes)
         .and_then(|bytes| bytes.checked_add(topology_bytes))
         .and_then(|bytes| bytes.checked_add(network_path_bytes))
+        .and_then(|bytes| bytes.checked_add(security_evidence_byte_estimate(resolved).ok()?))
         .and_then(|bytes| bytes.checked_add(u64::try_from(warmups).ok()?.checked_mul(512)?))
         .and_then(|bytes| {
             // `result.json` plus normalized `metrics.json` per measured trial.

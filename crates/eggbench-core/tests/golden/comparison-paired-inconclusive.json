@@ -54,7 +54,7 @@
     "workload_match": true,
     "workload_detail": "workload semantics match (finite_count target=api requests=100 concurrency=5)",
     "driver_match": true,
-    "driver_detail": "workload driver semantics match (name=fake-load adapter=0.1.0 upstream=fake-load:None capabilities=[LoadMode { mode: ClosedLoop }]); diagnostics match (absent)",
+    "driver_detail": "workload driver semantics match (name=fake-load adapter=0.1.0 upstream=fake-load:None capabilities=[LoadMode { mode: ClosedLoop }]); diagnostics match (absent); security checks match (absent)",
     "topology_match": true,
     "topology_detail": "service topology and subject kind match",
     "critical_mismatch": false

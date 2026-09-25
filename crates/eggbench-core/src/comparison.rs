@@ -495,6 +495,11 @@ pub struct ComparisonInput {
     /// Verified diagnostic evidence identity, present only for runs that
     /// request pre/post workload diagnostics (Eggstack M003b).
     pub diagnostics_evidence: Option<DiagnosticsEvidenceIdentity>,
+    /// Verified security-correctness evidence identity, present only for
+    /// runs that request Eggsec strict-scope WAF checks (Eggstack M004a).
+    /// Result values (pass/fail/counts) never participate; only requested
+    /// configuration plus producer/scope provenance does.
+    pub security_evidence: Option<SecurityEvidenceIdentity>,
 }
 
 /// Comparison-critical identity loaded from `semantic-replay.json`.
@@ -534,6 +539,27 @@ pub struct DiagnosticsEvidenceIdentity {
     pub executable_sha256: String,
     /// Accepted machine schema (M003b pins `0.3`).
     pub machine_schema: String,
+}
+
+/// Comparison-critical identity loaded from `security-checks.json`
+/// (Eggstack M004a).
+///
+/// Result values (pass/fail/counts) are result evidence, never
+/// configuration identity: only the requested check configuration plus
+/// producer/scope provenance participates in comparability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecurityEvidenceIdentity {
+    /// Ordered per-check summaries (`id source target test_type
+    /// max_successful_bypasses=... concurrency=... timeout_ms=...`).
+    pub checks: Vec<String>,
+    /// Observed `eggsec` tool version.
+    pub executable_version: String,
+    /// SHA-256 of the selected `eggsec` executable.
+    pub executable_sha256: String,
+    /// SHA-256 of the generated strict scope manifest.
+    pub scope_sha256: String,
+    /// Correctness adapter semantic version.
+    pub adapter_semantic_version: String,
 }
 
 /// Comparison-critical identity loaded from `network-path.json`.
@@ -1034,6 +1060,36 @@ struct StoredDiagnosticExecution {
     skipped_reason: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredSecurityChecksIndex {
+    schema_version: SchemaVersion,
+    driver: String,
+    adapter_version: String,
+    executable_version: String,
+    executable_sha256: String,
+    operation: String,
+    scope_sha256: String,
+    lifecycle_placement: String,
+    #[serde(default)]
+    checks: Vec<StoredSecurityCheckRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredSecurityCheckRecord {
+    id: String,
+    source: String,
+    target: String,
+    test_type: String,
+    disposition: String,
+    evaluated_cases: u32,
+    successful_bypasses: u32,
+    allowed_successful_bypasses: u32,
+    artifact: String,
+    artifact_sha256: String,
+}
+
 /// Expected per-execution identity expanded from resolved requests
 /// (`Both` requests execute twice: pre then post).
 fn expected_diagnostic_executions(resolved: &ResolvedPlan) -> Vec<DiagnosticExecutionExpectation> {
@@ -1290,6 +1346,153 @@ fn load_diagnostics_evidence_identity(
     }))
 }
 
+fn security_evidence_record(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<ArtifactRecord>, ComparisonError> {
+    let mut record = None;
+    for artifact in &reader.manifest().artifacts {
+        // The run-level index is identified by path: per-check sanitized
+        // results share the `security` role label but live under
+        // `security/`, so role alone cannot select the index.
+        if artifact.path.as_str() == "security-checks.json" {
+            if record.is_some() {
+                return Err(BundleError::InvalidManifest(
+                    "security evidence path and role must occur exactly once",
+                )
+                .into());
+            }
+            record = Some(artifact);
+        }
+    }
+    let Some(record) = record else {
+        if !resolved.security_checks.is_empty() {
+            return Err(BundleError::InvalidManifest(
+                "security run bundle lacks security evidence",
+            )
+            .into());
+        }
+        return Ok(None);
+    };
+    if !matches!(
+        &record.role,
+        ArtifactRole::Other { label } if label.as_str() == "security"
+    ) {
+        return Err(BundleError::InvalidManifest(
+            "security evidence path and role must occur exactly once",
+        )
+        .into());
+    }
+    if record.media_type != "application/json" {
+        return Err(BundleError::InvalidManifest("security evidence metadata is invalid").into());
+    }
+    Ok(Some(record.clone()))
+}
+
+fn load_security_evidence_identity(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Result<Option<SecurityEvidenceIdentity>, ComparisonError> {
+    let Some(record) = security_evidence_record(reader, resolved)? else {
+        return Ok(None);
+    };
+    if resolved.security_checks.is_empty() {
+        return Err(BundleError::InvalidManifest(
+            "security-free bundle contains security evidence",
+        )
+        .into());
+    }
+    let mut file = reader.open_artifact(&record.path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| BundleError::Io {
+            path: PathBuf::from(record.path.as_str()),
+            source: error,
+        })?;
+    if bytes.len() > 128 * 1024 {
+        return Err(BundleError::InvalidManifest("security evidence exceeds bound").into());
+    }
+    let evidence: StoredSecurityChecksIndex = serde_json::from_slice(&bytes)
+        .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    if evidence.schema_version != SchemaVersion(crate::SECURITY_CHECKS_INDEX_SCHEMA)
+        || evidence.driver != crate::EGGSEC_WAF_DRIVER_NAME
+        || evidence.adapter_version.is_empty()
+        || evidence.adapter_version.len() > 128
+        || evidence.executable_version.is_empty()
+        || evidence.executable_version.len() > 128
+        || evidence.executable_sha256.len() != 64
+        || !evidence
+            .executable_sha256
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+        || evidence.scope_sha256.len() != 64
+        || !evidence.scope_sha256.chars().all(|c| c.is_ascii_hexdigit())
+        || evidence.operation.is_empty()
+        || evidence.operation.len() > 256
+        || evidence.lifecycle_placement.is_empty()
+        || evidence.lifecycle_placement.len() > 128
+    {
+        return Err(BundleError::InvalidManifest("security evidence contract is invalid").into());
+    }
+    // Every staged check must match the resolved request list in order;
+    // observed dispositions/counts never participate in identity, but the
+    // per-check shape is re-validated so a tampered index cannot smuggle
+    // unbounded fields past comparison.
+    if evidence.checks.len() != resolved.security_checks.len() {
+        return Err(BundleError::InvalidManifest(
+            "security evidence check count contradicts the resolved plan",
+        )
+        .into());
+    }
+    for (staged, request) in evidence.checks.iter().zip(resolved.security_checks.iter()) {
+        let shape_ok = !staged.id.is_empty()
+            && staged.id.len() <= 64
+            && !staged.source.is_empty()
+            && staged.source.len() <= 64
+            && !staged.target.is_empty()
+            && staged.target.len() <= 128
+            && !staged.test_type.is_empty()
+            && staged.test_type.len() <= 32
+            && matches!(staged.disposition.as_str(), "pass" | "fail" | "invalid")
+            && !staged.artifact.is_empty()
+            && staged.artifact.len() <= 256
+            && staged.artifact_sha256.len() == 64
+            && staged.evaluated_cases <= crate::MAX_SECURITY_CASES
+            && staged.successful_bypasses <= staged.evaluated_cases
+            && staged.allowed_successful_bypasses <= crate::MAX_SECURITY_CASES;
+        if !shape_ok
+            || staged.id != request.id.as_str()
+            || staged.source != request.source.as_str()
+            || staged.target != request.target.as_str()
+        {
+            return Err(BundleError::InvalidManifest(
+                "security evidence check contradicts the resolved plan",
+            )
+            .into());
+        }
+    }
+    let mut checks = Vec::with_capacity(resolved.security_checks.len());
+    for request in &resolved.security_checks {
+        checks.push(format!(
+            "{} {} {} {} max_successful_bypasses={} concurrency={} timeout_ms={}",
+            request.id.as_str(),
+            request.source.as_str(),
+            request.target.as_str(),
+            request.test_type.as_cli_str(),
+            request.max_successful_bypasses,
+            request.concurrency.get(),
+            request.timeout_ms.get(),
+        ));
+    }
+    Ok(Some(SecurityEvidenceIdentity {
+        checks,
+        executable_version: evidence.executable_version,
+        executable_sha256: evidence.executable_sha256.to_ascii_lowercase(),
+        scope_sha256: evidence.scope_sha256.to_ascii_lowercase(),
+        adapter_semantic_version: crate::CORRECTNESS_ADAPTER_SEMANTIC_VERSION.to_owned(),
+    }))
+}
+
 /// Load a verified comparison-ready input from an opened bundle.
 ///
 /// Verifies the bundle before deriving identity or reading evidence.
@@ -1335,6 +1538,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
     let network_path_evidence = load_network_path_evidence_identity(reader, &resolved)?;
     let semantic_replay_evidence = load_semantic_replay_evidence_identity(reader, &resolved)?;
     let diagnostics_evidence = load_diagnostics_evidence_identity(reader, &resolved)?;
+    let security_evidence = load_security_evidence_identity(reader, &resolved)?;
     Ok(ComparisonInput {
         identity,
         resolved,
@@ -1344,6 +1548,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         network_path_evidence,
         semantic_replay_evidence,
         diagnostics_evidence,
+        security_evidence,
     })
 }
 
@@ -2369,16 +2574,28 @@ fn compare_driver(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (b
     // never coexist in one bundle (plan validation rejects the combination),
     // but both dimensions are still compared across bundles.
     let (diagnostics_match, diagnostics_detail) = compare_diagnostics(candidate, baseline);
+    // Security-check configuration is comparison-critical for runs that
+    // claim comparable correctness context; observed pass/fail/counts never
+    // participate (see security_summary). M004a rejects security+path
+    // composition in one bundle, but the dimension is still compared
+    // across bundles.
+    let (security_match, security_detail) = compare_security(candidate, baseline);
     if candidate.resolved.network_path.is_none() && baseline.resolved.network_path.is_none() {
         return (
-            workload.0 && diagnostics_match,
-            format!("{}; {}", workload.1, diagnostics_detail),
+            workload.0 && diagnostics_match && security_match,
+            format!(
+                "{}; {}; {}",
+                workload.1, diagnostics_detail, security_detail
+            ),
         );
     }
     let path = compare_network_path(candidate, baseline);
     (
-        workload.0 && path.0 && diagnostics_match,
-        format!("{}; {}; {}", workload.1, path.1, diagnostics_detail),
+        workload.0 && path.0 && diagnostics_match && security_match,
+        format!(
+            "{}; {}; {}; {}",
+            workload.1, path.1, diagnostics_detail, security_detail
+        ),
     )
 }
 
@@ -2407,6 +2624,36 @@ fn compare_diagnostics(candidate: &ComparisonInput, baseline: &ComparisonInput) 
         (
             false,
             format!("diagnostics differ: candidate {left} vs baseline {right}"),
+        )
+    }
+}
+
+fn security_summary(input: &ComparisonInput) -> String {
+    if input.resolved.security_checks.is_empty() {
+        return "absent".to_owned();
+    }
+    match &input.security_evidence {
+        None => "missing-evidence".to_owned(),
+        Some(evidence) => format!(
+            "checks=[{}] tool={}:{} scope={} adapter={}",
+            evidence.checks.join(" | "),
+            evidence.executable_version,
+            evidence.executable_sha256,
+            evidence.scope_sha256,
+            evidence.adapter_semantic_version,
+        ),
+    }
+}
+
+fn compare_security(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
+    let left = security_summary(candidate);
+    let right = security_summary(baseline);
+    if left == right {
+        (true, format!("security checks match ({left})"))
+    } else {
+        (
+            false,
+            format!("security checks differ: candidate {left} vs baseline {right}"),
         )
     }
 }
@@ -3360,6 +3607,7 @@ mod tests {
             paired: None,
             network_path: None,
             diagnostics: Vec::new(),
+            security_checks: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -3433,6 +3681,7 @@ mod tests {
             network_path_evidence: None,
             semantic_replay_evidence: None,
             diagnostics_evidence: None,
+            security_evidence: None,
         }
     }
 
@@ -4400,6 +4649,107 @@ mod tests {
         assert!(receipt.comparability.critical_mismatch);
     }
 
+    fn security_input() -> ComparisonInput {
+        let (mut candidate, _, _) = statistical_inputs(&[0.0; 7], &[0.0; 7]);
+        candidate.resolved.security_checks = vec![crate::SecurityCheckRequest {
+            id: Name::new("waf-sqli").unwrap(),
+            source: Name::new(crate::SECURITY_SOURCE_EGGSEC_WAF).unwrap(),
+            target: metric_name("origin"),
+            test_type: crate::EggsecWafTestType::Sqli,
+            max_successful_bypasses: 0,
+            concurrency: crate::PositiveCount::new(2).unwrap(),
+            timeout_ms: crate::DurationMs::new(5000).unwrap(),
+        }];
+        candidate.security_evidence = Some(SecurityEvidenceIdentity {
+            checks: vec![
+                "waf-sqli eggsec-waf origin sqli max_successful_bypasses=0 concurrency=2 timeout_ms=5000"
+                    .to_owned(),
+            ],
+            executable_version: "0.1.0".to_owned(),
+            executable_sha256: "ab".repeat(32),
+            scope_sha256: "cd".repeat(32),
+            adapter_semantic_version: crate::CORRECTNESS_ADAPTER_SEMANTIC_VERSION.to_owned(),
+        });
+        candidate
+    }
+
+    #[test]
+    fn identical_security_checks_compare_equal() {
+        let candidate = security_input();
+        let baseline = security_input();
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(receipt.comparability.driver_match);
+        assert!(!receipt.comparability.critical_mismatch);
+    }
+
+    #[test]
+    fn security_config_or_provenance_mismatch_invalidates() {
+        let candidate = security_input();
+        for name in [
+            "allowance",
+            "test-type",
+            "concurrency",
+            "tool-version",
+            "tool-digest",
+            "scope-digest",
+        ] {
+            let mut baseline = security_input();
+            match name {
+                "allowance" => {
+                    baseline.resolved.security_checks[0].max_successful_bypasses = 1;
+                    baseline.security_evidence.as_mut().unwrap().checks = vec![
+                        "waf-sqli eggsec-waf origin sqli max_successful_bypasses=1 concurrency=2 timeout_ms=5000"
+                            .to_owned(),
+                    ];
+                }
+                "test-type" => {
+                    baseline.resolved.security_checks[0].test_type = crate::EggsecWafTestType::Xss;
+                    baseline.security_evidence.as_mut().unwrap().checks = vec![
+                        "waf-sqli eggsec-waf origin xss max_successful_bypasses=0 concurrency=2 timeout_ms=5000"
+                            .to_owned(),
+                    ];
+                }
+                "concurrency" => {
+                    baseline.resolved.security_checks[0].concurrency =
+                        crate::PositiveCount::new(4).unwrap();
+                    baseline.security_evidence.as_mut().unwrap().checks = vec![
+                        "waf-sqli eggsec-waf origin sqli max_successful_bypasses=0 concurrency=4 timeout_ms=5000"
+                            .to_owned(),
+                    ];
+                }
+                "tool-version" => {
+                    baseline
+                        .security_evidence
+                        .as_mut()
+                        .unwrap()
+                        .executable_version = "0.2.0".to_owned();
+                }
+                "tool-digest" => {
+                    baseline
+                        .security_evidence
+                        .as_mut()
+                        .unwrap()
+                        .executable_sha256 = "bb".repeat(32);
+                }
+                _ => {
+                    baseline.security_evidence.as_mut().unwrap().scope_sha256 = "ee".repeat(32);
+                }
+            }
+            let receipt = compare_pair(&candidate, &baseline);
+            assert!(!receipt.comparability.driver_match, "{name}");
+            assert!(receipt.comparability.critical_mismatch, "{name}");
+        }
+    }
+
+    #[test]
+    fn security_vs_absent_runs_are_incomparable() {
+        let candidate = security_input();
+        let (baseline, _, _) = statistical_inputs(&[0.0; 7], &[0.0; 7]);
+        let receipt = compare_pair(&candidate, &baseline);
+        assert!(!receipt.comparability.driver_match);
+        assert!(receipt.comparability.critical_mismatch);
+    }
+
     #[test]
     fn subject_digest_difference_alone_does_not_invalidate() {
         let (candidate, mut baseline, _) = statistical_inputs(&[101.0; 7], &[100.0; 7]);
@@ -4691,6 +5041,7 @@ mod tests {
             network_path_evidence: None,
             semantic_replay_evidence: None,
             diagnostics_evidence: None,
+            security_evidence: None,
         }
     }
 

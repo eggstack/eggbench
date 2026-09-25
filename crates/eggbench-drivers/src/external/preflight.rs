@@ -10,8 +10,8 @@
 use super::error::{DriverError, ErrorCategory};
 use super::version::ToolVersion;
 use super::{
-    EGGPROBE_DRIVER_NAME, EGGREPLAY_DRIVER_NAME, H2LOAD_DRIVER_NAME, IPERF3_DRIVER_NAME,
-    OHA_DRIVER_NAME,
+    EGGPROBE_DRIVER_NAME, EGGREPLAY_DRIVER_NAME, EGGSEC_DRIVER_NAME, H2LOAD_DRIVER_NAME,
+    IPERF3_DRIVER_NAME, OHA_DRIVER_NAME,
 };
 use super::{EggProbeExecutor, EggReplayWorkload, H2loadWorkload, Iperf3Workload, OhaWorkload};
 use eggbench_core::Name;
@@ -29,7 +29,7 @@ pub fn is_external_workload(name: &Name) -> bool {
 /// Filesystem-only binary presence for `doctor` (no process is spawned).
 ///
 /// Returns `None` for in-process drivers; `Some(present)` for external
-/// workload and diagnostic drivers.
+/// workload, diagnostic, and correctness drivers.
 #[must_use]
 pub fn external_binary_present(name: &Name) -> Option<bool> {
     match name.as_str() {
@@ -38,6 +38,7 @@ pub fn external_binary_present(name: &Name) -> Option<bool> {
         IPERF3_DRIVER_NAME => Some(Iperf3Workload::resolve().is_ok()),
         EGGREPLAY_DRIVER_NAME => Some(EggReplayWorkload::resolve().is_ok()),
         EGGPROBE_DRIVER_NAME => Some(EggProbeExecutor::resolve().is_ok()),
+        EGGSEC_DRIVER_NAME => Some(super::EggsecWafExecutor::resolve().is_ok()),
         _ => None,
     }
 }
@@ -56,6 +57,7 @@ pub fn executable_path_for(name: &Name) -> Option<String> {
         IPERF3_DRIVER_NAME => Iperf3Workload::resolve().ok(),
         EGGREPLAY_DRIVER_NAME => EggReplayWorkload::resolve().ok(),
         EGGPROBE_DRIVER_NAME => EggProbeExecutor::resolve().ok(),
+        EGGSEC_DRIVER_NAME => super::EggsecWafExecutor::resolve().ok(),
         _ => None,
     }?;
     Some(resolved.canonical_path.to_string_lossy().into_owned())

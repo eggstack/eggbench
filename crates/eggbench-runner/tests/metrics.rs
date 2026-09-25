@@ -74,6 +74,7 @@ fn plan_with_metrics(metrics: Vec<eggbench_core::MetricRequest>, measured: u32) 
         paired: None,
         network_path: None,
         diagnostics: Vec::new(),
+        security_checks: Vec::new(),
         warnings: Vec::new(),
     }
 }

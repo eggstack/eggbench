@@ -226,13 +226,14 @@ async fn raw_artifacts_are_deterministic_and_bounded() {
 #[test]
 fn production_catalog_registers_oracles_unconditionally() {
     let catalog = eggbench_drivers::production_catalog();
-    // The external-process drivers (oracles plus EggReplay/Eggprobe)
+    // The external-process drivers (oracles plus EggReplay/Eggprobe/Eggsec)
     // register in every build; only the Eggstack-native drivers are
     // feature-gated.
     let mut expected: Vec<String> = Vec::new();
     expected.extend([
         "eggprobe".to_owned(),
         "eggreplay-semantic".to_owned(),
+        "eggsec-waf".to_owned(),
         "h2load".to_owned(),
         "iperf3".to_owned(),
         "oha".to_owned(),

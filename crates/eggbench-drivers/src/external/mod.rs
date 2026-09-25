@@ -9,6 +9,7 @@ mod command;
 mod common;
 pub mod eggprobe;
 pub mod eggreplay;
+pub mod eggsec;
 mod error;
 mod h2load;
 mod iperf3;
@@ -33,6 +34,14 @@ pub use eggreplay::{
     EGGREPLAY_DRIVER_NAME, EGGREPLAY_PARSER_ID, EggReplayParser, EggReplayWorkload,
     SEMANTIC_REPLAY_EVIDENCE, SemanticReplayEvidence, compute_fixture_identity,
     eggreplay_descriptor, preflight_semantic_replay, semantic_replay_role_label,
+};
+pub use eggsec::{
+    ConfinedTarget, EGGSEC_DRIVER_NAME, EGGSEC_PARSER_ID, EGGSEC_PREFLIGHT_PARSER_ID,
+    EGGSEC_SUPPORTED_TEST_TYPES, EGGSEC_UNSUPPORTED_OPERATIONS, EggsecWafExecutor,
+    SECURITY_CHECKS_EVIDENCE, confine_target_url, eggsec_descriptor, eggsec_role_label,
+    eggsec_supported_test_type_names, generate_scope_manifest, parse_preflight_stdout,
+    parse_waf_stdout, preflight_eggsec, run_guarded_preflight, security_timing_label,
+    waf_argv_tail,
 };
 pub use error::{DriverError, ErrorCategory};
 pub use h2load::{

@@ -2510,3 +2510,183 @@ async fn run_preflights_diagnostics_before_startup() {
     );
     assert!(!bundle.exists(), "no bundle published before startup");
 }
+
+fn write_security_v6_plan(dir: &std::path::Path) -> PathBuf {
+    let raw = std::fs::read_to_string(fixture_dir().join("minimal.json")).expect("read");
+    let mut value: Value = serde_json::from_str(&raw).expect("parse");
+    value["schema_version"] = serde_json::json!(6);
+    value["services"] = serde_json::json!([{
+        "name": "origin",
+        "kind": {"kind": "named", "service_type": "eggserve-origin"},
+        "lifecycle": "external",
+        "depends_on": [],
+        "config": {},
+        "readiness": null,
+        "shutdown": null,
+        "working_directory": null,
+        "log_limit_bytes": 4096,
+    }]);
+    value["workload"] = serde_json::json!({
+        "kind": "finite_count", "target": "origin",
+        "requests": 10, "concurrency": 1,
+    });
+    value["security_checks"] = serde_json::json!([
+        {"id": "waf-sqli", "source": "eggsec-waf", "target": "origin",
+         "test_type": "sqli", "max_successful_bypasses": 0,
+         "concurrency": 2, "timeout_ms": 30000},
+    ]);
+    let path = dir.join("security-v6.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).expect("write");
+    path
+}
+
+#[tokio::test]
+async fn validate_accepts_security_v6() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_security_v6_plan(tmp.path());
+    let presented = execute(
+        Command::Validate {
+            plan,
+            input_format: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(presented.envelope.ok);
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    assert_eq!(body["result"]["schema_version"], 6);
+}
+
+#[tokio::test]
+async fn validate_rejects_security_checks_on_v5() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_security_v6_plan(tmp.path());
+    let raw = std::fs::read_to_string(&plan).expect("read");
+    let mut value: Value = serde_json::from_str(&raw).expect("parse");
+    value["schema_version"] = serde_json::json!(5);
+    std::fs::write(&plan, serde_json::to_string_pretty(&value).unwrap()).expect("write");
+    let presented = execute(
+        Command::Validate {
+            plan,
+            input_format: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+}
+
+#[tokio::test]
+async fn doctor_reports_eggsec_descriptor_and_security_summary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_security_v6_plan(tmp.path());
+    let presented = execute(
+        Command::Doctor {
+            plan,
+            input_format: None,
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    let body: Value = serde_json::to_value(&presented.envelope).unwrap();
+    let drivers = body["result"]["drivers"].as_array().unwrap();
+    let entry = drivers
+        .iter()
+        .find(|driver| driver["name"] == "eggsec-waf")
+        .expect("eggsec-waf descriptor reported");
+    assert_eq!(entry["category"], "Correctness");
+    assert_eq!(entry["external_process"], true);
+    assert_eq!(entry["default"], false);
+    let capabilities = entry["capabilities"].as_array().unwrap();
+    assert!(
+        capabilities
+            .iter()
+            .any(|cap| cap.as_str().unwrap().contains("SecurityCheck")),
+        "SecurityCheck capability advertised"
+    );
+    let summary = &body["result"]["security"];
+    assert_eq!(summary["requested"], true);
+    assert_eq!(
+        summary["binary_present"],
+        Value::Bool(tool_present("eggsec")),
+        "truthful binary presence"
+    );
+    assert_eq!(summary["supported_family"], "waf_bypass");
+    for test_type in ["sqli", "xss", "ssrf", "cmd", "traversal"] {
+        assert!(
+            summary["supported_test_types"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == test_type),
+            "{test_type} supported"
+        );
+    }
+    assert!(
+        summary["unsupported_operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "stress"),
+        "stress unsupported"
+    );
+    assert!(
+        summary["timing_note"]
+            .as_str()
+            .unwrap()
+            .contains("not a benchmark metric"),
+        "timings labeled correctness-only"
+    );
+    assert!(
+        summary["strict_scope_note"]
+            .as_str()
+            .unwrap()
+            .contains("--strict-scope"),
+        "strict scope advertised"
+    );
+    // Probe vocabulary stays stable with or without an installed binary.
+    let handshake = summary["handshake"].as_str().unwrap();
+    if tool_present("eggsec") {
+        assert_eq!(handshake, "pass", "live probe against installed binary");
+    } else {
+        assert_eq!(handshake, "missing-binary", "absence-safe probe");
+    }
+}
+
+/// M004a: without an `eggsec` binary the run fails before managed startup.
+#[cfg(feature = "eggstack-http")]
+#[tokio::test]
+async fn run_preflights_security_before_startup() {
+    if tool_present("eggsec") {
+        eprintln!("skipping absence run: eggsec installed");
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plan = write_security_v6_plan(tmp.path());
+    let bundle = tmp.path().join("bundle.eggb");
+    let presented = execute(
+        Command::Run {
+            plan,
+            input_format: None,
+            bundle: bundle.clone(),
+            workload_driver: None,
+        },
+        CommandOptions::human(),
+    )
+    .await;
+    assert!(!presented.envelope.ok);
+    assert_eq!(presented.exit_code, ExitCode::CapabilityPreflight);
+    let category = presented
+        .envelope
+        .error
+        .as_ref()
+        .expect("error")
+        .category
+        .as_str();
+    assert_eq!(
+        category, "missing_executable_path",
+        "pre-startup {category}"
+    );
+    assert!(!bundle.exists(), "no bundle published before startup");
+}

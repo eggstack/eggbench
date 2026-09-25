@@ -8,9 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-/// Current resolved-plan schema version (v3 adds `network_path`).
-pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
+/// Current resolved-plan schema version (v4 adds `security_checks`).
+pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(4);
 /// Previous resolved-plan schema version, still accepted on read.
+pub const RESOLVED_PLAN_SCHEMA_VERSION_3: SchemaVersion = SchemaVersion(3);
+/// Older resolved-plan schema version, still accepted on read.
 pub const RESOLVED_PLAN_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);
 /// Oldest resolved-plan schema version, still accepted on read.
 pub const RESOLVED_PLAN_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
@@ -29,6 +31,11 @@ pub enum DriverCategory {
     Fault,
     /// Diagnostic collection adapter.
     Diagnostic,
+    /// Security-correctness adapter (Eggstack M004a). Correctness checks
+    /// determine whether security behavior meets a predeclared expectation;
+    /// they are distinct from workload (statistical trial load) and from
+    /// diagnostics (environment/target health).
+    Correctness,
     /// Local or future remote execution provider descriptor.
     ExecutionProvider,
     /// Listener-free Eggress TCP route driver (Eggstack M002).
@@ -92,6 +99,12 @@ pub enum Capability {
     DiagnosticProbe {
         /// Supported probe family.
         probe: crate::DiagnosticProbe,
+    },
+    /// Driver executes one Eggsec WAF bypass correctness check
+    /// (Eggstack M004a). The family label is `waf_bypass` initially.
+    SecurityCheck {
+        /// Supported correctness family.
+        family: Name,
     },
 }
 
@@ -223,6 +236,9 @@ pub struct ResolvedPlan {
     /// Resolved diagnostics for schema-v5 plans; empty when not requested.
     #[serde(default)]
     pub diagnostics: Vec<crate::DiagnosticRequest>,
+    /// Resolved security checks for schema-v6 plans; empty when not requested.
+    #[serde(default)]
+    pub security_checks: Vec<crate::SecurityCheckRequest>,
     /// Non-fatal resolution diagnostics.
     pub warnings: Vec<ResolutionWarning>,
 }
@@ -374,6 +390,10 @@ pub enum ResolveError {
 /// # Errors
 /// Returns [`ResolveError`] on invalid input, selection ambiguity, platform incompatibility,
 /// or any missing requested semantic capability.
+///
+/// # Panics
+/// Never panics at runtime; the static correctness family/source names are
+/// valid by construction.
 #[allow(clippy::too_many_lines)] // Resolution is intentionally one side-effect-free validation pass.
 pub fn resolve_plan(
     plan: &ExperimentPlan,
@@ -461,6 +481,21 @@ pub fn resolve_plan(
             .or_default()
             .extend(families);
     }
+    if let Some(all) = plan.security_checks.as_deref()
+        && !all.is_empty()
+    {
+        // M004a: every security check is an `eggsec-waf` bypass observation
+        // in the initial `waf_bypass` family. Resolution pins the single
+        // correctness driver; per-check family filtering happens in the
+        // adapter contract validation below.
+        required
+            .entry(DriverCategory::Correctness)
+            .or_default()
+            .insert(Capability::SecurityCheck {
+                family: crate::Name::new(crate::SECURITY_FAMILY_WAF_BYPASS)
+                    .expect("static correctness family"),
+            });
+    }
     for (category, capabilities) in &options.required_capabilities {
         required
             .entry(*category)
@@ -491,6 +526,14 @@ pub fn resolve_plan(
 
     if let Some(path) = &plan.network_path {
         validate_network_path_driver_contract(path, &drivers)?;
+    }
+
+    if plan
+        .security_checks
+        .as_deref()
+        .is_some_and(|all| !all.is_empty())
+    {
+        validate_correctness_driver_contract(plan, &drivers)?;
     }
 
     if !plan.telemetry.is_empty() {
@@ -656,6 +699,7 @@ pub fn resolve_plan(
         paired,
         network_path,
         diagnostics: plan.diagnostics.clone().unwrap_or_default(),
+        security_checks: plan.security_checks.clone().unwrap_or_default(),
         warnings,
     })
 }
@@ -747,6 +791,76 @@ fn workload_target(workload: &Workload) -> &Name {
         | Workload::TimeBounded { target, .. }
         | Workload::SemanticReplay { target, .. } => target,
     }
+}
+
+/// Validate the canonical external Eggsec WAF correctness contract.
+///
+/// The selected `Correctness` driver must be the external `eggsec-waf`
+/// adapter with the `waf_bypass` family capability and a pinned executable
+/// path. Upstream tool provenance (observed version plus executable digest)
+/// is recorded per run in `security-checks.json`, not in the descriptor.
+///
+/// # Panics
+/// Never panics at runtime; the static correctness names are valid by
+/// construction.
+///
+/// # Errors
+/// Returns [`ResolveError`] when no correctness driver is selected or the
+/// selected driver violates the contract.
+fn validate_correctness_driver_contract(
+    plan: &ExperimentPlan,
+    drivers: &BTreeMap<DriverCategory, ResolvedDriver>,
+) -> Result<(), ResolveError> {
+    let invalid = |driver: &Name, detail: String| {
+        Err(ResolveError::InvalidPlan(PlanError::Validation {
+            category: "unsupported_correctness_driver",
+            detail: format!("correctness driver {driver} {detail}"),
+        }))
+    };
+    let correctness = drivers.get(&DriverCategory::Correctness);
+    let Some(correctness) = correctness else {
+        // Static fallback below.
+        let source = plan
+            .security_checks
+            .as_deref()
+            .and_then(|all| all.first())
+            .map_or_else(
+                || {
+                    crate::Name::new(crate::SECURITY_SOURCE_EGGSEC_WAF)
+                        .expect("static correctness source")
+                },
+                |request| request.source.clone(),
+            );
+        return invalid(&source, "has no selected correctness driver".to_owned());
+    };
+    let descriptor = &correctness.descriptor;
+    let expected_family =
+        crate::Name::new(crate::SECURITY_FAMILY_WAF_BYPASS).expect("static correctness family");
+    if descriptor.name.as_str() != crate::EGGSEC_WAF_DRIVER_NAME
+        || descriptor.adapter_version.is_empty()
+        || descriptor.adapter_version.len() > 128
+        || descriptor.upstream_name != crate::EGGSEC_UPSTREAM_NAME
+        || !descriptor
+            .capabilities
+            .contains(&Capability::SecurityCheck {
+                family: expected_family,
+            })
+        || !descriptor.external_process
+        || correctness.executable_path.is_none()
+    {
+        return invalid(
+            &descriptor.name,
+            "does not satisfy the canonical external Eggsec WAF correctness contract".to_owned(),
+        );
+    }
+    if descriptor.category != DriverCategory::Correctness {
+        return Err(ResolveError::CategoryMismatch {
+            driver: descriptor.name.clone(),
+            actual: descriptor.category,
+            expected: DriverCategory::Correctness,
+        });
+    }
+    Ok(())
 }
 
 fn validate_network_path_driver_contract(
