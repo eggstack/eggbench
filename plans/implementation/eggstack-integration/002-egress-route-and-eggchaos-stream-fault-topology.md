@@ -1,8 +1,12 @@
 # Eggstack Integration M002 — Listener-Free Eggress Route and Eggchaos Stream-Fault Topology
 
-Status: implemented; closure pending hosted qualification
+Status: closed
 
 Repository baseline: d870512a5a1af16276ff05286ff0b6e2366b7f8f
+
+Implementation commit: f816a65
+Closure record: plans/closure/eggstack-integration/002-status.md
+Hosted qualification: 36085136434
 
 Subsystem roadmap:
 

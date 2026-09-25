@@ -131,7 +131,7 @@ The roadmap closes when Eggbench can construct useful network/security experimen
 
 ### M001 — Controlled origin, native HTTP workload, host telemetry
 
-Status: M001 hosted-qualified by C002 (run `36029547565`); M002 is now ready for handoff under its authored implementation plan (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). Corrective qualification evidence: `plans/closure/post-m003-hosted-qualification-corrective/002-status.md`.
+Status: M001 hosted-qualified by C002 (run `36029547565`); M002 is implemented and closed under `plans/closure/eggstack-integration/002-status.md`; hosted qualification run `36085136434` (M001a historical closure `plans/closure/eggstack-integration/001a-status.md`, commit `8426e08`; M001b historical closure `plans/closure/eggstack-integration/001b-status.md`, commit `a0ff206`). Corrective qualification evidence: `plans/closure/post-m003-hosted-qualification-corrective/002-status.md`.
 
 Implementation plans:
 
@@ -144,11 +144,11 @@ Qualification note:
 
 ### M002 — Route and stream-fault topology
 
-Status: ready for handoff. Implementation plan: `plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md`. Planning commit: `8828cdb`. C002 is closed and no dependency gate remains. The plan uses a first-class schema-v3 network-path contract, published listener-free `egress-outbound`, and published `eggchaos-core`; it explicitly rejects paired/network-path and external-oracle/network-path combinations in M002 rather than weakening existing connection/trial semantics.
+Status: closed. Implementation plan: `plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md`. Planning commit: `8828cdb`. Implementation commit: `f816a65`; closure: `plans/closure/eggstack-integration/002-status.md`; hosted qualification: run `36085136434` (Linux stable, Linux MSRV, macOS stable, Windows stable). C002 is closed and no dependency gate remains. The plan uses a first-class schema-v3 network-path contract, published listener-free `egress-outbound`, and published `eggchaos-core`; it explicitly rejects paired/network-path and external-oracle/network-path combinations in M002 rather than weakening existing connection/trial semantics.
 
 ### M003 — Replay and diagnostics
 
-Status: blocked on M001/M002 integration seams.
+Status: ready for handoff; M001/M002 integration seams are closed and hosted-qualified.
 
 ### M004 — Eggsec workload/correctness adapter
 

@@ -130,7 +130,7 @@ C001 correctly stopped under its frozen-contract rule. Its successor C002 (imple
 
 External Oracles M001 (7afa054) and M002 (3384a89) are hosted-qualified. Eggstack M001 is hosted-qualified through M001a (8426e08) and M001b (a0ff206). C002 supplied the final four-lane qualification at run 36029547565.
 
-Eggstack M002 is now implemented and is the dependency-stable capability layer:
+Eggstack M002 is now implemented, closed, and the dependency-stable capability layer:
 
 plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
 
@@ -146,7 +146,7 @@ Its controlling architecture is:
 
 The implementation re-audited sibling state on 2026-09-24: Eggress 1.0.10 is now published with the audited listener-free seam unchanged and is pinned exactly; Eggchaos v0.1.0 is a published qualified release and eggchaos-core is pinned exactly as the selected fault seam. No mutable git main dependency is used.
 
-After M002 closes:
+After M002 closure:
 
 - Eggstack M003 replay/diagnostics may be authored/activated against the now-stable network-path contracts;
 - External Oracles M003 remains the later netem/system-level impairment milestone;
@@ -206,10 +206,10 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The implementation handoff is:
+The closed M002 implementation is:
 
 plans/implementation/eggstack-integration/002-egress-route-and-eggchaos-stream-fault-topology.md
 
-Implementation and local default/all-feature/MSRV verification are complete; hosted four-lane qualification and the closure record remain before activating Eggstack M003 replay/diagnostics.
+Implementation commit `f816a65` is locally verified and hosted-qualified by run `36085136434`; the closure record is `plans/closure/eggstack-integration/002-status.md`. Eggstack M003 replay/diagnostics may now be activated against these stable contracts.
 
 External Oracles M003 netem remains a separate later impairment boundary and must not be folded into M002.
