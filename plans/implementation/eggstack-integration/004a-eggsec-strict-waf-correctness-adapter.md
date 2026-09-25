@@ -329,7 +329,7 @@ Initial live qualification uses exact Eggsec source:
 Build only for qualification:
 
 ~~~text
-cargo build --locked --release -p eggsec-cli
+cargo build --locked --release -p eggsec-cli --no-default-features
 ~~~
 
 Record:
@@ -799,7 +799,7 @@ into it.
 Add/extend a Linux-only live sibling qualification job:
 
 - check out exact Eggsec source revision;
-- build `eggsec-cli --locked --release`;
+- build the headless CLI with `cargo build --locked --release -p eggsec-cli --no-default-features`;
 - run local strict-scope positive/fail fixtures;
 - verify sanitized bundle evidence;
 - record bounded provenance.
