@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: proposed
+Status: active (planning; implementation gated on Eggstack M004b closure)
 
 Long-term references:
 
@@ -58,7 +58,7 @@ M003 Reusable Eggstack security qualification patterns
 
 ### M001 — Profile and correctness contract
 
-Define reusable profile expansion, corpus/config digesting, expected-outcome assertions, security-result adapter semantics, and combined verdict rules.
+Define reusable profile expansion, corpus/config digesting, expected-outcome assertions, and security-result profile semantics on top of the generic correctness execution/evidence and combined-verdict substrate established by Eggstack M004a/M004b.
 
 A correctness failure must remain distinguishable from a benchmark invalidity or performance regression.
 
@@ -82,4 +82,9 @@ The roadmap closes when a security optimization cannot be reported as successful
 
 ## 8. Milestone status
 
-Blocked on measurement and integration layers.
+Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M004 is now the remaining integration substrate gate:
+
+- M004a (`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`) is ready and establishes the first strict Eggsec correctness executor/evidence contract.
+- M004b (`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`) is authored behind M004a and establishes the generic independent correctness gate family plus combined verdict precedence.
+
+Security Qualification M001 may be researched in parallel but should not be handed off for implementation until M004b closes. M001 then owns reusable named profiles, corpora/config digests, expected-outcome matrices, and broader security-domain semantics rather than rebuilding M004's generic gate substrate.
