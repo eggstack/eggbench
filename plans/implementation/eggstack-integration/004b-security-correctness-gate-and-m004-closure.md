@@ -1,6 +1,6 @@
 # Eggstack Integration M004b — Security Correctness Gate Family and M004 Closure
 
-Status: authored; blocked on M004a closure
+Status: closed (implementation b2de53e; umbrella M004 closure plans/closure/eggstack-integration/004b-status.md)
 
 Repository baseline: `aeed8f709bb84e840ffd8257b11a832a24211575`
 

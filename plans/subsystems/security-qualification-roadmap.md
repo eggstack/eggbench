@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (planning; implementation gated on Eggstack M004b closure)
+Status: active (planning; M001 implementation unblocked by Eggstack M004b closure)
 
 Long-term references:
 
@@ -82,9 +82,11 @@ The roadmap closes when a security optimization cannot be reported as successful
 
 ## 8. Milestone status
 
-Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M004 is now the remaining integration substrate gate:
+Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M004 is now closed and hosted-qualified (`plans/closure/eggstack-integration/004a-status.md`, umbrella `plans/closure/eggstack-integration/004b-status.md`); the integration substrate gate is satisfied:
 
-- M004a (`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`) is ready and establishes the first strict Eggsec correctness executor/evidence contract.
-- M004b (`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`) is authored behind M004a and establishes the generic independent correctness gate family plus combined verdict precedence.
+- M004a (`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`) is closed and establishes the first strict Eggsec correctness executor/evidence contract.
+- M004b (`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`) is closed and establishes the generic independent correctness gate family plus combined verdict precedence.
+
+Security Qualification M001 is unblocked for its own implementation planning/handoff.
 
 Security Qualification M001 may be researched in parallel but should not be handed off for implementation until M004b closes. M001 then owns reusable named profiles, corpora/config digests, expected-outcome matrices, and broader security-domain semantics rather than rebuilding M004's generic gate substrate.

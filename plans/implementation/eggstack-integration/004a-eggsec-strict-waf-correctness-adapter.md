@@ -1,6 +1,6 @@
 # Eggstack Integration M004a — Eggsec Strict WAF Correctness Adapter
 
-Status: ready for handoff
+Status: closed (implementation 273e5b1; closure plans/closure/eggstack-integration/004a-status.md)
 
 Repository baseline: `4f714678f7e8791fde52868c97f0e09cb145ab33`
 

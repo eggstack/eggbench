@@ -1,6 +1,6 @@
 # Eggstack Integration Roadmap
 
-Status: active
+Status: closed (M001-M004 delivered; Security Qualification owns follow-up profiles)
 
 Long-term references:
 
@@ -118,8 +118,8 @@ Relevant findings:
 
 M004 is split because security execution/evidence and comparison-verdict composition are separate contracts:
 
-1. `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md` — **ready**.
-2. `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md` — **authored, blocked on M004a closure**.
+1. `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md` — **closed** (implementation `273e5b1`, closure `plans/closure/eggstack-integration/004a-status.md`).
+2. `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md` — **closed** (implementation `b2de53e`, umbrella closure `plans/closure/eggstack-integration/004b-status.md`).
 
 M004a adds a distinct correctness execution category and sanitized Eggsec evidence. M004b adds ComparisonReceipt v3 correctness-gate plumbing and conservative combined verdict precedence. Security results are never converted into performance metrics.
 
@@ -245,12 +245,16 @@ Live-tool corrective addendum (2026-09-25): C001 proved live that the M003b adap
 
 ### M004 — Eggsec workload/correctness adapter
 
-Status: planned/active handoff sequence. M004a is ready; M004b is authored and blocked on M004a closure.
+Status: closed and hosted-qualified. M004a closed (implementation
+`273e5b1`, closure
+`plans/closure/eggstack-integration/004a-status.md`); M004b closed
+(implementation `b2de53e`, umbrella closure
+`plans/closure/eggstack-integration/004b-status.md`).
 
 Implementation plans:
 
-- `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md` — **ready**. Adds schema-v6 security-check intent, a distinct correctness executor/category, strict local/private Eggsec WAF execution, sanitized evidence, and real-tool qualification.
-- `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md` — **blocked on M004a closure**. Adds the independent security-correctness gate family, ComparisonReceipt v3, conservative combined verdict precedence, and umbrella M004 closure.
+- `plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md` — **closed**. Adds schema-v6 security-check intent, a distinct correctness executor/category, strict local/private Eggsec WAF execution, sanitized evidence, and real-tool qualification. Implementation `273e5b1`; closure `plans/closure/eggstack-integration/004a-status.md`.
+- `plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md` — **closed**. Adds the independent security-correctness gate family, ComparisonReceipt v3, conservative combined verdict precedence, and umbrella M004 closure. Implementation `b2de53e`; closure `plans/closure/eggstack-integration/004b-status.md`.
 
 Planning commits:
 
