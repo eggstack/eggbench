@@ -254,7 +254,7 @@ Implementation plans:
 
 Planning commits:
 
-- M004a: `aeed8f7`
+- M004a: `aeed8f7` (initial plan), refined at `d1edf7b` to qualify the minimal `eggsec-cli --no-default-features` build
 - M004b: `5b5ef97`
 
 M004 intentionally starts with the narrow Eggsec WAF bypass semantic seam. It does not make Eggbench a generic scanner and does not encode security correctness as a performance metric.
