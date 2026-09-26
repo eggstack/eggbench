@@ -89,4 +89,6 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 
 Security Qualification M001 is unblocked for its own implementation planning/handoff.
 
-Security Qualification M001 may be researched in parallel but should not be handed off for implementation until M004b closes. M001 then owns reusable named profiles, corpora/config digests, expected-outcome matrices, and broader security-domain semantics rather than rebuilding M004's generic gate substrate.
+M001 now owns reusable named profiles, corpora/config digests, expected-outcome
+matrices, and broader security-domain semantics rather than rebuilding M004's
+generic gate substrate. No M001 implementation plan is authored yet.
