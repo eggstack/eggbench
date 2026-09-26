@@ -541,25 +541,46 @@ fn qualify_inspect(path: &std::path::Path, json: bool) -> StdExitCode {
             if expanded.baseline_identity != record.baseline_bundle_identity {
                 return Err("baseline identity differs from frozen profile reference".into());
             }
+            if record.id.is_empty()
+                || !record
+                    .id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err("invalid scenario reference identity".into());
+            }
+            if record
+                .candidate_bundle_path
+                .as_deref()
+                .is_some_and(|p| p != format!("scenarios/{}.eggb", record.id))
+                || record
+                    .comparison_receipt_path
+                    .as_deref()
+                    .is_some_and(|p| p != format!("scenarios/{}.comparison.json", record.id))
+            {
+                return Err("scenario evidence path does not match its ID".into());
+            }
             if record.status != eggbench_core::QualificationScenarioStatus::Completed {
                 continue;
             }
-            let bp = root.join(
+            let bp = qualification_reference_path(
+                root,
                 record
                     .candidate_bundle_path
                     .as_ref()
                     .ok_or("completed scenario missing bundle path")?,
-            );
+            )?;
             let bundle = eggbench_core::load_candidate_bundle(&bp).map_err(|e| e.to_string())?;
             if Some(&bundle.identity) != record.candidate_bundle_identity.as_ref() {
                 return Err("candidate bundle identity mismatch".into());
             }
-            let cp = root.join(
+            let cp = qualification_reference_path(
+                root,
                 record
                     .comparison_receipt_path
                     .as_ref()
                     .ok_or("completed scenario missing comparison path")?,
-            );
+            )?;
             let bytes = std::fs::read(&cp).map_err(|e| e.to_string())?;
             if Some(eggbench_core::qualification_sha256(&bytes)) != record.comparison_receipt_sha256
             {
@@ -616,11 +637,30 @@ fn qualify_inspect(path: &std::path::Path, json: bool) -> StdExitCode {
     }
 }
 
+fn qualification_reference_path(root: &std::path::Path, relative: &str) -> Result<PathBuf, String> {
+    let relative_path = std::path::Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("qualification evidence path is not a confined relative path".into());
+    }
+    let canonical_root = std::fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let canonical_path =
+        std::fs::canonicalize(root.join(relative_path)).map_err(|e| e.to_string())?;
+    if !canonical_path.starts_with(canonical_root) {
+        return Err("qualification evidence path escapes its suite directory".into());
+    }
+    Ok(canonical_path)
+}
+
 #[cfg(all(test, feature = "eggstack-http"))]
 mod qualification_e2e_tests {
     use super::*;
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn fixed_corpus_suite_runs_serially_and_continues_after_correctness_fail() {
         let temp = tempfile::tempdir().expect("temporary workspace");
         let root = temp.path();
@@ -719,6 +759,15 @@ mod qualification_e2e_tests {
             qualify_inspect(&output.join("qualification-receipt.json"), true),
             StdExitCode::SUCCESS
         );
+        let receipt_path = output.join("qualification-receipt.json");
+        let mut tampered: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&receipt_path).expect("read receipt for negative check"),
+        )
+        .expect("parse receipt for negative check");
+        tampered["scenarios"][0]["candidate_bundle_path"] = "../../outside.eggb".into();
+        std::fs::write(&receipt_path, serde_json::to_vec(&tampered).unwrap())
+            .expect("write tampered reference");
+        assert_eq!(qualify_inspect(&receipt_path, true), StdExitCode::from(8));
         std::env::set_current_dir(original_cwd).expect("restore test cwd");
     }
 }
