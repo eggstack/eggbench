@@ -1,8 +1,8 @@
 # Security Qualification M001c — Qualification Suite Execution, Receipt, and M001 Closure
 
-Status: authored; blocked on M001b closure
+Status: ready
 
-Repository baseline: 7237a3f2afe412d0838a22fbee2d6eb66f5fe377
+Repository baseline: `afd9322`
 
 Source roadmap:
 
@@ -21,7 +21,7 @@ Controlling architecture:
 
 Hard prerequisite:
 
-- Security Qualification M001a and M001b closed.
+- Security Qualification M001a and M001b closed; M001b closure evidence is at `plans/closure/security-qualification/001b-status.md`.
 
 Primary class: capability — bounded multi-scenario qualification orchestration and evidence.
 

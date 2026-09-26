@@ -1,8 +1,8 @@
 # Security Qualification M001b — Fixed-Corpus HTTP Correctness Family
 
-Status: ready
+Status: closed
 
-Repository baseline: `8683e96`
+Repository baseline: `afd9322`
 
 Source roadmap:
 
