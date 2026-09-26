@@ -616,6 +616,113 @@ fn qualify_inspect(path: &std::path::Path, json: bool) -> StdExitCode {
     }
 }
 
+#[cfg(all(test, feature = "eggstack-http"))]
+mod qualification_e2e_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fixed_corpus_suite_runs_serially_and_continues_after_correctness_fail() {
+        let temp = tempfile::tempdir().expect("temporary workspace");
+        let root = temp.path();
+        let original_cwd = std::env::current_dir().expect("test cwd");
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        std::env::set_current_dir(repo_root).expect("set ordinary run workspace");
+        std::fs::write(
+            root.join("corpus.json"),
+            include_bytes!("../../../examples/security-corpus.json"),
+        )
+        .expect("copy corpus fixture");
+        std::fs::write(root.join("config.json"), "{\"target\":\"controlled\"}\n")
+            .expect("write target config");
+        let source: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../examples/security-http-corpus-plan.json"
+        ))
+        .expect("parse plan fixture");
+        for (name, status) in [("pass", "200"), ("fail", "404"), ("pass-again", "200")] {
+            let mut plan = source.clone();
+            plan["services"][0]["kind"] = serde_json::json!({
+                "kind": "named", "service_type": "eggserve-origin"
+            });
+            plan["services"][0]["config"] = serde_json::json!({"path":"/", "status":status});
+            plan["services"][0]
+                .as_object_mut()
+                .expect("service object")
+                .remove("http_url");
+            std::fs::write(
+                root.join(format!("{name}.json")),
+                serde_json::to_vec(&plan).expect("serialize plan"),
+            )
+            .expect("write scenario plan");
+        }
+        let profile = serde_json::json!({
+            "schema_version":1,"id":"suite-e2e","owner":"local test",
+            "scenarios":[
+                {"id":"first-pass","plan":"pass.json"},
+                {"id":"correctness-fail","plan":"fail.json"},
+                {"id":"later-pass","plan":"pass-again.json"}
+            ],
+            "corpus":{"path":"corpus.json"},"target_config":{"path":"config.json"}
+        });
+        let profile_path = root.join("profile.json");
+        std::fs::write(
+            &profile_path,
+            serde_json::to_vec(&profile).expect("serialize profile"),
+        )
+        .expect("write profile");
+        let output = root.join("qualification");
+        let exit = qualify_run(
+            &profile_path,
+            &output,
+            CommandOptions {
+                json: true,
+                quiet: true,
+            },
+        )
+        .await;
+        assert_eq!(exit, StdExitCode::from(6));
+        let receipt: eggbench_core::SecurityQualificationReceiptV1 = serde_json::from_slice(
+            &std::fs::read(output.join("qualification-receipt.json")).expect("read receipt"),
+        )
+        .expect("parse receipt");
+        assert!(receipt.execution_complete);
+        assert_eq!(
+            receipt.aggregate_verdict,
+            eggbench_core::AggregateVerdict::Fail
+        );
+        assert_eq!(
+            receipt
+                .scenarios
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first-pass", "correctness-fail", "later-pass"]
+        );
+        assert_eq!(
+            receipt.scenarios[0].correctness_verdict,
+            Some(eggbench_core::AggregateVerdict::Pass)
+        );
+        assert_eq!(
+            receipt.scenarios[1].correctness_verdict,
+            Some(eggbench_core::AggregateVerdict::Fail)
+        );
+        assert_eq!(
+            receipt.scenarios[2].correctness_verdict,
+            Some(eggbench_core::AggregateVerdict::Pass)
+        );
+        assert!(
+            receipt
+                .scenarios
+                .iter()
+                .all(|s| s.status == eggbench_core::QualificationScenarioStatus::Completed)
+        );
+        assert_eq!(
+            qualify_inspect(&output.join("qualification-receipt.json"), true),
+            StdExitCode::SUCCESS
+        );
+        std::env::set_current_dir(original_cwd).expect("restore test cwd");
+    }
+}
+
 fn build_command(command: CliCommand) -> Result<Command, String> {
     match command {
         CliCommand::Qualify { .. } => {
