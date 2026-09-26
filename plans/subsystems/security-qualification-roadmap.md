@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 research grounded; implementation plans not yet authored)
+Status: active (M001a ready; M001b/M001c authored and dependency-blocked)
 
 Long-term references:
 
@@ -116,8 +116,11 @@ change is required for the profile/corpus layer identified here.
 
 ### Required M001 contract
 
-The recommended M001 architecture is three ordered implementation stages; the
-implementation plans have not yet been authored.
+The M001 architecture is now captured in three ordered implementation plans:
+
+- `plans/implementation/security-qualification/001a-profile-corpus-config-identity-and-static-http-bindings.md` — ready;
+- `plans/implementation/security-qualification/001b-fixed-corpus-http-correctness-family.md` — authored, hard-blocked on M001a closure;
+- `plans/implementation/security-qualification/001c-qualification-suite-execution-and-m001-closure.md` — authored, hard-blocked on M001b closure.
 
 **M001a — qualification profile, corpus, and configuration identity**
 
@@ -264,6 +267,15 @@ Define reusable profile expansion, corpus/config digesting, expected-outcome ass
 
 A correctness failure must remain distinguishable from a benchmark invalidity or performance regression.
 
+Ordered implementation decomposition:
+
+1. **M001a — Profile/corpus/config identity + static HTTP bindings**  
+   Ready. Establish the versioned qualification profile/corpus contracts, generalized bounded content-tree identity, deterministic expansion manifest, and generic command/external `http_url` binding seam.
+2. **M001b — Fixed-corpus HTTP correctness family**  
+   Authored; hard-blocked on M001a. Execute immutable corpus cases through Eggfetch outside performance timing, add sanitized observable-status evidence, correctness policy v2, and ComparisonReceipt v4 compatibility.
+3. **M001c — Qualification suite execution/receipt and M001 closure**  
+   Authored; hard-blocked on M001b. Run explicit scenarios serially through ordinary run/compare machinery and produce the immutable qualification receipt without recomputing metrics/security semantics.
+
 ### M002 — SynVoid suite
 
 Build local controlled-origin WAF/proxy profiles and compare native and external workload drivers. Preserve target configuration and security result evidence.
@@ -289,4 +301,10 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 - M004a (`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`) is closed and establishes the first strict Eggsec correctness executor/evidence contract.
 - M004b (`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`) is closed and establishes the generic independent correctness gate family plus combined verdict precedence.
 
-Security Qualification M001 research is now grounded in §2A and is unblocked for implementation-plan authoring. M001 owns the profile/corpus/config identity, fixed-corpus correctness, and qualification-receipt layer above M004; no M001 implementation plan is authored yet.
+Security Qualification M001 is now implementation-planned.
+
+- M001a is dependency-ready.
+- M001b is authored but hard-blocked on M001a closure.
+- M001c is authored but hard-blocked on M001b closure.
+
+No Eggsec or SynVoid upstream blocker is currently known. The next executable handoff is M001a.
