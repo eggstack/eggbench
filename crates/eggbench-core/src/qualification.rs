@@ -36,6 +36,9 @@ pub struct SecurityQualificationProfileV1 {
 pub struct QualificationScenarioRef {
     pub id: String,
     pub plan: String,
+    /// Explicit baseline bundle path; absent means absolute-only comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_bundle: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,6 +293,178 @@ pub struct ExpandedScenarioV1 {
     pub source_plan_sha256: String,
     pub source_plan_schema: u32,
     pub source_plan_path_context: String,
+    /// Frozen explicit baseline identity, resolved before candidate execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_identity: Option<crate::BundleIdentity>,
+    /// Workspace-relative baseline path context, when one was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_path_context: Option<String>,
+}
+
+/// Final profile-level evidence referencing ordinary bundles and comparisons.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityQualificationReceiptV1 {
+    pub schema_version: u32,
+    pub policy_id: String,
+    pub created_by_version: String,
+    pub profile_id: String,
+    pub profile_sha256: String,
+    pub expansion_sha256: String,
+    pub corpus_identity: ContentTreeIdentity,
+    pub target_config_identity: ContentTreeIdentity,
+    pub scenarios: Vec<QualificationScenarioRecordV1>,
+    pub aggregate_verdict: crate::AggregateVerdict,
+    pub execution_complete: bool,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// One required scenario's state and ordinary evidence references.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationScenarioRecordV1 {
+    pub id: String,
+    pub source_plan_sha256: String,
+    pub status: QualificationScenarioStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_bundle_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_bundle_identity: Option<crate::BundleIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_bundle_identity: Option<crate::BundleIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_receipt_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_receipt_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance_verdict: Option<crate::AggregateVerdict>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correctness_verdict: Option<crate::AggregateVerdict>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined_verdict: Option<crate::AggregateVerdict>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Finalized, invalid, cancelled, or not-started scenario state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualificationScenarioStatus {
+    Completed,
+    Invalid,
+    Cancelled,
+    NotRun,
+}
+
+/// Immutable qualification aggregate policy identifier.
+pub const QUALIFICATION_RECEIPT_POLICY_V1: &str = "eggbench.security-qualification.v1";
+
+/// SHA-256 hex digest used for qualification artifact references.
+#[must_use]
+pub fn qualification_sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Combine typed verdicts using Invalid > Fail > Inconclusive > Pass.
+#[must_use]
+pub fn aggregate_qualification_verdicts<I>(verdicts: I) -> crate::AggregateVerdict
+where
+    I: IntoIterator<Item = crate::AggregateVerdict>,
+{
+    let mut result = crate::AggregateVerdict::Pass;
+    for value in verdicts {
+        result = match (result, value) {
+            (crate::AggregateVerdict::Invalid, _) | (_, crate::AggregateVerdict::Invalid) => {
+                crate::AggregateVerdict::Invalid
+            }
+            (crate::AggregateVerdict::Fail, _) | (_, crate::AggregateVerdict::Fail) => {
+                crate::AggregateVerdict::Fail
+            }
+            (crate::AggregateVerdict::Inconclusive, _)
+            | (_, crate::AggregateVerdict::Inconclusive) => crate::AggregateVerdict::Inconclusive,
+            _ => crate::AggregateVerdict::Pass,
+        };
+    }
+    result
+}
+
+/// Aggregate required scenario records, treating incomplete/missing verdicts as Invalid.
+#[must_use]
+pub fn aggregate_qualification_scenarios(
+    scenarios: &[QualificationScenarioRecordV1],
+) -> crate::AggregateVerdict {
+    if scenarios.is_empty()
+        || scenarios.iter().any(|scenario| {
+            scenario.status != QualificationScenarioStatus::Completed
+                || scenario.combined_verdict.is_none()
+        })
+    {
+        return crate::AggregateVerdict::Invalid;
+    }
+    aggregate_qualification_verdicts(
+        scenarios
+            .iter()
+            .filter_map(|scenario| scenario.combined_verdict),
+    )
+}
+
+#[cfg(test)]
+mod suite_policy_tests {
+    use super::aggregate_qualification_verdicts as aggregate;
+    use crate::AggregateVerdict as V;
+
+    #[test]
+    fn qualification_aggregation_obeys_locked_precedence() {
+        assert_eq!(aggregate([V::Pass, V::Pass]), V::Pass);
+        assert_eq!(aggregate([V::Pass, V::Inconclusive]), V::Inconclusive);
+        assert_eq!(aggregate([V::Fail, V::Inconclusive]), V::Fail);
+        assert_eq!(aggregate([V::Fail, V::Invalid]), V::Invalid);
+    }
+
+    #[test]
+    fn end_to_end_matrix_a_to_g_has_conservative_outcomes() {
+        use super::{QualificationScenarioRecordV1 as R, QualificationScenarioStatus as S};
+        let record = |status, verdict| R {
+            id: "case".into(),
+            source_plan_sha256: "a".repeat(64),
+            status,
+            candidate_bundle_path: None,
+            candidate_bundle_identity: None,
+            baseline_bundle_identity: None,
+            comparison_receipt_path: None,
+            comparison_receipt_sha256: None,
+            performance_verdict: None,
+            correctness_verdict: None,
+            combined_verdict: verdict,
+            reason: None,
+        };
+        let completed = |v| record(S::Completed, Some(v));
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[completed(V::Pass)]),
+            V::Pass
+        ); // A
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[completed(V::Fail)]),
+            V::Fail
+        ); // B/C
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[completed(V::Inconclusive)]),
+            V::Inconclusive
+        ); // D
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[completed(V::Invalid)]),
+            V::Invalid
+        ); // E
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[record(S::NotRun, None)]),
+            V::Invalid
+        ); // F
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[record(S::Cancelled, None)]),
+            V::Invalid
+        ); // G
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -657,6 +832,17 @@ pub fn expand_qualification_profile(
             source_plan_sha256: digest,
             source_plan_schema: parsed.schema_version.0,
             source_plan_path_context: s.plan.clone(),
+            baseline_identity: if let Some(path) = &s.baseline_bundle {
+                validate_relative(path)?;
+                let baseline = canonical_confined_path(&root, path)?;
+                let (_, input) = crate::load_baseline_bundle(&baseline).map_err(|e| {
+                    QualificationInputError::Invalid(format!("baseline is invalid: {e}"))
+                })?;
+                Some(input.identity)
+            } else {
+                None
+            },
+            baseline_path_context: s.baseline_bundle.clone(),
         });
     }
     Ok(QualificationExpansionV1 {
@@ -993,6 +1179,7 @@ mod tests {
             scenarios: vec![QualificationScenarioRef {
                 id: "baseline".into(),
                 plan: "plan.json".into(),
+                baseline_bundle: None,
             }],
             corpus: ContentInputRef {
                 path: "corpus.json".into(),

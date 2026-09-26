@@ -5,9 +5,13 @@ M001a adds a subject-neutral profile and fixed HTTP corpus input format. The pro
 ```sh
 eggbench qualify validate examples/security-profile.json --json
 eggbench qualify expand examples/security-profile.json --json
+eggbench qualify run examples/security-profile.json --output target/security-qualification
+eggbench qualify inspect target/security-qualification/qualification-receipt.json --json
 ```
 
-The current CLI treats the profile's containing directory as the explicit workspace root. Every profile, plan, corpus, body, and target configuration path is confined to that root. Expansion hashes exact plan bytes and normalized content-tree records; it does not execute a scenario or infer expectations from a baseline.
+The current CLI treats the profile's containing directory as the explicit workspace root. Every profile, plan, corpus, body, target configuration, and optional baseline path is confined to that root. A scenario may declare `"baseline_bundle": "baselines/reference.eggb"`; omitting it selects absolute-only comparison. Baselines are verified and their manifest identities frozen during expansion, before any candidate scenario starts. There is no automatic baseline lookup.
+
+`qualify run` executes scenarios serially in profile order through ordinary `run` and `compare`. It stages `expansion.json`, ordinary scenario bundles and comparison receipts, and publishes `qualification-receipt.json` last by atomic directory rename. Existing output directories are rejected. Fail and Inconclusive comparisons continue to later scenarios; invalid run/evidence and cancellation stop later starts. Incomplete receipts are marked Invalid and cannot claim execution completion. The receipt references immutable evidence and aggregates only the comparison's typed verdicts using Invalid > Fail > Inconclusive > Pass. `qualify inspect` verifies referenced identities and digests before displaying the receipt.
 
 Corpus requests use relative origin-form paths, bounded methods and headers, and owner-authored exact or allowed-set status expectations. Credential-bearing headers, absolute request targets, fragments, and symlinked content are rejected. Category labels are opaque owner metadata.
 
