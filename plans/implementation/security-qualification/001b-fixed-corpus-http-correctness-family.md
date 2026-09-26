@@ -1,8 +1,8 @@
 # Security Qualification M001b — Fixed-Corpus HTTP Correctness Family
 
-Status: authored; blocked on M001a closure
+Status: ready
 
-Repository baseline: `2c28140ed184a97f7f078b939b84eef95e187150`
+Repository baseline: `d288e5724599117ef19f9b3c831e6e095d1ccc03`
 
 Source roadmap:
 
@@ -21,7 +21,7 @@ Controlling architecture:
 
 Hard prerequisite:
 
-- Security Qualification M001a closed with stable profile/corpus/content-identity/static-binding contracts.
+- Security Qualification M001a closed at `plans/closure/security-qualification/001a-status.md` (implementation `1622054`, platform fixture follow-up `d288e57`).
 
 Primary class: capability — deterministic security correctness execution.
 

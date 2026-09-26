@@ -1,6 +1,6 @@
 # Security Qualification M001a — Profile, Corpus, Configuration Identity, and Static HTTP Bindings
 
-Status: closing
+Status: closed
 
 Repository baseline: `9a6c51781f47794b8c96b4f77387bb027df79303`
 

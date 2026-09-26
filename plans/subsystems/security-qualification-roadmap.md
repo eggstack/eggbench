@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001a closing; M001b/M001c authored and dependency-blocked)
+Status: active (M001a closed; M001b ready; M001c dependency-blocked)
 
 Long-term references:
 
@@ -303,8 +303,9 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 
 Security Qualification M001 is now implementation-planned.
 
-- M001a implementation is committed as `1622054`; hosted closure evidence is pending.
+- M001a closed at `plans/closure/security-qualification/001a-status.md` (implementation `1622054`, hosted CI run `36214130746`, live-tools run `36214130734`).
+- M001b is now dependency-ready; M001c remains blocked on M001b closure.
 - M001b is authored but hard-blocked on M001a closure.
 - M001c is authored but hard-blocked on M001b closure.
 
-No Eggsec or SynVoid upstream blocker is currently known. The next executable handoff is M001a.
+No Eggsec or SynVoid upstream blocker is currently known. The next executable handoff is M001b.
