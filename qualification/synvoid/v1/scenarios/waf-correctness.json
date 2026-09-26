@@ -1,0 +1,55 @@
+{
+  "schema_version": 8,
+  "experiment": "synvoid-waf-correctness-synthetic",
+  "subject": { "kind": "label", "label": "synvoid-synthetic-stand-in" },
+  "services": [
+    {
+      "name": "origin",
+      "kind": { "kind": "named", "service_type": "eggserve-origin" },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": { "path": "/search", "body_bytes": "1024", "status": "200" },
+      "http_url": null,
+      "readiness": { "kind": "delay", "after_ms": 200 },
+      "shutdown": { "grace_ms": 3000, "method": null },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    },
+    {
+      "name": "synvoid",
+      "kind": { "kind": "command", "argv": ["stubs/fake_synvoid.py", "--port", "18080"] },
+      "lifecycle": "managed",
+      "depends_on": ["origin"],
+      "config": {},
+      "http_url": "http://127.0.0.1:18080/",
+      "readiness": { "kind": "delay", "after_ms": 500 },
+      "shutdown": { "grace_ms": 3000, "method": null },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    }
+  ],
+  "workload": { "kind": "finite_count", "target": "synvoid", "requests": 4, "concurrency": 1 },
+  "trials": {
+    "measured": 1,
+    "warmup": 0,
+    "cooldown_ms": 1,
+    "reset": { "kind": "none" },
+    "timeouts": { "measurement": 10000, "drain": 5000 }
+  },
+  "telemetry": [],
+  "metrics": [],
+  "environment_policy": { "kind": "strict_same_testbed" },
+  "seed": 11,
+  "http_corpus_checks": [
+    {
+      "id": "synvoid-waf",
+      "source": "eggbench-http-corpus",
+      "target": "synvoid",
+      "corpus_ref": "corpus.json",
+      "corpus_sha256": "bc79a42f20fe171f2243fd9040a846d70eedec18dc4d1197b63543e96f1f6d82",
+      "timeout_ms": 30000,
+      "case_timeout_ms": 2000
+    }
+  ],
+  "bounds": { "artifact_count": 256, "artifact_bytes": 16777216, "total_bytes": 268435456 }
+}

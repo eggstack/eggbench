@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "synvoid-perf-v1",
+  "owner": "Eggbench M002b synthetic fixture (upstream SynVoid export pending)",
+  "scenarios": [
+    { "id": "synvoid-waf-correctness", "plan": "scenarios/waf-correctness.json" },
+    {
+      "id": "synvoid-benign-small-native-c1",
+      "plan": "scenarios/perf-small-c1.json",
+      "baseline_bundle": "baselines/perf-small-c1.eggb"
+    },
+    {
+      "id": "synvoid-benign-small-native-c8",
+      "plan": "scenarios/perf-small-c8.json",
+      "baseline_bundle": "baselines/perf-small-c8.eggb"
+    },
+    {
+      "id": "synvoid-benign-small-native-c32",
+      "plan": "scenarios/perf-small-c32.json",
+      "baseline_bundle": "baselines/perf-small-c32.eggb"
+    },
+    {
+      "id": "synvoid-large-response-native-c1",
+      "plan": "scenarios/perf-large-c1.json",
+      "baseline_bundle": "baselines/perf-large-c1.eggb"
+    },
+    {
+      "id": "synvoid-large-response-native-c8",
+      "plan": "scenarios/perf-large-c8.json",
+      "baseline_bundle": "baselines/perf-large-c8.eggb"
+    },
+    {
+      "id": "synvoid-large-response-native-c32",
+      "plan": "scenarios/perf-large-c32.json",
+      "baseline_bundle": "baselines/perf-large-c32.eggb"
+    },
+    {
+      "id": "origin-benign-small-native-control",
+      "plan": "scenarios/control-small.json",
+      "baseline_bundle": "baselines/control-small.eggb"
+    },
+    {
+      "id": "origin-large-response-native-control",
+      "plan": "scenarios/control-large.json",
+      "baseline_bundle": "baselines/control-large.eggb"
+    }
+  ],
+  "corpus": { "path": "corpus.json" },
+  "target_config": { "path": "target-config.json" }
+}

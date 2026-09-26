@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "synvoid-smoke-v1",
+  "owner": "Eggbench M002b synthetic fixture (upstream SynVoid export pending)",
+  "scenarios": [
+    { "id": "synvoid-waf-correctness", "plan": "scenarios/waf-correctness.json" },
+    { "id": "synvoid-benign-small-native-c1", "plan": "scenarios/smoke-small.json" },
+    { "id": "synvoid-large-response-native-c1", "plan": "scenarios/smoke-large.json" },
+    { "id": "origin-benign-small-native-control", "plan": "scenarios/control-small.json" },
+    { "id": "origin-large-response-native-control", "plan": "scenarios/control-large.json" }
+  ],
+  "corpus": { "path": "corpus.json" },
+  "target_config": { "path": "target-config.json" }
+}

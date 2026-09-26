@@ -1,0 +1,77 @@
+{
+  "schema_version": 8,
+  "experiment": "origin-small-control-synthetic",
+  "subject": {
+    "kind": "label",
+    "label": "synvoid-synthetic-stand-in"
+  },
+  "services": [
+    {
+      "name": "origin",
+      "kind": {
+        "kind": "named",
+        "service_type": "eggserve-origin"
+      },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {
+        "path": "/bench/small",
+        "body_bytes": "1024",
+        "status": "200"
+      },
+      "http_url": null,
+      "readiness": {
+        "kind": "delay",
+        "after_ms": 200
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    }
+  ],
+  "workload": {
+    "kind": "finite_count",
+    "target": "origin",
+    "requests": 50,
+    "concurrency": 1
+  },
+  "trials": {
+    "measured": 2,
+    "warmup": 1,
+    "cooldown_ms": 50,
+    "reset": {
+      "kind": "none"
+    },
+    "timeouts": {
+      "measurement": 120000,
+      "drain": 10000
+    }
+  },
+  "telemetry": [],
+  "metrics": [
+    {
+      "name": "error_rate",
+      "unit": "ratio",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "primary",
+      "gate": {
+        "kind": "absolute",
+        "value": 0.0
+      }
+    }
+  ],
+  "environment_policy": {
+    "kind": "strict_same_testbed"
+  },
+  "seed": 30,
+  "bounds": {
+    "artifact_count": 256,
+    "artifact_bytes": 16777216,
+    "total_bytes": 268435456
+  }
+}

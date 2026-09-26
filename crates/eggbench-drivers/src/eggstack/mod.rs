@@ -97,6 +97,11 @@ pub fn eggfetch_http_descriptor() -> DriverDescriptor {
     capabilities.insert(Capability::NetworkPath);
     let mut compatible = BTreeSet::new();
     compatible.insert(Name::new(EGGSERVE_ORIGIN_SERVICE_TYPE).expect("static service name"));
+    // M001a static `http_url` bindings let a managed command subject expose a
+    // loopback endpoint (Security Qualification M002a/M002b SynVoid profile).
+    // Eggfetch drives targets through that binding, so `command` services are
+    // drivable; a missing binding still fails closed at execution time.
+    compatible.insert(Name::new("command").expect("static service kind"));
     DriverDescriptor {
         name: Name::new(EGGFETCH_HTTP_DRIVER_NAME).expect("static driver name"),
         adapter_version: EGGSTACK_ADAPTER_VERSION.to_owned(),

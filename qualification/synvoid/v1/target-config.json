@@ -1,0 +1,12 @@
+{
+  "contract": "synvoid-qualification-target.v1",
+  "note": "Synthetic stand-in for routine tests. Live qualification replaces this file with the SynVoid-owned materialized config identity (see upstream-manifest.md).",
+  "policy_id": "synvoid-qualification-assets.v1",
+  "expected_tree": ["config/main.toml", "config/sites/bench.toml"],
+  "listen": { "host": "127.0.0.1", "port": 18080 },
+  "origin": { "url": "http://127.0.0.1:18081/search" },
+  "mapping": {
+    "detect": { "status_any_of": [403] },
+    "pass": { "status_exact": 200 }
+  }
+}

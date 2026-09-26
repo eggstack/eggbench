@@ -358,6 +358,13 @@ fn descriptors_carry_exact_sibling_versions() {
             .compatible_service_types
             .contains(&Name::new(EGGSERVE_ORIGIN_SERVICE_TYPE).unwrap())
     );
+    // M002a: managed command subjects with a static `http_url` binding
+    // (e.g. the SynVoid qualification subject) are drivable targets.
+    assert!(
+        fetch
+            .compatible_service_types
+            .contains(&Name::new("command").unwrap())
+    );
     // Only truthful closed-loop capabilities are advertised.
     assert!(fetch.capabilities.iter().any(|capability| matches!(
         capability,

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "synvoid-waf-correctness-v1",
+  "owner": "Eggbench M002a synthetic fixture (upstream SynVoid export pending)",
+  "scenarios": [{ "id": "synvoid-waf-correctness", "plan": "scenarios/waf-correctness.json" }],
+  "corpus": { "path": "corpus.json" },
+  "target_config": { "path": "target-config.json" }
+}

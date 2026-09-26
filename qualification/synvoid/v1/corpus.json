@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "owner": "Eggbench M002a synthetic fixture (NOT a SynVoid-owned export)",
+  "corpus_id": "synvoid-waf-synthetic-v1",
+  "cases": [
+    {
+      "id": "benign-search-coffee",
+      "category": "synvoid-source:benign_query_strings/pass",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/search?q=how+to+make+coffee&category=recipes&sort=popular",
+        "headers": [],
+        "body": { "kind": "none" }
+      },
+      "expectation": { "status_exact": 200 }
+    },
+    {
+      "id": "benign-search-encoded",
+      "category": "synvoid-source:benign_url_encoding/pass (repathed to /search; see README)",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/search?name=John%20Doe&city=New%20York&filter=price%3C100",
+        "headers": [],
+        "body": { "kind": "none" }
+      },
+      "expectation": { "status_exact": 200 }
+    },
+    {
+      "id": "benign-search-unicode",
+      "category": "synvoid-source:benign_percent_encoded_unicode/pass (relocated to query; see README)",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/search?q=caf%C3%A9+%C3%B1",
+        "headers": [],
+        "body": { "kind": "none" }
+      },
+      "expectation": { "status_exact": 200 }
+    },
+    {
+      "id": "detect-path-traversal",
+      "category": "synvoid-source:path_traversal_literal/detect",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/files/../../etc/passwd",
+        "headers": [],
+        "body": { "kind": "none" }
+      },
+      "expectation": { "status_exact": 403 }
+    },
+    {
+      "id": "detect-xss-path",
+      "category": "synvoid-source:xss_percent_encoded/detect",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/search/%3Cscript%3Ealert(1)%3C/script%3E",
+        "headers": [],
+        "body": { "kind": "none" }
+      },
+      "expectation": { "status_exact": 403 }
+    }
+  ]
+}

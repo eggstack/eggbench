@@ -1,0 +1,41 @@
+{
+  "policy_id": "synvoid-qualification-assets.v1",
+  "policy_version": "0-synthetic",
+  "materializer": "eggbench-m002a-synthetic-fixture/0",
+  "source_sha": "7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1",
+  "package_version": "1.1.0",
+  "cargo_lock_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_fixture_digest": "synthetic-fixture-no-source-claim",
+  "excluded_fixture_ids": [
+    { "id": "cl_te_smuggling_detected", "reason": "hop-by-hop Transfer-Encoding forbidden by M001 corpus contract" },
+    { "id": "raw_cl_te_smuggling", "reason": "hop-by-hop Transfer-Encoding forbidden by M001 corpus contract" },
+    { "id": "chunk_boundary_split", "reason": "hop-by-hop Transfer-Encoding forbidden by M001 corpus contract" },
+    { "id": "normal_basic_auth_failure", "reason": "credential-bearing Authorization header forbidden by M001 corpus contract" },
+    { "id": "cache_purge_auth", "reason": "credential-bearing auth header and non-GET method outside M002a allowlist" },
+    { "id": "query_string_proxy_path", "reason": "absolute target URL forbidden by M001 corpus contract" },
+    { "id": "ssrf_decimal_private_ip", "reason": "absolute target URL forbidden by M001 corpus contract" },
+    { "id": "ssrf_encoded_private_ip", "reason": "absolute target URL forbidden by M001 corpus contract" },
+    { "id": "ssrf_localhost_variations", "reason": "absolute target URL forbidden by M001 corpus contract" },
+    { "id": "ssrf_octal_private_ip", "reason": "absolute target URL forbidden by M001 corpus contract" },
+    { "id": "sqli_invalid_utf8", "reason": "non-UTF8 material outside M002a text-only allowlist" },
+    { "id": "xss_invalid_utf8", "reason": "non-UTF8 material outside M002a text-only allowlist" },
+    { "id": "xss_mixed_overlong_canonical", "reason": "overlong encoding outside M002a canonical-encoding allowlist" },
+    { "id": "benign_json_body", "reason": "POST request body outside M002a GET-only allowlist" },
+    { "id": "multipart_field_attack", "reason": "multipart body outside M002a GET-only allowlist" },
+    { "id": "normal_admin_auth_failure", "reason": "POST form body outside M002a GET-only allowlist" },
+    { "id": "normal_binary_upload", "reason": "binary body outside M002a text-only allowlist" },
+    { "id": "normal_multipart_upload", "reason": "multipart body outside M002a GET-only allowlist" },
+    { "id": "benign_overlong_unicode", "reason": "non-canonical path encoding outside M002a allowlist" },
+    { "id": "serverless_route_bypass", "reason": "deferred: dot-segment path semantics need live verification" },
+    { "id": "xff_external_ip_attack", "reason": "header-entry case outside M002a GET path/query allowlist" },
+    { "id": "xff_trusted_proxy_chain", "reason": "header-entry case outside M002a GET path/query allowlist" }
+  ],
+  "corpus_digest": "RECOMPUTED-BY-HARNESS",
+  "config_digest": "synthetic-fixture-no-config-tree",
+  "listen": { "host": "127.0.0.1", "port": 18080 },
+  "origin": { "url": "http://127.0.0.1:18081/search" },
+  "mapping": {
+    "detect": { "status_any_of": [403] },
+    "pass": { "status_exact": 200 }
+  }
+}

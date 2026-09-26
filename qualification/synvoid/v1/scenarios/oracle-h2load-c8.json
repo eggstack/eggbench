@@ -1,0 +1,113 @@
+{
+  "schema_version": 8,
+  "experiment": "synvoid-small-h2load-c8-synthetic",
+  "subject": {
+    "kind": "label",
+    "label": "synvoid-synthetic-stand-in"
+  },
+  "services": [
+    {
+      "name": "origin",
+      "kind": {
+        "kind": "named",
+        "service_type": "eggserve-origin"
+      },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {
+        "path": "/bench/small",
+        "body_bytes": "1024",
+        "status": "200"
+      },
+      "http_url": null,
+      "readiness": {
+        "kind": "delay",
+        "after_ms": 200
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    },
+    {
+      "name": "synvoid",
+      "kind": {
+        "kind": "command",
+        "argv": [
+          "stubs/fake_synvoid.py",
+          "--port",
+          "18080"
+        ]
+      },
+      "lifecycle": "managed",
+      "depends_on": [
+        "origin"
+      ],
+      "config": {},
+      "http_url": "http://127.0.0.1:18080/bench/small",
+      "readiness": {
+        "kind": "delay",
+        "after_ms": 500
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    }
+  ],
+  "workload": {
+    "kind": "finite_count",
+    "target": "synvoid",
+    "requests": 400,
+    "concurrency": 8
+  },
+  "trials": {
+    "measured": 5,
+    "warmup": 1,
+    "cooldown_ms": 50,
+    "reset": {
+      "kind": "none"
+    },
+    "timeouts": {
+      "measurement": 60000,
+      "drain": 10000
+    }
+  },
+  "telemetry": [],
+  "metrics": [
+    {
+      "name": "throughput",
+      "unit": "rps",
+      "direction": {
+        "kind": "higher_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "error_rate",
+      "unit": "ratio",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "primary",
+      "gate": {
+        "kind": "absolute",
+        "value": 0.0
+      }
+    }
+  ],
+  "environment_policy": {
+    "kind": "strict_same_testbed"
+  },
+  "seed": 33,
+  "bounds": {
+    "artifact_count": 256,
+    "artifact_bytes": 16777216,
+    "total_bytes": 268435456
+  }
+}
