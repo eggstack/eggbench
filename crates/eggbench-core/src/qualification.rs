@@ -425,7 +425,7 @@ mod suite_policy_tests {
     #[test]
     fn end_to_end_matrix_a_to_g_has_conservative_outcomes() {
         use super::{QualificationScenarioRecordV1 as R, QualificationScenarioStatus as S};
-        let record = |status, verdict| R {
+        let record = |status, perf, correctness, verdict| R {
             id: "case".into(),
             source_plan_sha256: "a".repeat(64),
             status,
@@ -434,34 +434,58 @@ mod suite_policy_tests {
             baseline_bundle_identity: None,
             comparison_receipt_path: None,
             comparison_receipt_sha256: None,
-            performance_verdict: None,
-            correctness_verdict: None,
+            performance_verdict: perf,
+            correctness_verdict: correctness,
             combined_verdict: verdict,
             reason: None,
         };
-        let completed = |v| record(S::Completed, Some(v));
+        let completed = |p, c, v| record(S::Completed, p, c, Some(v));
         assert_eq!(
-            super::aggregate_qualification_scenarios(&[completed(V::Pass)]),
+            super::aggregate_qualification_scenarios(&[completed(
+                Some(V::Pass),
+                Some(V::Pass),
+                V::Pass
+            )]),
             V::Pass
         ); // A
         assert_eq!(
-            super::aggregate_qualification_scenarios(&[completed(V::Fail)]),
+            super::aggregate_qualification_scenarios(&[completed(
+                Some(V::Pass),
+                Some(V::Fail),
+                V::Fail
+            )]),
             V::Fail
-        ); // B/C
+        ); // B
         assert_eq!(
-            super::aggregate_qualification_scenarios(&[completed(V::Inconclusive)]),
+            super::aggregate_qualification_scenarios(&[completed(
+                Some(V::Fail),
+                Some(V::Pass),
+                V::Fail
+            )]),
+            V::Fail
+        ); // C
+        assert_eq!(
+            super::aggregate_qualification_scenarios(&[completed(
+                Some(V::Inconclusive),
+                Some(V::Pass),
+                V::Inconclusive
+            )]),
             V::Inconclusive
         ); // D
         assert_eq!(
-            super::aggregate_qualification_scenarios(&[completed(V::Invalid)]),
+            super::aggregate_qualification_scenarios(&[completed(
+                Some(V::Pass),
+                Some(V::Invalid),
+                V::Invalid
+            )]),
             V::Invalid
         ); // E
         assert_eq!(
-            super::aggregate_qualification_scenarios(&[record(S::NotRun, None)]),
+            super::aggregate_qualification_scenarios(&[record(S::NotRun, None, None, None)]),
             V::Invalid
         ); // F
         assert_eq!(
-            super::aggregate_qualification_scenarios(&[record(S::Cancelled, None)]),
+            super::aggregate_qualification_scenarios(&[record(S::Cancelled, None, None, None)]),
             V::Invalid
         ); // G
     }
