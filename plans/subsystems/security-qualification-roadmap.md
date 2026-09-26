@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (planning; M001 implementation unblocked by Eggstack M004b closure)
+Status: active (M001 research grounded; implementation plans not yet authored)
 
 Long-term references:
 
@@ -26,6 +26,208 @@ Eggbench does not decide whether a payload is malicious or whether a WAF/scanner
 - Local/private lab targets are the safe default.
 - No unbounded stress or flood profile is introduced as ordinary CI.
 - Security payload/log redaction requirements are explicit.
+
+## 2A. M001 handoff research — 2026-09-26
+
+M001 was re-audited after Eggstack M004 closure. The main conclusion is that
+M004 already owns the generic one-run correctness execution/evidence and
+combined-verdict substrate. M001 should not become "more M004" or broaden the
+Eggsec scanner adapter. Its missing layer is a reusable qualification
+profile/corpus contract that can expand deterministically into ordinary
+Eggbench experiments while carrying immutable security-test identity.
+
+### Existing Eggbench substrate
+
+M004 provides:
+
+- schema-v6 `security_checks`;
+- the sibling-neutral `CorrectnessExecutor` / `CorrectnessRegistry` seam;
+- an initial `waf_bypass` correctness family backed by strict-scope Eggsec;
+- sanitized per-check evidence;
+- comparison-critical correctness identity;
+- ComparisonReceipt v3 with separate performance and correctness verdicts;
+- `eggbench.security-correctness.v1` and conservative combined precedence.
+
+That v1 correctness policy is explicitly tied to Eggsec WAF bypass counts.
+`CorrectnessObserved` currently has only `WafBypass` and
+`CorrectnessExpectationRecord` only `MaxSuccessfulBypasses`. M001 must not
+silently reinterpret or extend that policy identifier.
+
+M003a also contains a useful bounded deterministic directory/file identity
+implementation for EggReplay fixtures. M001 should extract/generalize that
+workspace-confined hashing primitive rather than create a second ad hoc corpus
+or configuration digest algorithm.
+
+### Current subject/runtime-binding gap
+
+The runner currently accumulates runtime bindings from registered named
+in-process service adapters. Managed command services and observed external
+services do not themselves publish an `http_url` binding.
+
+Security Qualification must keep SynVoid a benchmark subject/process, not add
+a SynVoid Rust dependency or SynVoid-specific in-process service adapter.
+Therefore M001 planning needs a small generic non-secret static/runtime HTTP
+binding contract for command/external services (or an equivalent runner-owned
+binding source) so a local process subject can be targeted by correctness and
+workload drivers without subject-specific code.
+
+### SynVoid audit
+
+Current audited SynVoid source:
+
+`dbowm91/synvoid@174fdbcd6f133b35099ed4492f5ed8d3fcaa7d4c`
+
+SynVoid already owns a useful security corpus under
+`crates/synvoid-waf/tests/fixtures/waf`. Request fixtures carry stable case
+IDs, request method/path/headers/query/body inputs, an owner-defined
+`detect|pass` expectation, and attack-family labels. The corpus includes
+benign controls plus SQLi, XSS, path traversal, SSRF, request-smuggling and
+other cases.
+
+SynVoid also owns a canonical enforcement vocabulary
+(`Allow/Observe/Challenge/Stall/Tarpit/Block/Drop`) and WAF configuration
+whose attack-detection action may be `stall`, `block`, or `log`.
+
+Eggbench must not import those internal types or decide what constitutes an
+attack. For the first reusable qualification contract, the profile owner
+should supply an observable HTTP expectation. A SynVoid M002 profile can
+configure attack detection to `block`, then map its own source expectations
+to deterministic external behavior (for example blocked status versus
+controlled-origin success) before Eggbench executes the corpus. Challenge,
+stall, tarpit, drop, and internal enforcement-reason semantics remain later
+profile work.
+
+SynVoid's existing performance campaign already covers the useful future M002
+axes: benign and suspicious WAF traffic, representative body sizes,
+concurrency 1/8/32/128, end-to-end throughput/tail latency, event-loop lag and
+RSS. M001 should provide the reusable contract for these scenarios, not copy
+SynVoid's benchmark implementation.
+
+### Eggsec re-audit
+
+Current Eggsec main observed during this research is
+`d412e204e1866a8ea09d1d9d6e8be66f4a9097e2`; the closed M004 qualification
+remains pinned to its audited `0509ac66...` source contract.
+
+Eggsec contains internal WAF behavior/regression and provider-profile types,
+but those are not newly promoted M001 machine seams. M001 should not depend on
+them or replace M004's external strict-scope adapter. No Eggsec upstream
+change is required for the profile/corpus layer identified here.
+
+### Required M001 contract
+
+The recommended M001 architecture is three ordered implementation stages; the
+implementation plans have not yet been authored.
+
+**M001a — qualification profile, corpus, and configuration identity**
+
+Introduce a versioned `SecurityQualificationProfile` separate from
+`ExperimentPlan`. V1 should reference explicit bounded scenario plan files
+rather than invent an arbitrary templating/JSON-patch language. Resolution
+produces a deterministic expansion manifest containing profile/scenario order,
+normal ExperimentPlan identities, corpus identity, target-configuration
+identity, and expansion-policy version.
+
+Introduce an Eggbench-owned normalized HTTP security corpus envelope whose
+cases contain only transport/request data plus an owner-authored observable
+expectation. Attack-family/category labels are opaque provenance, not semantics
+interpreted by Eggbench. Initial expectations should be deliberately narrow:
+HTTP status exact/set matching. Binary or non-UTF8 request material may be
+referenced through workspace-confined body files.
+
+Corpus and target-configuration inputs must use the same generalized bounded
+content-tree identity: canonical relative paths, lengths and SHA-256 values,
+with symlink escape and aggregate-size bounds. The source path is operator
+context; the digest is the comparison identity.
+
+Expected outcomes are frozen before candidate execution. A baseline result
+must never redefine the expected security behavior.
+
+**M001b — fixed-corpus HTTP correctness family**
+
+Add a new correctness source/family that sends the already-declared corpus
+requests through the existing Eggfetch HTTP stack to a local/private runtime
+binding and compares only the observable result with the predeclared
+expectation. It is a deterministic case executor, not a scanner: it does not
+generate payloads, classify attacks, infer severity, or interpret SynVoid
+internals.
+
+Persist sanitized case evidence (case ID, request/case digest, expected
+observable outcome, observed outcome, pass/fail) without retaining attack
+payload bytes in the bundle.
+
+Because `eggbench.security-correctness.v1` is explicitly the M004
+`waf_bypass` contract, M001 should use a new correctness policy identifier.
+A ComparisonReceipt schema v4 is the preferred compatibility boundary if the
+typed correctness observation/expectation enums gain new corpus variants;
+legacy v1-v3 receipts and the M004 v1 security policy remain unchanged.
+
+The initial corpus family stays local/private and direct. It should reject
+public targets, credentials/secrets in corpus headers, arbitrary proxy/routing,
+paired-security execution, and any expectation that depends on timing.
+
+**M001c — qualification execution/receipt and M001 closure**
+
+Add a bounded profile/suite execution surface that runs the explicit expanded
+scenarios using normal Eggbench run/compare machinery. A versioned
+qualification receipt references immutable scenario bundle and comparison
+receipt identities and aggregates scenario verdicts conservatively
+(`Invalid > Fail > Inconclusive > Pass`). It must not recompute metric
+statistics, reinterpret security semantics, or create a weighted
+security/performance score.
+
+A profile-level result therefore answers "did every required scenario satisfy
+its already-defined correctness and performance gates?" while preserving each
+ordinary run/receipt as the evidence authority.
+
+CLI work should stay profile-oriented (validate/expand/qualify or equivalent)
+rather than overloading the ordinary single-plan `run` contract. A generic
+matrix/template language is deferred; explicit scenarios are sufficient for
+M001 and keep expansion deterministic.
+
+### M001 evidence identity
+
+At minimum the profile/suite evidence must bind:
+
+- profile schema, ID and content digest;
+- expansion-policy version;
+- ordered scenario IDs and generated/resolved plan identities;
+- corpus schema, owner/source provenance and aggregate digest;
+- target configuration input digest;
+- owner-authored expectation policy/version;
+- correctness adapter policy/version;
+- workload/performance plan identity already carried by each scenario;
+- subject revision/digest and normal testbed identity;
+- scenario bundle and comparison-receipt digests in the final suite receipt.
+
+Observed security outcomes, timings, timestamps and local source paths are
+results/presentation, not configuration identity.
+
+### Safety and ownership boundaries
+
+- local/private targets remain the default and initial M001 requirement;
+- corpus inputs are immutable, workspace-confined and bounded;
+- raw attack payloads are not copied into portable evidence;
+- authorization/scope remains owned by the producing security tool/profile;
+- no SynVoid or Eggsec Rust dependency enters Eggbench core;
+- no scanner payload-generation logic is implemented in Eggbench;
+- resource/performance metrics continue to use existing workload/telemetry
+  drivers and M004 combined-verdict semantics.
+
+### Upstream/blocker disposition
+
+No Eggsec or SynVoid upstream implementation blocker was identified for M001.
+The SynVoid corpus is sufficient as a future M002 source fixture and its
+observable block configuration can be made deterministic without promoting
+SynVoid internals into Eggbench.
+
+The substantive Eggbench-owned prerequisites are the reusable input-tree
+digest extraction, the generic process/external HTTP binding seam, the
+profile/corpus schemas, and the new fixed-corpus correctness family/policy.
+
+M001 implementation planning should therefore be authored in Eggbench as the
+next handoff. M002 remains responsible for the concrete SynVoid reproducible
+suite after M001 closes.
 
 ## 3. Initial target: SynVoid
 
@@ -87,8 +289,4 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 - M004a (`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`) is closed and establishes the first strict Eggsec correctness executor/evidence contract.
 - M004b (`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`) is closed and establishes the generic independent correctness gate family plus combined verdict precedence.
 
-Security Qualification M001 is unblocked for its own implementation planning/handoff.
-
-M001 now owns reusable named profiles, corpora/config digests, expected-outcome
-matrices, and broader security-domain semantics rather than rebuilding M004's
-generic gate substrate. No M001 implementation plan is authored yet.
+Security Qualification M001 research is now grounded in §2A and is unblocked for implementation-plan authoring. M001 owns the profile/corpus/config identity, fixed-corpus correctness, and qualification-receipt layer above M004; no M001 implementation plan is authored yet.
