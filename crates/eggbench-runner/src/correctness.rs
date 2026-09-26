@@ -55,6 +55,8 @@ pub struct CorrectnessContext {
     pub cancellation: CancellationToken,
     /// Per-check timeout (mirrors `timeout_ms` as a `Duration`).
     pub timeout: Duration,
+    /// Fixed corpus request when this executor serves `eggbench-http-corpus`.
+    pub http_corpus_request: Option<eggbench_core::HttpCorpusCheckRequest>,
 }
 
 /// Typed correctness observation for one check.

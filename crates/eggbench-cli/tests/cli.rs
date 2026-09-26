@@ -2136,7 +2136,7 @@ async fn paired_compare_clear_regression_fails_with_code_six() {
         body["result"]["receipt"]["policy_id"],
         "eggbench.trial-bootstrap-paired.v1"
     );
-    assert_eq!(body["result"]["receipt"]["schema_version"], 3);
+    assert_eq!(body["result"]["receipt"]["schema_version"], 4);
     assert_eq!(body["result"]["receipt"]["performance_verdict"], "fail");
     assert_eq!(
         body["result"]["receipt"]["paired"]["schedule"],

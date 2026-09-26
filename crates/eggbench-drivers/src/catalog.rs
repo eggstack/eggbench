@@ -148,7 +148,11 @@ mod tests {
             "oha".to_owned(),
         ];
         #[cfg(feature = "eggstack-http")]
-        expected.extend(["eggfetch-http".to_owned(), "eggserve-origin".to_owned()]);
+        expected.extend([
+            "eggbench-http-corpus".to_owned(),
+            "eggfetch-http".to_owned(),
+            "eggserve-origin".to_owned(),
+        ]);
         #[cfg(feature = "eggstack-path")]
         expected.extend(["eggress-route".to_owned(), "eggchaos-stream".to_owned()]);
         #[cfg(feature = "gregg")]

@@ -767,10 +767,11 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     cancel: &CancellationToken,
 ) -> Result<RunOutcome, OrchestrationError> {
     let config = preflight(resolved, resets)?;
+    preflight_http_corpus_inputs(resolved)?;
     let trial_count = resolved.trials.measured.get();
     let warmup_count = resolved.trials.warmup;
     let diagnostic_executions = diagnostic_execution_count(resolved);
-    let correctness_executions = resolved.security_checks.len();
+    let correctness_executions = resolved.security_checks.len() + resolved.http_corpus_checks.len();
     let phase_bound = usize::try_from(warmup_count)
         .ok()
         .and_then(|warmups| {
@@ -1682,6 +1683,25 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     })
 }
 
+fn preflight_http_corpus_inputs(
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<(), OrchestrationError> {
+    if resolved.http_corpus_checks.is_empty() {
+        return Ok(());
+    }
+    let workspace = std::env::current_dir()
+        .map_err(|_| OrchestrationError::Preflight("cannot resolve corpus workspace"))?;
+    for request in &resolved.http_corpus_checks {
+        eggbench_core::load_http_security_corpus(
+            &workspace,
+            &request.corpus_ref,
+            &request.corpus_sha256,
+        )
+        .map_err(|_| OrchestrationError::Preflight("HTTP corpus input is invalid"))?;
+    }
+    Ok(())
+}
+
 enum InvocationResult {
     Completed(WorkloadOutput, Duration, u64),
     Failure(FailureCategory, Duration, u64),
@@ -1962,6 +1982,13 @@ fn preflight_correctness(
         if correctness.lookup(request.source.as_str()).is_none() {
             return Err(OrchestrationError::Preflight(
                 "required correctness executor is not registered",
+            ));
+        }
+    }
+    for request in &resolved.http_corpus_checks {
+        if correctness.lookup(request.source.as_str()).is_none() {
+            return Err(OrchestrationError::Preflight(
+                "required HTTP corpus correctness executor is not registered",
             ));
         }
     }
@@ -2249,6 +2276,7 @@ async fn run_correctness_phase(
             bindings: bindings.clone(),
             cancellation: cancel.child_token(),
             timeout: Duration::from_millis(request.timeout_ms.get()),
+            http_corpus_request: None,
         };
         let outcome = {
             let mut guard = handle.lock().await;
@@ -2310,6 +2338,159 @@ async fn run_correctness_phase(
             state.primary_failure = Some(FailureCategory::Cancelled);
         }
     }
+    for request in resolved.http_corpus_checks.clone() {
+        if cancel.is_cancelled() {
+            state.status = ExecutionStatus::Cancelled;
+            state.primary_failure = Some(FailureCategory::Cancelled);
+            break;
+        }
+        let index = begin_phase(
+            &mut state.phases,
+            PhaseKind::CorrectnessChecks,
+            None,
+            None,
+            origin,
+        );
+        let Some(handle) = correctness.lookup(request.source.as_str()) else {
+            state.staging_error = Some(BundleError::InvalidManifest(
+                "HTTP corpus correctness executor is not registered",
+            ));
+            state.status = ExecutionStatus::Failed;
+            finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+            break;
+        };
+        let context = CorrectnessContext {
+            run_id,
+            check_id: request.id.as_str().to_owned(),
+            source: request.source.as_str().to_owned(),
+            target: request.target.as_str().to_owned(),
+            test_type: "http_observable".to_owned(),
+            max_successful_bypasses: 0,
+            concurrency: 1,
+            timeout_ms: request.timeout_ms.get(),
+            bindings: bindings.clone(),
+            cancellation: cancel.child_token(),
+            timeout: Duration::from_millis(request.timeout_ms.get()),
+            http_corpus_request: Some(request.clone()),
+        };
+        let outcome = {
+            let mut guard = handle.lock().await;
+            let exec_timeout = context
+                .timeout
+                .checked_add(Duration::from_secs(5))
+                .unwrap_or(context.timeout);
+            tokio::select! {
+                () = cancel.cancelled() => Err(FailureCategory::Cancelled),
+                result = timeout(exec_timeout, guard.execute(context)) => match result {
+                    Ok(result) => result,
+                    Err(_) => Err(FailureCategory::TimedOut),
+                },
+            }
+        };
+        match outcome {
+            Ok(output) => match stage_http_corpus_record(state, &request, &output) {
+                Ok(has_invalid) => {
+                    if has_invalid {
+                        state.status = ExecutionStatus::Invalid;
+                        state.primary_failure = Some(FailureCategory::CorrectnessFailed);
+                    }
+                    finish_phase(
+                        &mut state.phases,
+                        index,
+                        origin,
+                        PhaseOutcome::Completed,
+                        None,
+                    );
+                    if has_invalid {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    state.staging_error = Some(error);
+                    state.status = ExecutionStatus::Failed;
+                    finish_phase(&mut state.phases, index, origin, PhaseOutcome::Failed, None);
+                    break;
+                }
+            },
+            Err(category) => {
+                state.status = if category == FailureCategory::Cancelled {
+                    ExecutionStatus::Cancelled
+                } else {
+                    ExecutionStatus::Invalid
+                };
+                state.primary_failure = Some(match category {
+                    FailureCategory::Cancelled | FailureCategory::TimedOut => category,
+                    _ => FailureCategory::CorrectnessFailed,
+                });
+                finish_phase(
+                    &mut state.phases,
+                    index,
+                    origin,
+                    outcome_for(category),
+                    state.primary_failure,
+                );
+                break;
+            }
+        }
+    }
+}
+
+fn stage_http_corpus_record(
+    state: &mut RunState,
+    request: &eggbench_core::HttpCorpusCheckRequest,
+    output: &crate::correctness::CorrectnessOutput,
+) -> Result<bool, BundleError> {
+    let result: eggbench_core::HttpCorpusCheckResultV1 =
+        serde_json::from_slice(&output.sanitized_result)
+            .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
+    result
+        .validate_contract()
+        .map_err(|_| BundleError::InvalidManifest("HTTP corpus result contract is invalid"))?;
+    if result.id != request.id.as_str()
+        || result.source != request.source.as_str()
+        || result.family != "http_observable"
+        || result.target != request.target.as_str()
+        || !result
+            .corpus_sha256
+            .eq_ignore_ascii_case(&request.corpus_sha256)
+        || output.sanitized_result.len() > 512 * 1024
+    {
+        return Err(BundleError::InvalidManifest(
+            "HTTP corpus result contradicts the resolved request",
+        ));
+    }
+    let (evaluated, _, failed, invalid_cases) = result.counts();
+    let expected_output_disposition = if failed > 0 {
+        CorrectnessDisposition::Fail
+    } else {
+        CorrectnessDisposition::Pass
+    };
+    if output.evaluated_cases != evaluated
+        || output.successful_bypasses != failed
+        || output.disposition != expected_output_disposition
+        || output.scope_sha256 != request.corpus_sha256.to_ascii_lowercase()
+        || output.producer_version
+            != format!(
+                "{}:{}",
+                result.adapter_semantic_version, result.eggfetch_version
+            )
+    {
+        return Err(BundleError::InvalidManifest(
+            "HTTP corpus executor metadata contradicts its sanitized result",
+        ));
+    }
+    let invalid = invalid_cases > 0;
+    let path = ArtifactPath::new(format!("security/{}.json", request.id.as_str()))?;
+    state.writer.add_artifact(
+        path,
+        ArtifactRole::Other {
+            label: crate::correctness::security_role_label(),
+        },
+        "application/json",
+        Sensitivity::Redacted,
+        output.sanitized_result.as_slice(),
+    )?;
+    Ok(invalid)
 }
 
 /// Stage one sanitized per-check result (`security/<id>.json`).
@@ -2482,6 +2663,17 @@ fn security_evidence_byte_estimate(
         .and_then(|bytes| bytes.checked_add(128 * 1024))
         .ok_or(OrchestrationError::Preflight(
             "security artifact byte bound overflow",
+        ))
+}
+
+fn http_corpus_evidence_byte_estimate(
+    resolved: &eggbench_core::ResolvedPlan,
+) -> Result<u64, OrchestrationError> {
+    u64::try_from(resolved.http_corpus_checks.len())
+        .ok()
+        .and_then(|count| count.checked_mul(512 * 1024))
+        .ok_or(OrchestrationError::Preflight(
+            "HTTP corpus artifact byte bound overflow",
         ))
 }
 
@@ -2829,6 +3021,7 @@ fn preflight_evidence_capacity(
                 "evidence artifact count overflow",
             ))?
     };
+    let http_corpus_artifact_count = resolved.http_corpus_checks.len();
     let required_count = warmups
         .checked_add(
             measured
@@ -2838,6 +3031,7 @@ fn preflight_evidence_capacity(
                 ))?,
         )
         .and_then(|count| count.checked_add(security_artifact_count))
+        .and_then(|count| count.checked_add(http_corpus_artifact_count))
         .and_then(|count| count.checked_add(3)) // phase timeline, lifecycle metadata, runtime topology
         .and_then(|count| count.checked_add(network_path_artifact_count))
         .and_then(|count| count.checked_add(log_artifact_count))
@@ -2873,6 +3067,11 @@ fn preflight_evidence_capacity(
             .max(topology_bytes)
             .max(network_path_bytes)
             .max(telemetry_bytes.floor)
+            .max(if resolved.http_corpus_checks.is_empty() {
+                0
+            } else {
+                512 * 1024
+            })
             .max(512)
     {
         return Err(OrchestrationError::Preflight(
@@ -2885,6 +3084,7 @@ fn preflight_evidence_capacity(
         .and_then(|bytes| bytes.checked_add(topology_bytes))
         .and_then(|bytes| bytes.checked_add(network_path_bytes))
         .and_then(|bytes| bytes.checked_add(security_evidence_byte_estimate(resolved).ok()?))
+        .and_then(|bytes| bytes.checked_add(http_corpus_evidence_byte_estimate(resolved).ok()?))
         .and_then(|bytes| bytes.checked_add(u64::try_from(warmups).ok()?.checked_mul(512)?))
         .and_then(|bytes| {
             // `result.json` plus normalized `metrics.json` per measured trial.

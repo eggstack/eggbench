@@ -490,6 +490,15 @@ fn static_security_summary(plan: &eggbench_core::ExperimentPlan) -> SecurityDoct
         .is_some_and(|all| !all.is_empty());
     let eggsec_name =
         eggbench_core::Name::new(eggbench_drivers::EGGSEC_DRIVER_NAME).expect("static driver name");
+    let http_corpus_requested = plan
+        .http_corpus_checks
+        .as_deref()
+        .is_some_and(|all| !all.is_empty());
+    let http_corpus_name =
+        eggbench_core::Name::new("eggbench-http-corpus").expect("static HTTP corpus driver name");
+    let http_corpus_available = eggbench_drivers::production_catalog()
+        .correctness(&http_corpus_name)
+        .is_some();
     SecurityDoctorSummary {
         requested,
         binary_present: eggbench_drivers::external_binary_present(&eggsec_name),
@@ -511,6 +520,11 @@ fn static_security_summary(plan: &eggbench_core::ExperimentPlan) -> SecurityDoct
         strict_scope_note: "external eggsec waf --json with generated exact local scope, global --strict-scope, and guarded no-network preflight; manual override flags are never used"
             .to_owned(),
         timing_note: eggbench_drivers::security_timing_label().to_owned(),
+        http_corpus_requested,
+        http_corpus_available,
+        http_corpus_policy: Some(
+            "Eggfetch HTTP/1.1, serial cases, local/private targets, no redirects or retries; paired and network_path compositions are unsupported".to_owned(),
+        ),
     }
 }
 

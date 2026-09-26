@@ -730,7 +730,7 @@ mod tests {
         // workload inventory.
         let expected_workload: usize = 4 + usize::from(cfg!(feature = "eggstack-http"));
         let expected_descriptors: usize = 6
-            + 2 * usize::from(cfg!(feature = "eggstack-http"))
+            + 3 * usize::from(cfg!(feature = "eggstack-http"))
             + 2 * usize::from(cfg!(feature = "eggstack-path"))
             + usize::from(cfg!(feature = "gregg"));
         assert!(runtime.has_workload_driver());

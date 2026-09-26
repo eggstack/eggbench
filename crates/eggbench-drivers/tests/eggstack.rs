@@ -10,12 +10,13 @@ use eggbench_core::{LoadMode, Name, RunId, Workload};
 use eggbench_drivers::{
     EGGFETCH_CORE_VERSION, EGGFETCH_HTTP_DRIVER_NAME, EGGSERVE_ORIGIN_SERVICE_TYPE,
     EGGSERVE_PRIMITIVES_VERSION, EGGSERVE_SERVER_VERSION, EggServeOriginAdapter,
-    eggfetch_http_descriptor, eggfetch_workload, eggserve_origin_descriptor,
+    HttpCorpusExecutor, eggfetch_http_descriptor, eggfetch_workload, eggserve_origin_descriptor,
     eggstack_service_adapters,
 };
 use eggbench_runner::{
-    DrainContext, FailureCategory, InvocationContext, InvocationKind, ManagedServiceAdapter,
-    ManagedServiceHandle, ServiceAdapterRegistry, ServiceStartRequest, WorkloadExecutor,
+    CorrectnessContext, CorrectnessExecutor, DrainContext, FailureCategory, InvocationContext,
+    InvocationKind, ManagedServiceAdapter, ManagedServiceHandle, ServiceAdapterRegistry,
+    ServiceStartRequest, WorkloadExecutor,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +32,140 @@ fn start_request(config: &[(&str, &str)]) -> ServiceStartRequest {
             .collect(),
         grace: Duration::from_secs(5),
     }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn fixed_http_corpus_runs_serially_and_persists_only_sanitized_outcomes() {
+    let mut origin = start_origin(&[]).await;
+    let binding = http_url(&*origin);
+    let workspace = std::env::current_dir().unwrap();
+    let temp = tempfile::tempdir_in(&workspace).unwrap();
+    let corpus_ref = format!(
+        "{}/security-corpus.json",
+        temp.path().file_name().unwrap().to_string_lossy()
+    );
+    let corpus = serde_json::json!({
+        "schema_version": 1,
+        "owner": "fixture",
+        "corpus_id": "smoke",
+        "cases": [
+            {
+                "id": "route",
+                "category": "smoke",
+                "request": {
+                    "method": "GET",
+                    "path_and_query": "/bench",
+                    "headers": [["x-fixture", "safe"]],
+                    "body": { "kind": "none" }
+                },
+                "expectation": { "status_exact": 200 }
+            },
+            {
+                "id": "body-is-not-retained",
+                "category": "smoke",
+                "request": {
+                    "method": "GET",
+                    "path_and_query": "/bench",
+                    "headers": [],
+                    "body": { "kind": "inline_utf8", "value": "never-persist-this-body" }
+                },
+                "expectation": { "status_exact": 413 }
+            },
+            {
+                "id": "allowed-status-set",
+                "category": "smoke",
+                "request": {
+                    "method": "GET",
+                    "path_and_query": "/bench",
+                    "headers": [],
+                    "body": { "kind": "none" }
+                },
+                "expectation": { "status_any_of": [201, 204] }
+            }
+        ]
+    });
+    let corpus_bytes = serde_json::to_vec(&corpus).unwrap();
+    std::fs::write(temp.path().join("security-corpus.json"), &corpus_bytes).unwrap();
+    let identity = eggbench_core::content_tree_identity(&workspace, &corpus_ref).unwrap();
+    let mut bindings = eggbench_runner::RuntimeBindings::new();
+    bindings.insert("origin", "http_url", binding).unwrap();
+    let request = eggbench_core::HttpCorpusCheckRequest {
+        id: Name::new("smoke").unwrap(),
+        source: Name::new("eggbench-http-corpus").unwrap(),
+        target: Name::new("origin").unwrap(),
+        corpus_ref,
+        corpus_sha256: identity.aggregate_sha256,
+        timeout_ms: eggbench_core::DurationMs::new(10_000).unwrap(),
+        case_timeout_ms: eggbench_core::DurationMs::new(2_000).unwrap(),
+    };
+    let output = HttpCorpusExecutor
+        .execute(CorrectnessContext {
+            run_id: RunId::new(),
+            check_id: "smoke".into(),
+            source: "eggbench-http-corpus".into(),
+            target: "origin".into(),
+            test_type: "http_observable".into(),
+            max_successful_bypasses: 0,
+            concurrency: 1,
+            timeout_ms: 10_000,
+            bindings,
+            cancellation: CancellationToken::new(),
+            timeout: Duration::from_secs(10),
+            http_corpus_request: Some(request.clone()),
+        })
+        .await
+        .expect("fixed corpus executes");
+    let result: eggbench_core::HttpCorpusCheckResultV1 =
+        serde_json::from_slice(&output.sanitized_result).unwrap();
+    assert_eq!(result.cases[0].observed_status, Some(200));
+    assert_eq!(result.cases[1].observed_status, Some(413));
+    assert_eq!(result.cases[2].observed_status, Some(200));
+    assert_eq!(result.counts(), (3, 2, 1, 0));
+    assert_eq!(
+        output.disposition,
+        eggbench_runner::CorrectnessDisposition::Fail
+    );
+    assert!(!String::from_utf8_lossy(&output.sanitized_result).contains("never-persist-this-body"));
+
+    let unavailable = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let unavailable_port = unavailable.local_addr().unwrap().port();
+    drop(unavailable);
+    let mut failed_bindings = eggbench_runner::RuntimeBindings::new();
+    failed_bindings
+        .insert(
+            "origin",
+            "http_url",
+            format!("http://127.0.0.1:{unavailable_port}/"),
+        )
+        .unwrap();
+    let invalid = HttpCorpusExecutor
+        .execute(CorrectnessContext {
+            run_id: RunId::new(),
+            check_id: "smoke".into(),
+            source: "eggbench-http-corpus".into(),
+            target: "origin".into(),
+            test_type: "http_observable".into(),
+            max_successful_bypasses: 0,
+            concurrency: 1,
+            timeout_ms: 10_000,
+            bindings: failed_bindings,
+            cancellation: CancellationToken::new(),
+            timeout: Duration::from_secs(10),
+            http_corpus_request: Some(request),
+        })
+        .await
+        .expect("transport failures become sanitized Invalid cases");
+    let invalid_result: eggbench_core::HttpCorpusCheckResultV1 =
+        serde_json::from_slice(&invalid.sanitized_result).unwrap();
+    assert_eq!(invalid_result.counts(), (3, 0, 0, 3));
+    assert!(
+        invalid_result
+            .cases
+            .iter()
+            .all(|case| case.reason.as_deref() == Some("transport_failure"))
+    );
+    origin.shutdown(Duration::from_secs(5)).await.unwrap();
 }
 
 async fn start_origin(config: &[(&str, &str)]) -> Box<dyn ManagedServiceHandle> {

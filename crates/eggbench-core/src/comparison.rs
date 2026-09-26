@@ -42,7 +42,9 @@ use thiserror::Error;
 /// Schema version of the standalone [`ComparisonReceipt`] (v3 adds the
 /// independent security-correctness section with an explicit
 /// performance-only verdict and a conservative combined verdict).
-pub const COMPARISON_RECEIPT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
+pub const COMPARISON_RECEIPT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(4);
+/// Previous receipt schema version (M004 correctness section).
+pub const COMPARISON_RECEIPT_SCHEMA_VERSION_3: SchemaVersion = SchemaVersion(3);
 /// Previous receipt schema version (paired section), still accepted on read.
 pub const COMPARISON_RECEIPT_SCHEMA_VERSION_2: SchemaVersion = SchemaVersion(2);
 /// Oldest receipt schema version, still accepted on read.
@@ -57,8 +59,12 @@ pub const COMPARISON_RECEIPT_SCHEMA_VERSION_1: SchemaVersion = SchemaVersion(1);
 /// participates in comparability. Any semantic change requires a new
 /// policy identifier.
 pub const SECURITY_CORRECTNESS_POLICY_V1: &str = "eggbench.security-correctness.v1";
+/// M001b policy including fixed-corpus HTTP observations.
+pub const SECURITY_CORRECTNESS_POLICY_V2: &str = "eggbench.security-correctness.v2";
 /// Initial M004 correctness family evaluated under the v1 policy.
 pub const SECURITY_CORRECTNESS_FAMILY_WAF_BYPASS: &str = "waf_bypass";
+/// Fixed-corpus observable HTTP response family.
+pub const SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE: &str = "http_observable";
 
 /// Immutable comparison-policy identifier for trial-level bootstrap v1.
 pub const COMPARISON_POLICY_V1: &str = "eggbench.trial-bootstrap.v1";
@@ -350,7 +356,7 @@ pub struct ComparisonWarning {
     pub detail: String,
 }
 
-/// Per-check correctness disposition (Eggstack M004b).
+/// Per-check correctness disposition shared by M004 and M001b.
 ///
 /// Missing/insufficient evidence is `Invalid`, never inconclusive: there is
 /// no `Inconclusive` in the M004 v1 per-check vocabulary.
@@ -365,7 +371,7 @@ pub enum CorrectnessDisposition {
     Invalid,
 }
 
-/// Typed correctness observation for one check (Eggstack M004b).
+/// Typed correctness observation for one check (Eggstack M004b and M001b).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CorrectnessObserved {
@@ -376,9 +382,20 @@ pub enum CorrectnessObserved {
         /// Count of `bypass_successful == true` findings.
         successful_bypasses: u32,
     },
+    /// Fixed corpus cases evaluated against observable HTTP statuses.
+    HttpCorpus {
+        /// Number of corpus cases that produced an observation.
+        evaluated_cases: u32,
+        /// Cases whose status met the declared expectation.
+        passed_cases: u32,
+        /// Cases whose status did not meet the declared expectation.
+        failed_cases: u32,
+        /// Cases without a trustworthy observation.
+        invalid_cases: u32,
+    },
 }
 
-/// Typed correctness expectation for one check (Eggstack M004b).
+/// Typed correctness expectation for one check (Eggstack M004b and M001b).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CorrectnessExpectationRecord {
@@ -387,17 +404,19 @@ pub enum CorrectnessExpectationRecord {
         /// Allowed successful bypass count.
         value: u32,
     },
+    /// Every corpus case must satisfy its predeclared status expectation.
+    AllCasesMatch,
 }
 
-/// One validated correctness check record (Eggstack M004b).
+/// One validated correctness check record (Eggstack M004b and M001b).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CorrectnessCheckRecord {
     /// Check identity from the candidate plan.
     pub id: Name,
-    /// Correctness source (`eggsec-waf`).
+    /// Correctness source (`eggsec-waf` or `eggbench-http-corpus`).
     pub source: Name,
-    /// Correctness family (`waf_bypass`).
+    /// Correctness family (`waf_bypass` or `http_observable`).
     pub family: Name,
     /// Declared target binding.
     pub target: Name,
@@ -413,7 +432,7 @@ pub struct CorrectnessCheckRecord {
     pub evidence_sha256: String,
     /// Observed producer version.
     pub producer_version: String,
-    /// SHA-256 of the producer executable.
+    /// SHA-256 of producer executable identity or native implementation identity.
     pub producer_sha256: String,
     /// Stable `snake_case` reason for invalid outcomes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -432,9 +451,9 @@ pub struct CorrectnessComparisonSection {
     pub aggregate_verdict: AggregateVerdict,
 }
 
-/// Standalone immutable-by-content comparison receipt, schema v3.
+/// Standalone immutable-by-content comparison receipt, schema v4.
 ///
-/// For schema v3: `performance_verdict` is the conservative aggregate of
+/// For schema v3/v4: `performance_verdict` is the conservative aggregate of
 /// metric gates only, `correctness` is independent security evidence, and
 /// `aggregate_verdict` is the final combined verdict. For legacy v1/v2
 /// receipts, the historical `aggregate_verdict` retains its metric-only
@@ -1681,6 +1700,168 @@ fn load_correctness_record(
     }
 }
 
+#[allow(clippy::too_many_lines)]
+fn load_http_corpus_records(
+    reader: &BundleReader,
+    resolved: &ResolvedPlan,
+) -> Vec<CorrectnessCheckRecord> {
+    let mut records = Vec::with_capacity(resolved.http_corpus_checks.len());
+    if resolved.paired.is_some() || resolved.network_path.is_some() {
+        return resolved
+            .http_corpus_checks
+            .iter()
+            .map(|request| {
+                invalid_http_corpus_record(
+                    request,
+                    Name::new(SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE)
+                        .expect("static correctness family"),
+                    ArtifactPath::new(format!("security/{}.json", request.id.as_str()))
+                        .expect("validated HTTP corpus check id"),
+                    "unsupported_composition",
+                )
+            })
+            .collect();
+    }
+    for request in &resolved.http_corpus_checks {
+        let family = Name::new(SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE)
+            .expect("static correctness family");
+        let path = ArtifactPath::new(format!("security/{}.json", request.id.as_str()))
+            .expect("validated HTTP corpus check id");
+        let evidence = reader
+            .manifest()
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.path == path);
+        let Some(artifact) = evidence else {
+            records.push(invalid_http_corpus_record(
+                request,
+                family,
+                path,
+                "missing_artifact",
+            ));
+            continue;
+        };
+        if !matches!(&artifact.role, ArtifactRole::Other { label } if label.as_str() == "security")
+            || artifact.media_type != "application/json"
+        {
+            records.push(invalid_http_corpus_record(
+                request,
+                family,
+                path,
+                "config_mismatch",
+            ));
+            continue;
+        }
+        let Ok(mut file) = reader.open_artifact(&path) else {
+            records.push(invalid_http_corpus_record(
+                request,
+                family,
+                path,
+                "missing_artifact",
+            ));
+            continue;
+        };
+        let mut bytes = Vec::new();
+        if file.read_to_end(&mut bytes).is_err() || bytes.len() > 512 * 1024 {
+            records.push(invalid_http_corpus_record(
+                request,
+                family,
+                path,
+                "artifact_bound",
+            ));
+            continue;
+        }
+        let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+        let Ok(result): Result<crate::HttpCorpusCheckResultV1, _> = serde_json::from_slice(&bytes)
+        else {
+            records.push(invalid_http_corpus_record(
+                request,
+                family,
+                path,
+                "unparsable_result",
+            ));
+            continue;
+        };
+        let invalid =
+            |reason| invalid_http_corpus_record(request, family.clone(), path.clone(), reason);
+        if result.validate_contract().is_err() {
+            records.push(invalid("contract_violation"));
+            continue;
+        }
+        if result.id != request.id.as_str()
+            || result.source != request.source.as_str()
+            || result.family != SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE
+            || result.target != request.target.as_str()
+            || !result
+                .corpus_sha256
+                .eq_ignore_ascii_case(&request.corpus_sha256)
+            || !artifact.sha256.eq_ignore_ascii_case(&digest)
+        {
+            records.push(invalid("config_mismatch"));
+            continue;
+        }
+        let (evaluated, passed, failed, invalid_cases) = result.counts();
+        let disposition = if invalid_cases > 0 {
+            CorrectnessDisposition::Invalid
+        } else if failed > 0 {
+            CorrectnessDisposition::Fail
+        } else {
+            CorrectnessDisposition::Pass
+        };
+        let producer = format!(
+            "eggbench-http-corpus:{}:{}",
+            result.adapter_semantic_version, result.eggfetch_version
+        );
+        records.push(CorrectnessCheckRecord {
+            id: request.id.clone(),
+            source: request.source.clone(),
+            family,
+            target: request.target.clone(),
+            disposition,
+            observed: CorrectnessObserved::HttpCorpus {
+                evaluated_cases: evaluated,
+                passed_cases: passed,
+                failed_cases: failed,
+                invalid_cases,
+            },
+            expectation: CorrectnessExpectationRecord::AllCasesMatch,
+            evidence_path: path,
+            evidence_sha256: digest,
+            producer_version: producer.clone(),
+            producer_sha256: format!("{:x}", sha2::Sha256::digest(producer.as_bytes())),
+            reason: (invalid_cases > 0).then(|| "invalid_case_observation".to_owned()),
+        });
+    }
+    records
+}
+
+fn invalid_http_corpus_record(
+    request: &crate::HttpCorpusCheckRequest,
+    family: Name,
+    evidence_path: ArtifactPath,
+    reason: &'static str,
+) -> CorrectnessCheckRecord {
+    CorrectnessCheckRecord {
+        id: request.id.clone(),
+        source: request.source.clone(),
+        family,
+        target: request.target.clone(),
+        disposition: CorrectnessDisposition::Invalid,
+        observed: CorrectnessObserved::HttpCorpus {
+            evaluated_cases: 0,
+            passed_cases: 0,
+            failed_cases: 0,
+            invalid_cases: 0,
+        },
+        expectation: CorrectnessExpectationRecord::AllCasesMatch,
+        evidence_path,
+        evidence_sha256: String::new(),
+        producer_version: "unknown".to_owned(),
+        producer_sha256: String::new(),
+        reason: Some(reason.to_owned()),
+    }
+}
+
 /// Deterministic correctness aggregation (Eggstack M004b).
 ///
 /// Any `Invalid` evidence yields `Invalid`; otherwise any `Fail` yields
@@ -1883,7 +2064,7 @@ fn load_security_evidence_identity(
 ///
 /// Accepts schema v1, v2, and v3; unknown schema versions and unknown
 /// fields fail closed. Historical v1/v2 receipts keep their metric-only
-/// aggregate meaning; v3 receipts carry the explicit performance-only
+/// aggregate meaning; v3 and v4 receipts carry the explicit performance-only
 /// verdict plus the independent correctness section.
 ///
 /// # Errors
@@ -1893,6 +2074,7 @@ pub fn parse_comparison_receipt(bytes: &[u8]) -> Result<ComparisonReceipt, Compa
     let receipt: ComparisonReceipt = serde_json::from_slice(bytes)
         .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
     if receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION
+        && receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION_3
         && receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION_2
         && receipt.schema_version != COMPARISON_RECEIPT_SCHEMA_VERSION_1
     {
@@ -1950,7 +2132,8 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
     let semantic_replay_evidence = load_semantic_replay_evidence_identity(reader, &resolved)?;
     let diagnostics_evidence = load_diagnostics_evidence_identity(reader, &resolved)?;
     let security_evidence = load_security_evidence_identity(reader, &resolved)?;
-    let security_records = load_correctness_records(reader, &resolved)?;
+    let mut security_records = load_correctness_records(reader, &resolved)?.unwrap_or_default();
+    security_records.extend(load_http_corpus_records(reader, &resolved));
     Ok(ComparisonInput {
         identity,
         resolved,
@@ -1961,7 +2144,7 @@ pub fn load_comparison_input(reader: &BundleReader) -> Result<ComparisonInput, C
         semantic_replay_evidence,
         diagnostics_evidence,
         security_evidence,
-        security_records,
+        security_records: (!security_records.is_empty()).then_some(security_records),
     })
 }
 
@@ -2099,8 +2282,16 @@ fn unpaired_policy_id(
 /// outcomes never redefine the candidate expectation.
 fn correctness_section(candidate: &ComparisonInput) -> Option<CorrectnessComparisonSection> {
     let records = candidate.security_records.clone()?;
+    let policy_id = if records
+        .iter()
+        .any(|record| record.family.as_str() == SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE)
+    {
+        SECURITY_CORRECTNESS_POLICY_V2
+    } else {
+        SECURITY_CORRECTNESS_POLICY_V1
+    };
     Some(CorrectnessComparisonSection {
-        policy_id: SECURITY_CORRECTNESS_POLICY_V1.to_owned(),
+        policy_id: policy_id.to_owned(),
         aggregate_verdict: aggregate_correctness(&records),
         checks: records,
     })
@@ -3087,20 +3278,55 @@ fn compare_diagnostics(candidate: &ComparisonInput, baseline: &ComparisonInput) 
 }
 
 fn security_summary(input: &ComparisonInput) -> String {
-    if input.resolved.security_checks.is_empty() {
+    if input.resolved.security_checks.is_empty() && input.resolved.http_corpus_checks.is_empty() {
         return "absent".to_owned();
     }
-    match &input.security_evidence {
-        None => "missing-evidence".to_owned(),
-        Some(evidence) => format!(
-            "checks=[{}] tool={}:{} scope={} adapter={}",
-            evidence.checks.join(" | "),
-            evidence.executable_version,
-            evidence.executable_sha256,
-            evidence.scope_sha256,
-            evidence.adapter_semantic_version,
-        ),
+    let mut parts = Vec::new();
+    if !input.resolved.security_checks.is_empty() {
+        let legacy = match &input.security_evidence {
+            None => "missing-evidence".to_owned(),
+            Some(evidence) => format!(
+                "checks=[{}] tool={}:{} scope={} adapter={}",
+                evidence.checks.join(" | "),
+                evidence.executable_version,
+                evidence.executable_sha256,
+                evidence.scope_sha256,
+                evidence.adapter_semantic_version,
+            ),
+        };
+        parts.push(format!("waf {legacy}"));
     }
+    if !input.resolved.http_corpus_checks.is_empty() {
+        let checks = input
+            .resolved
+            .http_corpus_checks
+            .iter()
+            .map(|check| {
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    check.id,
+                    check.target,
+                    check.corpus_sha256,
+                    check.timeout_ms.get(),
+                    check.case_timeout_ms.get()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let producers = input
+            .security_records
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter(|record| record.family.as_str() == SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE)
+            .map(|record| format!("{}:{}", record.producer_version, record.producer_sha256))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        parts.push(format!(
+            "http-corpus checks=[{checks}] producers=[{producers}]"
+        ));
+    }
+    parts.join("; ")
 }
 
 fn compare_security(candidate: &ComparisonInput, baseline: &ComparisonInput) -> (bool, String) {
@@ -4066,6 +4292,7 @@ mod tests {
             network_path: None,
             diagnostics: Vec::new(),
             security_checks: Vec::new(),
+            http_corpus_checks: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -5139,6 +5366,39 @@ mod tests {
         let receipt = compare_pair(&candidate, &baseline);
         assert!(receipt.comparability.driver_match);
         assert!(!receipt.comparability.critical_mismatch);
+    }
+
+    #[test]
+    fn http_corpus_records_select_correctness_policy_v2_without_changing_waf_v1() {
+        let mut waf = security_input();
+        waf.security_records = Some(vec![correctness_record_with(
+            CorrectnessDisposition::Pass,
+            4,
+            0,
+            0,
+        )]);
+        assert_eq!(
+            correctness_section(&waf).unwrap().policy_id,
+            SECURITY_CORRECTNESS_POLICY_V1
+        );
+        let mut corpus = security_input();
+        let mut record = correctness_record_with(CorrectnessDisposition::Pass, 2, 0, 0);
+        record.id = Name::new("http-smoke").unwrap();
+        record.source = Name::new("eggbench-http-corpus").unwrap();
+        record.family = Name::new(SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE).unwrap();
+        record.observed = CorrectnessObserved::HttpCorpus {
+            evaluated_cases: 2,
+            passed_cases: 2,
+            failed_cases: 0,
+            invalid_cases: 0,
+        };
+        record.expectation = CorrectnessExpectationRecord::AllCasesMatch;
+        record.evidence_path = ArtifactPath::new("security/http-smoke.json").unwrap();
+        corpus.security_records = Some(vec![record]);
+        assert_eq!(
+            correctness_section(&corpus).unwrap().policy_id,
+            SECURITY_CORRECTNESS_POLICY_V2
+        );
     }
 
     #[test]
@@ -6347,6 +6607,16 @@ mod tests {
         assert!(v2.paired.is_some());
         assert_eq!(v2.performance_verdict, None);
         assert!(v2.correctness.is_none());
+        let v3_bytes = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("fixtures")
+                .join("receipt-v3.json"),
+        )
+        .expect("v3 fixture");
+        let v3 = parse_comparison_receipt(&v3_bytes).expect("v3 parses");
+        assert_eq!(v3.schema_version, COMPARISON_RECEIPT_SCHEMA_VERSION_3);
+        assert!(v3.correctness.is_none());
     }
 
     #[test]

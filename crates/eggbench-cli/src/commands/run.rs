@@ -248,6 +248,19 @@ pub async fn run(
             }
         }
     }
+    if !resolved.http_corpus_checks.is_empty() {
+        #[cfg(feature = "eggstack-http")]
+        correctness_registry.register(Box::new(eggbench_drivers::HttpCorpusExecutor));
+        #[cfg(not(feature = "eggstack-http"))]
+        {
+            let failure = CliFailure::new(
+                "http_corpus_driver_unavailable",
+                "HTTP corpus correctness requires the eggstack-http feature",
+                ExitCode::CapabilityPreflight,
+            );
+            return Ok(PresentedCommandResult::failure("run", &failure));
+        }
+    }
 
     run_impl(
         RunPlan { input, bundle },

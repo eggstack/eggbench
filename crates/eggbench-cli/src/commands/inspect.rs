@@ -2,9 +2,9 @@
 
 use crate::envelope::{
     CliOutput, DiagnosticExecutionSummary, DiagnosticsInspectSummary, DriverSummary,
-    EnvironmentSummary, NetworkPathInspectSummary, PresentedCommandResult,
-    SecurityCheckExecutionSummary, SecurityInspectSummary, SemanticReplayInspectSummary,
-    SubjectSummary, TrialSummary,
+    EnvironmentSummary, HttpCorpusCaseInspectSummary, NetworkPathInspectSummary,
+    PresentedCommandResult, SecurityCheckExecutionSummary, SecurityInspectSummary,
+    SemanticReplayInspectSummary, SubjectSummary, TrialSummary,
 };
 use crate::error::CliError;
 use eggbench_core::BundleReader;
@@ -310,20 +310,19 @@ fn diagnostics_inspect_summary(
 /// never appear: only the sanitized index projection is read.
 fn security_inspect_summary(reader: &BundleReader) -> Result<SecurityInspectSummary, CliError> {
     let manifest = reader.manifest();
-    let record = manifest.artifacts.iter().find(|artifact| {
-        artifact.path.as_str() == "security-checks.json"
-            || matches!(
-                &artifact.role,
-                eggbench_core::ArtifactRole::Other { label } if label.as_str() == "security"
-            )
-    });
+    let http_corpus_checks = http_corpus_inspect_summaries(reader)?;
+    let record = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path.as_str() == "security-checks.json");
     let Some(record) = record else {
         return Ok(SecurityInspectSummary {
-            artifact_present: false,
+            artifact_present: !http_corpus_checks.is_empty(),
             driver: None,
             executable_version: None,
             operation: None,
             checks: Vec::new(),
+            http_corpus_checks,
         });
     };
     let mut file = reader
@@ -390,6 +389,11 @@ fn security_inspect_summary(reader: &BundleReader) -> Result<SecurityInspectSumm
                         .get("executable_version")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
+                    family: Some(eggbench_core::SECURITY_CORRECTNESS_FAMILY_WAF_BYPASS.to_owned()),
+                    http_cases: Vec::new(),
+                    passed_cases: 0,
+                    failed_cases: 0,
+                    invalid_cases: 0,
                 })
                 .collect()
         })
@@ -409,7 +413,73 @@ fn security_inspect_summary(reader: &BundleReader) -> Result<SecurityInspectSumm
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
         checks,
+        http_corpus_checks,
     })
+}
+
+fn http_corpus_inspect_summaries(
+    reader: &BundleReader,
+) -> Result<Vec<SecurityCheckExecutionSummary>, CliError> {
+    let mut summaries = Vec::new();
+    for artifact in reader.manifest().artifacts.iter().filter(|artifact| {
+        artifact.path.as_str().starts_with("security/")
+            && matches!(&artifact.role, eggbench_core::ArtifactRole::Other { label } if label.as_str() == "security")
+    }) {
+        let mut file = reader.open_artifact(&artifact.path).map_err(CliError::Bundle)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|error| {
+            CliError::Bundle(eggbench_core::BundleError::Io {
+                path: std::path::PathBuf::from(artifact.path.as_str()),
+                source: error,
+            })
+        })?;
+        if bytes.len() > 512 * 1024 {
+            continue;
+        }
+        let Ok(result) = serde_json::from_slice::<eggbench_core::HttpCorpusCheckResultV1>(&bytes)
+        else {
+            continue;
+        };
+        if result.validate_contract().is_err() {
+            continue;
+        }
+        let (evaluated, passed, failed, invalid) = result.counts();
+        let disposition = if invalid > 0 {
+            "invalid"
+        } else if failed > 0 {
+            "fail"
+        } else {
+            "pass"
+        };
+        summaries.push(SecurityCheckExecutionSummary {
+            id: result.id,
+            source: result.source,
+            test_type: "http_observable".to_owned(),
+            disposition: disposition.to_owned(),
+            evaluated_cases: evaluated,
+            successful_bypasses: 0,
+            allowed_successful_bypasses: 0,
+            artifact: artifact.path.as_str().to_owned(),
+            producer_version: Some(format!(
+                "{}:{}",
+                result.adapter_semantic_version, result.eggfetch_version
+            )),
+            family: Some(result.family),
+            http_cases: result
+                .cases
+                .into_iter()
+                .map(|case| HttpCorpusCaseInspectSummary {
+                    id: case.id,
+                    disposition: format!("{:?}", case.disposition).to_ascii_lowercase(),
+                    observed_status: case.observed_status,
+                })
+                .collect(),
+            passed_cases: passed,
+            failed_cases: failed,
+            invalid_cases: invalid,
+        });
+    }
+    Ok(summaries)
 }
 
 fn semantic_replay_inspect_summary(

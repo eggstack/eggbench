@@ -655,6 +655,15 @@ pub struct SecurityDoctorSummary {
     pub strict_scope_note: String,
     /// Evidence-only timing policy note.
     pub timing_note: String,
+    /// Whether the fixed HTTP corpus family is requested by this plan.
+    #[serde(default)]
+    pub http_corpus_requested: bool,
+    /// Whether the Eggfetch-backed corpus executor is available in this build.
+    #[serde(default)]
+    pub http_corpus_available: bool,
+    /// Target confinement and unsupported composition summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_corpus_policy: Option<String>,
 }
 
 /// One security-check execution summary used by `inspect` (Eggstack M004a).
@@ -679,6 +688,33 @@ pub struct SecurityCheckExecutionSummary {
     pub artifact: String,
     /// Producer tool version.
     pub producer_version: Option<String>,
+    /// Correctness family when this is not the legacy WAF case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Sanitized corpus case outcomes, when this is an HTTP corpus check.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub http_cases: Vec<HttpCorpusCaseInspectSummary>,
+    /// HTTP corpus passed case count.
+    #[serde(default)]
+    pub passed_cases: u32,
+    /// HTTP corpus failed case count.
+    #[serde(default)]
+    pub failed_cases: u32,
+    /// HTTP corpus invalid case count.
+    #[serde(default)]
+    pub invalid_cases: u32,
+}
+
+/// Sanitized fixed-corpus case summary for `inspect`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCorpusCaseInspectSummary {
+    /// Owner-defined case identity.
+    pub id: String,
+    /// Pass, fail, or invalid.
+    pub disposition: String,
+    /// Observed HTTP status, absent for invalid observations.
+    pub observed_status: Option<u16>,
 }
 
 /// Verified security-correctness evidence summary used by `inspect`
@@ -696,4 +732,7 @@ pub struct SecurityInspectSummary {
     pub operation: Option<String>,
     /// Per-check summaries in plan order.
     pub checks: Vec<SecurityCheckExecutionSummary>,
+    /// Fixed-corpus checks in the checked bundle.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub http_corpus_checks: Vec<SecurityCheckExecutionSummary>,
 }

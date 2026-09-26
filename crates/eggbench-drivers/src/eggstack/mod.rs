@@ -22,11 +22,13 @@
 //!   gated behind `eggstack-http`.
 
 mod fetch;
+mod http_corpus;
 mod origin;
 #[cfg(feature = "eggstack-path")]
 pub mod path;
 
 pub use fetch::EggfetchWorkload;
+pub use http_corpus::{HTTP_CORPUS_SEMANTIC_VERSION, HTTP_CORPUS_SOURCE, HttpCorpusExecutor};
 pub use origin::EggServeOriginAdapter;
 
 use eggbench_core::{Capability, DriverCategory, DriverDescriptor, HttpVersion, LoadMode, Name};
@@ -110,10 +112,37 @@ pub fn eggfetch_http_descriptor() -> DriverDescriptor {
     }
 }
 
-/// Both production descriptors in stable name order.
+/// Production descriptors in stable name order.
 #[must_use]
 pub fn eggstack_descriptors() -> Vec<DriverDescriptor> {
-    vec![eggfetch_http_descriptor(), eggserve_origin_descriptor()]
+    vec![
+        eggfetch_http_descriptor(),
+        eggserve_origin_descriptor(),
+        http_corpus_descriptor(),
+    ]
+}
+
+/// Production descriptor for fixed-corpus `http_observable` correctness.
+#[must_use]
+#[allow(clippy::missing_panics_doc)]
+pub fn http_corpus_descriptor() -> DriverDescriptor {
+    let mut capabilities = BTreeSet::new();
+    capabilities.insert(Capability::SecurityCheck {
+        family: Name::new("http_observable").expect("static correctness family"),
+    });
+    DriverDescriptor {
+        name: Name::new(HTTP_CORPUS_SOURCE).expect("static correctness source"),
+        adapter_version: HTTP_CORPUS_SEMANTIC_VERSION.to_owned(),
+        upstream_name: "eggfetch-core".to_owned(),
+        upstream_version: Some(EGGFETCH_CORE_VERSION.to_owned()),
+        category: DriverCategory::Correctness,
+        capabilities,
+        supported_platforms: BTreeSet::new(),
+        machine_output_schema: Some(eggbench_core::SchemaVersion(1)),
+        external_process: false,
+        default: false,
+        compatible_service_types: BTreeSet::new(),
+    }
 }
 
 /// Runner registry with the `EggServe` controlled-origin adapter registered.

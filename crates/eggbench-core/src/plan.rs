@@ -2,8 +2,8 @@ use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
     EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4,
     EXPERIMENT_PLAN_SCHEMA_VERSION_5, EXPERIMENT_PLAN_SCHEMA_VERSION_6,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_7, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
-    RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_7, EXPERIMENT_PLAN_SCHEMA_VERSION_8, Name, NetworkPathRequest,
+    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -66,6 +66,13 @@ pub struct ExperimentPlan {
         deserialize_with = "deserialize_present_optional"
     )]
     pub security_checks: Option<Vec<SecurityCheckRequest>>,
+    /// Optional fixed HTTP-corpus correctness checks (schema v8).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_optional"
+    )]
+    pub http_corpus_checks: Option<Vec<HttpCorpusCheckRequest>>,
     /// Upper bounds for later evidence creation.
     pub bounds: ArtifactBounds,
 }
@@ -144,6 +151,26 @@ pub struct SecurityCheckRequest {
     pub concurrency: PositiveCount,
     /// Per-check Eggsec timeout (1s..=120s).
     pub timeout_ms: DurationMs,
+}
+
+/// Fixed immutable HTTP-corpus correctness check (schema v8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCorpusCheckRequest {
+    /// Stable check identity.
+    pub id: Name,
+    /// Correctness source; v1 is `eggbench-http-corpus`.
+    pub source: Name,
+    /// Declared service or external target publishing `http_url`.
+    pub target: Name,
+    /// Workspace-relative corpus JSON path.
+    pub corpus_ref: String,
+    /// Exact corpus content identity frozen before execution.
+    pub corpus_sha256: String,
+    /// Bounded whole-check timeout in milliseconds.
+    pub timeout_ms: DurationMs,
+    /// Bounded per-case timeout in milliseconds.
+    pub case_timeout_ms: DurationMs,
 }
 
 /// Bounded Eggsec WAF payload family for one correctness check.
@@ -752,18 +779,32 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
         // Security checks are a schema-v6 contract; an explicit field on
         // earlier schemas fails closed rather than silently accepting
         // future semantics (presence is significant, even when empty).
-        if self.security_checks.is_some() && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+        if self.security_checks.is_some()
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
         {
             return invalid(
                 "unsupported_option",
                 format!(
-                    "security_checks require schema version 6 (got {})",
+                    "security_checks require schema version 6 or 8 (got {})",
+                    self.schema_version.0
+                ),
+            );
+        }
+        if self.http_corpus_checks.is_some()
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+        {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "http_corpus_checks require schema version 8 (got {})",
                     self.schema_version.0
                 ),
             );
@@ -775,11 +816,12 @@ impl ExperimentPlan {
         if self.diagnostics.is_some()
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
         {
             return invalid(
                 "unsupported_option",
                 format!(
-                    "diagnostics require schema version 5 or 6 (got {})",
+                    "diagnostics require schema version 5, 6, or 8 (got {})",
                     self.schema_version.0
                 ),
             );
@@ -792,11 +834,12 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
         {
             return invalid(
                 "unsupported_option",
                 format!(
-                    "SemanticReplay workload requires schema version 4, 5, or 6 (got {})",
+                    "SemanticReplay workload requires schema version 4, 5, 6, or 8 (got {})",
                     self.schema_version.0
                 ),
             );
@@ -891,7 +934,9 @@ impl ExperimentPlan {
         }
         for service in &self.services {
             if let Some(url) = &service.http_url {
-                if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7 {
+                if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
+                    && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+                {
                     return invalid(
                         "unsupported_option",
                         "service http_url requires plan schema version 7",
@@ -990,6 +1035,7 @@ impl ExperimentPlan {
             );
         }
         validate_security_checks(self, &services)?;
+        validate_http_corpus_checks(self, &services)?;
         if self.trials.warmup > 1_000 {
             return invalid("invalid_bound", "warmup count exceeds 1000");
         }
@@ -1484,6 +1530,123 @@ fn validate_security_checks(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
+fn validate_http_corpus_checks(
+    plan: &ExperimentPlan,
+    services: &BTreeMap<Name, &Service>,
+) -> Result<(), PlanError> {
+    let all = plan.http_corpus_checks.as_deref().unwrap_or(&[]);
+    if all.len() > crate::MAX_SECURITY_CHECKS {
+        return invalid("invalid_bound", "at most 32 HTTP corpus checks are allowed");
+    }
+    if !all.is_empty() && plan.paired.is_some() {
+        return invalid(
+            "paired_security_not_supported",
+            "HTTP corpus checks are incompatible with paired experiments",
+        );
+    }
+    if !all.is_empty() && plan.network_path.is_some() {
+        return invalid(
+            "security_path_incompatible",
+            "HTTP corpus checks bypass network_path in M001b",
+        );
+    }
+    let mut seen: BTreeSet<Name> = plan
+        .security_checks
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|check| check.id.clone())
+        .collect();
+    for request in all {
+        if !seen.insert(request.id.clone()) {
+            return invalid(
+                "duplicate_identity",
+                format!("duplicate HTTP corpus check {}", request.id),
+            );
+        }
+        if request.id.as_str().len() > 64
+            || !request
+                .id
+                .as_str()
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "HTTP corpus check {} id must be 1..=64 ASCII alphanumeric/_/-",
+                    request.id
+                ),
+            );
+        }
+        if request.source.as_str() != "eggbench-http-corpus" {
+            return invalid(
+                "unsupported_option",
+                format!(
+                    "HTTP corpus check {} source must be eggbench-http-corpus",
+                    request.id
+                ),
+            );
+        }
+        if request.corpus_ref.is_empty()
+            || request.corpus_ref.len() > 1024
+            || request.corpus_ref.starts_with('/')
+            || request.corpus_ref.contains('\\')
+            || request
+                .corpus_ref
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "HTTP corpus check {} corpus_ref must be a confined relative path",
+                    request.id
+                ),
+            );
+        }
+        if request.corpus_sha256.len() != 64
+            || !request
+                .corpus_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return invalid(
+                "invalid_bound",
+                format!("HTTP corpus check {} requires a SHA-256 digest", request.id),
+            );
+        }
+        let target_exists = services.contains_key(&request.target)
+            || matches!(&plan.subject, Subject::External { target, .. } if target == &request.target);
+        if !target_exists {
+            return invalid(
+                "missing_reference",
+                format!(
+                    "HTTP corpus check {} references unknown target {}",
+                    request.id, request.target
+                ),
+            );
+        }
+        if request.timeout_ms.get() > 120_000 {
+            return invalid(
+                "invalid_bound",
+                format!("HTTP corpus check {} timeout exceeds 120000ms", request.id),
+            );
+        }
+        if request.case_timeout_ms.get() > request.timeout_ms.get() {
+            return invalid(
+                "invalid_bound",
+                format!(
+                    "HTTP corpus check {} case timeout exceeds whole-check timeout",
+                    request.id
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_paired(
     plan: &ExperimentPlan,
     services: &BTreeMap<Name, &Service>,
@@ -1875,6 +2038,29 @@ mod tests {
         assert!(plan.validate().is_err());
         plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_6;
         assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn http_corpus_intent_is_v8_only_and_confined() {
+        let mut plan = plan_with_service();
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_8;
+        plan.services[0].http_url = Some("http://127.0.0.1:8080/".into());
+        let request = HttpCorpusCheckRequest {
+            id: Name::new("regression").unwrap(),
+            source: Name::new("eggbench-http-corpus").unwrap(),
+            target: Name::new("api").unwrap(),
+            corpus_ref: "corpus/http.json".into(),
+            corpus_sha256: "a".repeat(64),
+            timeout_ms: DurationMs::new(10_000).unwrap(),
+            case_timeout_ms: DurationMs::new(1_000).unwrap(),
+        };
+        plan.http_corpus_checks = Some(vec![request.clone()]);
+        assert!(plan.validate().is_ok());
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_7;
+        assert_eq!(error_category(plan.validate()), "unsupported_option");
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_8;
+        plan.http_corpus_checks.as_mut().unwrap()[0].corpus_ref = "../secret.json".into();
+        assert_eq!(error_category(plan.validate()), "invalid_bound");
     }
     fn error_category(result: Result<(), PlanError>) -> String {
         match result.unwrap_err() {

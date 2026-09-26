@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-/// Current resolved-plan schema version (v5 retains static service bindings).
-pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(5);
+/// Current resolved-plan schema version (v6 adds fixed-corpus HTTP checks).
+pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(6);
+/// Previous resolved-plan schema version (static HTTP bindings).
+pub const RESOLVED_PLAN_SCHEMA_VERSION_5: SchemaVersion = SchemaVersion(5);
 /// Previous resolved-plan schema version, still accepted on read.
 pub const RESOLVED_PLAN_SCHEMA_VERSION_4: SchemaVersion = SchemaVersion(4);
 /// Previous resolved-plan schema version, still accepted on read.
@@ -241,6 +243,9 @@ pub struct ResolvedPlan {
     /// Resolved security checks for schema-v6 plans; empty when not requested.
     #[serde(default)]
     pub security_checks: Vec<crate::SecurityCheckRequest>,
+    /// Resolved fixed HTTP-corpus checks for schema-v8 plans.
+    #[serde(default)]
+    pub http_corpus_checks: Vec<crate::HttpCorpusCheckRequest>,
     /// Non-fatal resolution diagnostics.
     pub warnings: Vec<ResolutionWarning>,
 }
@@ -508,7 +513,7 @@ pub fn resolve_plan(
     let mut warnings = Vec::new();
     let mut drivers = BTreeMap::new();
     for (category, capabilities) in &required {
-        let descriptor = select_driver(*category, &registry, options)?;
+        let descriptor = select_driver(*category, capabilities, &registry, options)?;
         validate_driver(descriptor, capabilities, options)?;
         let path = descriptor
             .external_process
@@ -557,8 +562,17 @@ pub fn resolve_plan(
                 });
             }
         } else {
-            let descriptor = select_driver(DriverCategory::Telemetry, &registry, options)?;
-            validate_driver(descriptor, &BTreeSet::new(), options)?;
+            let required_telemetry = required
+                .get(&DriverCategory::Telemetry)
+                .cloned()
+                .unwrap_or_default();
+            let descriptor = select_driver(
+                DriverCategory::Telemetry,
+                &required_telemetry,
+                &registry,
+                options,
+            )?;
+            validate_driver(descriptor, &required_telemetry, options)?;
             let path = descriptor
                 .external_process
                 .then(|| options.executable_paths.get(&descriptor.name).cloned())
@@ -702,12 +716,14 @@ pub fn resolve_plan(
         network_path,
         diagnostics: plan.diagnostics.clone().unwrap_or_default(),
         security_checks: plan.security_checks.clone().unwrap_or_default(),
+        http_corpus_checks: plan.http_corpus_checks.clone().unwrap_or_default(),
         warnings,
     })
 }
 
 fn select_driver<'a>(
     category: DriverCategory,
+    required: &BTreeSet<Capability>,
     registry: &BTreeMap<Name, &'a DriverDescriptor>,
     options: &ResolutionOptions,
 ) -> Result<&'a DriverDescriptor, ResolveError> {
@@ -725,11 +741,29 @@ fn select_driver<'a>(
         }
         return Ok(descriptor);
     }
-    let candidates: Vec<_> = registry
+    let category_candidates: Vec<_> = registry
         .values()
         .copied()
         .filter(|d| d.category == category)
         .collect();
+    // Correctness registries may expose one descriptor per correctness
+    // family. Select by family when possible; preserve category-first
+    // resolution for all other categories so unsupported capability errors
+    // remain specific and historical candidate rules remain unchanged.
+    let capable_candidates: Vec<_> = category_candidates
+        .iter()
+        .copied()
+        .filter(|d| {
+            required
+                .iter()
+                .all(|capability| d.capabilities.contains(capability))
+        })
+        .collect();
+    let candidates = if category == DriverCategory::Correctness && !capable_candidates.is_empty() {
+        capable_candidates
+    } else {
+        category_candidates
+    };
     if options.default_policy == DefaultDriverPolicy::ExplicitOnly {
         return Err(ResolveError::MissingDriver { category });
     }

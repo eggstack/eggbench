@@ -37,3 +37,5 @@ pub const EXPERIMENT_PLAN_SCHEMA_VERSION_5: SchemaVersion = SchemaVersion(5);
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_6: SchemaVersion = SchemaVersion(6);
 /// Static service HTTP binding plan schema version.
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_7: SchemaVersion = SchemaVersion(7);
+/// Fixed HTTP-corpus correctness plan schema version.
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_8: SchemaVersion = SchemaVersion(8);

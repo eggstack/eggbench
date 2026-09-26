@@ -52,6 +52,8 @@ Raw observations include throughput, latency minimum/mean and percentiles, error
 
 The exact path returns the configured status and a deterministic fixed-length body filled with `0x42`; every other target returns `501`. Startup publishes `http_url`, `bound_addr`, and `bound_port`. Adapter readiness is complete when the server handle exists; the plan does not configure a probe for this in-process service.
 
+With the `eggstack-http` feature, the same Eggfetch transport also serves the `eggbench-http-corpus` correctness source. It runs fixed corpus cases serially outside measured intervals, confines targets to local/private runtime bindings, and records sanitized status-only outcomes. Redirect and retry support are absent from the compiled Eggfetch feature set.
+
 ## Route-first, fault-second
 
 The resolved path is lowered before managed startup. For each physical Eggfetch dial, the dialer:

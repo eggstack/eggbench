@@ -79,6 +79,7 @@ fn base_resolved() -> ResolvedPlan {
         network_path: None,
         diagnostics: Vec::new(),
         security_checks: Vec::new(),
+        http_corpus_checks: Vec::new(),
         warnings: Vec::new(),
     }
 }

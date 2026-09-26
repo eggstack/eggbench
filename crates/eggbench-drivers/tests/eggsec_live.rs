@@ -124,6 +124,7 @@ fn check_context(url: &str, check_id: &str) -> CorrectnessContext {
         bindings: bindings_for(url),
         cancellation: CancellationToken::new(),
         timeout: Duration::from_secs(90),
+        http_corpus_request: None,
     }
 }
 

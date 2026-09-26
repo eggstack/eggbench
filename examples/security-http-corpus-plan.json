@@ -1,0 +1,37 @@
+{
+  "schema_version": 8,
+  "experiment": "security-http-corpus-smoke",
+  "subject": { "kind": "external", "target": "api", "revision": null, "digest": null },
+  "services": [
+    {
+      "name": "api",
+      "kind": { "kind": "command", "argv": ["python3", "-m", "http.server", "8080"] },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {},
+      "http_url": "http://127.0.0.1:8080/",
+      "readiness": null,
+      "shutdown": { "grace_ms": 3000, "method": null },
+      "working_directory": null,
+      "log_limit_bytes": 4096
+    }
+  ],
+  "workload": { "kind": "finite_count", "target": "api", "requests": 10, "concurrency": 1 },
+  "trials": { "measured": 1, "warmup": 0, "cooldown_ms": 1, "reset": { "kind": "none" }, "timeouts": { "measurement": 10000, "drain": 3000 } },
+  "telemetry": [],
+  "metrics": [],
+  "environment_policy": { "kind": "strict_same_testbed" },
+  "seed": 1,
+  "http_corpus_checks": [
+    {
+      "id": "minimal-http",
+      "source": "eggbench-http-corpus",
+      "target": "api",
+      "corpus_ref": "examples/security-corpus.json",
+      "corpus_sha256": "2caece174731321f162b6e5f1ef57aa3eee565595e446b90a43c3d1b7428175d",
+      "timeout_ms": 30000,
+      "case_timeout_ms": 2000
+    }
+  ],
+  "bounds": { "artifact_count": 256, "artifact_bytes": 16777216, "total_bytes": 268435456 }
+}

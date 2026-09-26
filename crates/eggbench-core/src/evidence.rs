@@ -1614,6 +1614,7 @@ fn validate_resolved_network_path(
     path: &crate::ResolvedNetworkPath,
 ) -> Result<(), BundleError> {
     if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_5
         || plan.source_plan_schema_version != crate::EXPERIMENT_PLAN_SCHEMA_VERSION_3
         || plan.paired.is_some()
         || matches!(plan.subject, crate::Subject::External { .. })
@@ -1745,6 +1746,7 @@ pub fn validate_resolved_plan_bytes(bytes: &[u8]) -> Result<ResolvedPlan, Bundle
     let plan: ResolvedPlan = serde_json::from_slice(bytes)
         .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
     if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_5
         && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_4
         && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_3
         && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_2
@@ -1757,6 +1759,7 @@ pub fn validate_resolved_plan_bytes(bytes: &[u8]) -> Result<ResolvedPlan, Bundle
     if let Some(path) = &plan.network_path {
         validate_resolved_network_path(&plan, path)?;
     } else if plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION
+        && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_5
         && plan.schema_version != crate::RESOLVED_PLAN_SCHEMA_VERSION_4
         && plan.source_plan_schema_version >= crate::EXPERIMENT_PLAN_SCHEMA_VERSION_3
     {

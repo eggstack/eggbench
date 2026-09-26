@@ -83,10 +83,179 @@ pub enum HttpCaseBodyV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum HttpObservableExpectationV1 {
     Exact { status_exact: u16 },
     AnyOf { status_any_of: Vec<u16> },
+}
+
+impl HttpObservableExpectationV1 {
+    /// Whether a response status satisfies the predeclared expectation.
+    #[must_use]
+    pub fn matches(&self, status: u16) -> bool {
+        match self {
+            Self::Exact { status_exact } => status == *status_exact,
+            Self::AnyOf { status_any_of } => status_any_of.contains(&status),
+        }
+    }
+
+    fn validate(&self) -> bool {
+        match self {
+            Self::Exact { status_exact } => (100..=599).contains(status_exact),
+            Self::AnyOf { status_any_of } => {
+                !status_any_of.is_empty()
+                    && status_any_of.len() <= 32
+                    && status_any_of
+                        .iter()
+                        .all(|status| (100..=599).contains(status))
+            }
+        }
+    }
+}
+
+/// Sanitized per-case projection persisted by the HTTP correctness executor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCorpusCaseResultV1 {
+    pub id: String,
+    pub case_sha256: String,
+    pub expectation: HttpObservableExpectationV1,
+    pub observed_status: Option<u16>,
+    pub disposition: HttpCorpusCaseDisposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Case-level correctness disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HttpCorpusCaseDisposition {
+    Pass,
+    Fail,
+    Invalid,
+}
+
+/// Bounded and payload-free HTTP corpus result persisted as run evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCorpusCheckResultV1 {
+    pub schema_version: u32,
+    pub id: String,
+    pub source: String,
+    pub family: String,
+    pub target: String,
+    pub corpus_id: String,
+    pub corpus_sha256: String,
+    pub adapter_semantic_version: String,
+    pub eggfetch_version: String,
+    pub cases: Vec<HttpCorpusCaseResultV1>,
+}
+
+impl HttpCorpusCheckResultV1 {
+    /// Validate the sanitized result's bounds and recomputed case counts.
+    ///
+    /// # Errors
+    /// Returns a stable reason code when the result violates the bounded v1 contract.
+    #[allow(clippy::too_many_lines)]
+    pub fn validate_contract(&self) -> Result<(), &'static str> {
+        if self.schema_version != 1 || self.cases.is_empty() || self.cases.len() > 1024 {
+            return Err("invalid_schema_or_case_count");
+        }
+        if validate_name(&self.id).is_err()
+            || self.source != "eggbench-http-corpus"
+            || self.family != "http_observable"
+            || validate_name(&self.target).is_err()
+            || validate_name(&self.corpus_id).is_err()
+        {
+            return Err("invalid_result_identity");
+        }
+        if self.corpus_sha256.len() != 64
+            || !self
+                .corpus_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("invalid_corpus_digest");
+        }
+        if self.adapter_semantic_version.is_empty()
+            || self.adapter_semantic_version.len() > 128
+            || self.eggfetch_version.is_empty()
+            || self.eggfetch_version.len() > 128
+            || self.adapter_semantic_version.chars().any(char::is_control)
+            || self.eggfetch_version.chars().any(char::is_control)
+        {
+            return Err("invalid_producer_identity");
+        }
+        let mut seen = BTreeSet::new();
+        for case in &self.cases {
+            validate_name(&case.id).map_err(|_| "invalid_case_id")?;
+            if !seen.insert(&case.id)
+                || case.case_sha256.len() != 64
+                || !case
+                    .case_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || case.reason.as_ref().is_some_and(|reason| {
+                    !matches!(
+                        reason.as_str(),
+                        "transport_failure"
+                            | "invalid_input"
+                            | "unsupported_protocol"
+                            | "check_timeout"
+                    )
+                })
+                || !case.expectation.validate()
+            {
+                return Err("invalid_case_record");
+            }
+            if case.disposition == HttpCorpusCaseDisposition::Invalid
+                && case.observed_status.is_some()
+            {
+                return Err("invalid_case_has_status");
+            }
+            if (case.disposition == HttpCorpusCaseDisposition::Invalid) != case.reason.is_some() {
+                return Err("invalid_case_reason_mismatch");
+            }
+            if case.disposition != HttpCorpusCaseDisposition::Invalid
+                && case.observed_status.is_none()
+            {
+                return Err("observed_case_missing_status");
+            }
+            if let Some(status) = case.observed_status {
+                if !(100..=599).contains(&status) {
+                    return Err("invalid_observed_status");
+                }
+                let matched = case.expectation.matches(status);
+                if (case.disposition == HttpCorpusCaseDisposition::Pass) != matched
+                    || case.disposition == HttpCorpusCaseDisposition::Invalid
+                {
+                    return Err("case_disposition_mismatch");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Number of cases by disposition, in (evaluated, passed, failed, invalid) order.
+    #[must_use]
+    pub fn counts(&self) -> (u32, u32, u32, u32) {
+        let mut passed = 0;
+        let mut failed = 0;
+        let mut invalid = 0;
+        for case in &self.cases {
+            match case.disposition {
+                HttpCorpusCaseDisposition::Pass => passed += 1,
+                HttpCorpusCaseDisposition::Fail => failed += 1,
+                HttpCorpusCaseDisposition::Invalid => invalid += 1,
+            }
+        }
+        (
+            u32::try_from(self.cases.len()).unwrap_or(u32::MAX),
+            passed,
+            failed,
+            invalid,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +322,7 @@ impl SecurityQualificationProfileV1 {
     ///
     /// # Errors
     /// Returns an error when any profile field violates the v1 contract.
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), QualificationInputError> {
         if self.schema_version != 1 {
             return Err(QualificationInputError::Invalid(
@@ -202,6 +372,7 @@ impl HttpSecurityCorpusV1 {
     ///
     /// # Errors
     /// Returns an error when a case or expectation violates the v1 contract.
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), QualificationInputError> {
         if self.schema_version != 1 {
             return Err(QualificationInputError::Invalid(
@@ -236,7 +407,7 @@ impl HttpSecurityCorpusV1 {
                 || r.path_and_query.starts_with("//")
                 || r.path_and_query
                     .bytes()
-                    .any(|b| b <= 0x20 || b == 0x7f || b == b'#')
+                    .any(|b| b <= 0x20 || b == 0x7f || b == b'#' || b == b'\\')
             {
                 return Err(QualificationInputError::Invalid(
                     "request target must be a bounded relative origin-form path".into(),
@@ -256,7 +427,15 @@ impl HttpSecurityCorpusV1 {
                 }
                 if matches!(
                     k.to_ascii_lowercase().as_str(),
-                    "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
+                    "authorization"
+                        | "proxy-authorization"
+                        | "cookie"
+                        | "set-cookie"
+                        | "host"
+                        | "connection"
+                        | "proxy-connection"
+                        | "transfer-encoding"
+                        | "content-length"
                 ) {
                     return Err(QualificationInputError::Invalid(
                         "credential-bearing header is forbidden".into(),
@@ -393,17 +572,8 @@ pub fn content_tree_identity(
         ));
     }
     records.sort_by(|a: &ContentFileIdentity, b| a.path.cmp(&b.path));
-    let mut h = Sha256::new();
-    for r in &records {
-        h.update(r.path.as_bytes());
-        h.update([0]);
-        h.update(r.length.to_be_bytes());
-        h.update([0]);
-        h.update(r.sha256.as_bytes());
-        h.update([0]);
-    }
     Ok(ContentTreeIdentity {
-        aggregate_sha256: format!("{:x}", h.finalize()),
+        aggregate_sha256: aggregate_content_files(&records),
         file_count: records.len(),
         total_bytes: total,
         files: records,
@@ -498,6 +668,91 @@ pub fn expand_qualification_profile(
         target_config_identity: config,
         scenarios,
     })
+}
+
+/// Load one corpus through a confined relative path, verify its frozen file
+/// digest, and validate every referenced body file before a run starts.
+///
+/// # Errors
+/// Returns an error when the reference escapes the workspace, content exceeds
+/// configured bounds, or the corpus/content digest does not match.
+pub fn load_http_security_corpus(
+    workspace: &Path,
+    relative: &str,
+    expected_sha256: &str,
+) -> Result<(HttpSecurityCorpusV1, PathBuf), QualificationInputError> {
+    let root = fs::canonicalize(workspace)?;
+    let corpus_path = canonical_confined_path(&root, relative)?;
+    let bytes = read_bounded(&corpus_path, MAX_CORPUS_BYTES)?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|error| QualificationInputError::Invalid(error.to_string()))?;
+    let corpus = HttpSecurityCorpusV1::from_json(text)?;
+    let body_root = corpus_path
+        .parent()
+        .ok_or_else(|| QualificationInputError::UnsafePath(relative.to_owned()))?;
+    let mut identity = content_tree_identity(workspace, relative)?;
+    let corpus_parent = Path::new(relative).parent().unwrap_or(Path::new("."));
+    for case in &corpus.cases {
+        if let HttpCaseBodyV1::File(body_path) = &case.request.body {
+            let body = canonical_confined_path(body_root, body_path)?;
+            let metadata = fs::metadata(&body)?;
+            if !metadata.is_file() {
+                return Err(QualificationInputError::Invalid(
+                    "corpus request body reference must name a regular file".into(),
+                ));
+            }
+            if metadata.len() > CONTENT_TREE_MAX_FILE_BYTES {
+                return Err(QualificationInputError::Bound(
+                    "corpus request body exceeds per-file limit".into(),
+                ));
+            }
+            let body_relative = corpus_parent
+                .join(body_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let body_identity = content_tree_identity(workspace, &body_relative)?;
+            identity.total_bytes = identity
+                .total_bytes
+                .saturating_add(body_identity.total_bytes);
+            for mut file in body_identity.files {
+                file.path = format!("body/{}/{}", case.id, file.path);
+                identity.files.push(file);
+            }
+        }
+    }
+    identity
+        .files
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    identity.aggregate_sha256 = aggregate_content_files(&identity.files);
+    if identity.total_bytes > CONTENT_TREE_MAX_TOTAL_BYTES
+        || identity.files.len() > CONTENT_TREE_MAX_FILES
+    {
+        return Err(QualificationInputError::Bound(
+            "corpus plus body aggregate limit".into(),
+        ));
+    }
+    if !identity
+        .aggregate_sha256
+        .eq_ignore_ascii_case(expected_sha256)
+    {
+        return Err(QualificationInputError::Invalid(
+            "corpus digest differs from the declared identity".into(),
+        ));
+    }
+    Ok((corpus, body_root.to_path_buf()))
+}
+
+fn aggregate_content_files(files: &[ContentFileIdentity]) -> String {
+    let mut hasher = Sha256::new();
+    for file in files {
+        hasher.update(file.path.as_bytes());
+        hasher.update([0]);
+        hasher.update(file.length.to_be_bytes());
+        hasher.update([0]);
+        hasher.update(file.sha256.as_bytes());
+        hasher.update([0]);
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, QualificationInputError> {
@@ -660,7 +915,103 @@ mod tests {
         };
         assert!(corpus.validate().is_err());
         corpus.cases[0].request.headers.clear();
+        corpus.cases[0].request.headers = vec![("Host".into(), "example.com".into())];
+        assert!(corpus.validate().is_err());
+        corpus.cases[0].request.headers.clear();
         corpus.cases[0].request.path_and_query = "http://example.com/".into();
         assert!(corpus.validate().is_err());
+        corpus.cases[0].request.path_and_query = "/\\example.com/".into();
+        assert!(corpus.validate().is_err());
+    }
+
+    #[test]
+    fn corpus_result_recomputes_status_disposition_and_counts() {
+        let result = HttpCorpusCheckResultV1 {
+            schema_version: 1,
+            id: "smoke".into(),
+            source: "eggbench-http-corpus".into(),
+            family: "http_observable".into(),
+            target: "api".into(),
+            corpus_id: "small".into(),
+            corpus_sha256: "ab".repeat(32),
+            adapter_semantic_version: "v1".into(),
+            eggfetch_version: "0.2.0".into(),
+            cases: vec![HttpCorpusCaseResultV1 {
+                id: "one".into(),
+                case_sha256: "cd".repeat(32),
+                expectation: HttpObservableExpectationV1::Exact { status_exact: 200 },
+                observed_status: Some(200),
+                disposition: HttpCorpusCaseDisposition::Pass,
+                reason: None,
+            }],
+        };
+        assert!(result.validate_contract().is_ok());
+        assert_eq!(result.counts(), (1, 1, 0, 0));
+        let mut inconsistent = result;
+        inconsistent.cases[0].observed_status = Some(403);
+        assert_eq!(
+            inconsistent.validate_contract(),
+            Err("case_disposition_mismatch")
+        );
+    }
+
+    #[test]
+    fn corpus_loader_binds_body_file_content_into_profile_identity() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("request.txt"), b"request body").unwrap();
+        fs::write(dir.path().join("target.json"), b"{}").unwrap();
+        fs::write(
+            dir.path().join("plan.json"),
+            include_str!("../tests/fixtures/minimal.json"),
+        )
+        .unwrap();
+        let corpus = HttpSecurityCorpusV1 {
+            schema_version: 1,
+            owner: "owner".into(),
+            corpus_id: "with-body".into(),
+            cases: vec![HttpSecurityCaseV1 {
+                id: "post".into(),
+                category: None,
+                request: HttpCaseRequestV1 {
+                    method: "POST".into(),
+                    path_and_query: "/submit".into(),
+                    headers: vec![],
+                    body: HttpCaseBodyV1::File("request.txt".into()),
+                },
+                expectation: HttpObservableExpectationV1::Exact { status_exact: 200 },
+            }],
+        };
+        fs::write(
+            dir.path().join("corpus.json"),
+            serde_json::to_vec(&corpus).unwrap(),
+        )
+        .unwrap();
+        let profile = SecurityQualificationProfileV1 {
+            schema_version: 1,
+            id: "body-profile".into(),
+            owner: "owner".into(),
+            scenarios: vec![QualificationScenarioRef {
+                id: "baseline".into(),
+                plan: "plan.json".into(),
+            }],
+            corpus: ContentInputRef {
+                path: "corpus.json".into(),
+            },
+            target_config: ContentInputRef {
+                path: "target.json".into(),
+            },
+        };
+        fs::write(
+            dir.path().join("profile.json"),
+            serde_json::to_vec(&profile).unwrap(),
+        )
+        .unwrap();
+        let identity = expand_qualification_profile(dir.path(), "profile.json")
+            .unwrap()
+            .corpus_identity
+            .aggregate_sha256;
+        assert!(load_http_security_corpus(dir.path(), "corpus.json", &identity).is_ok());
+        fs::write(dir.path().join("request.txt"), b"changed body").unwrap();
+        assert!(load_http_security_corpus(dir.path(), "corpus.json", &identity).is_err());
     }
 }
