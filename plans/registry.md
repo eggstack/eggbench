@@ -46,7 +46,7 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002a/M002b authored | Eggbench M002a is blocked on the SynVoid-owned qualification asset contract; M002b is blocked on M002a closure |
+| Security qualification | conditionally closed | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002a/M002b routine scope green (`b74f861`), live proof pending | Full close needs the SynVoid qualification-asset contract + hosted live runs |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -68,20 +68,26 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 No Eggbench capability implementation plan is currently ready for handoff.
 
-Security Qualification M002 is authored but cross-repo blocked. The next executable prerequisite is in SynVoid:
+Security Qualification M002 routine scope has landed and is conditionally
+closed (`plans/closure/security-qualification/002a-status.md` for M002a,
+umbrella `plans/closure/security-qualification/002b-status.md` for M002/M002b;
+implementation `b74f861`). The remaining executable prerequisite is still in
+SynVoid:
 
 `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
 
-After that plan closes, Eggbench M002a becomes dependency-ready.
+After that plan closes, the Eggbench handoff is the live proof (harness
+Stages B/C against the real export plus hosted four-lane and
+`live-synvoid-linux` runs), followed by M003 research/planning.
 
 Historical post-M003 live-tool C001 stopped with evidence and successor C002 is closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`. No corrective handoff remains open.
 
-## Authored but dependency-blocked implementation plans
+## Conditionally closed implementation plans (named conditions remain)
 
-| Subsystem | Milestone | Status | Plan | Blocker |
-|---|---|---|---|---|
-| Security qualification | M002a SynVoid controlled correctness profile | blocked | plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md | SynVoid qualification-asset contract must close |
-| Security qualification | M002b SynVoid performance/resource suite + M002 closure | blocked | plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md | M002a must close |
+| Subsystem | Milestone | Status | Plan | Closure | Remaining condition |
+|---|---|---|---|---|---|
+| Security qualification | M002a SynVoid controlled correctness profile | conditionally closed | plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md | plans/closure/security-qualification/002a-status.md | SynVoid asset-contract closure + live reverse-proxy proof + hosted runs |
+| Security qualification | M002b SynVoid performance/resource suite + M002 closure | conditionally closed | plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md | plans/closure/security-qualification/002b-status.md | Same shared conditions (umbrella M002) |
 
 External Oracles M003 netem remains separate.
 
@@ -155,7 +161,7 @@ External Oracles M003 netem remains a separate later system-level impairment bou
 
 Security qualification retains separate correctness and performance gate families. Faster execution never overrides a security-correctness failure.
 
-Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed after the ordered M001a -> M001b -> M001c sequence. M002 is now implementation-planned as M002a -> M002b. M002a is cross-repo blocked on SynVoid's owner-authored qualification asset/export contract; M002b is hard-blocked on M002a closure. Eggbench must not translate SynVoid's internal Detect/Pass fixture semantics itself.
+Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed after the ordered M001a -> M001b -> M001c sequence. M002 routine scope landed as M002a -> M002b (implementation `b74f861`, both conditionally closed) with one production adjustment (eggfetch-http drives `command` services with static `http_url`) and explicitly synthetic fixtures. Full M002 close waits on SynVoid's owner-authored qualification asset/export contract plus live/hosted proof. Eggbench must not translate SynVoid's internal Detect/Pass fixture semantics itself.
 
 ### Gate H — Distributed execution
 
@@ -204,7 +210,25 @@ M004 Eggsec handoff re-audit on 2026-09-25:
 - M004b keeps security correctness out of TrialMetrics/bootstrap and introduces an independent correctness receipt section with conservative combined verdict precedence.
 - Security Qualification M001 owns later reusable profile/corpus semantics rather than duplicating the M004 structural substrate.
 
-M002 SynVoid handoff re-audit on 2026-09-26:
+M002 implementation re-audit (routine scope, implementation `b74f861`):
+
+- SynVoid `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1`, package 1.1.0; upstream
+  asset contract still absent (harness Stage B proves absence per run).
+- 27-case WAF fixture corpus audited case-by-case: 5-case GET path/query
+  allowlist identified (verbatim/adapted in the synthetic corpus with source
+  IDs as opaque labels); 22 exclusions recorded with M001-based reasons.
+- Minimal `--no-default-features` build plausible but heavy (~1053-lock
+  packages, LTO); no binary built in routine scope.
+- Runner findings that shaped the routine scope: no binding interpolation
+  (static subjects cannot consume ephemeral adapter ports; D1), eggfetch-http
+  admitted only `eggserve-origin` targets until the M001a-intended `command`
+  widening, `qualify run` pins no per-scenario driver (D4 oracle procedure),
+  h2load p95 resolution floor on sub-ms loopback (oracle absolute-gate scoping).
+- Same-build repeatability evidence: 5-trial policy failed same-source (§8
+  stop honored, policy revised with evidence); 7-trial/200-2000-request policy
+  yields Pass/Inconclusive with zero Fail across repeated pairs; thresholds frozen.
+
+M002 SynVoid handoff re-audit on 2026-09-26 (planning-time baseline):
 
 - SynVoid audited source: `dbowm91/synvoid@49b4624b696b4c3aa0172b0326a04ae9e275ca3f`, package version 1.1.0.
 - `--no-default-features` is the supported minimal WAF/proxy runtime; foreground lifecycle is `synvoid --foreground --config-path <dir>`.
@@ -232,13 +256,15 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The next executable cross-repo handoff is SynVoid's owner-side qualification asset contract:
+The next executable cross-repo handoff remains SynVoid's owner-side qualification asset contract:
 
 `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
 
-Eggbench M002 plans are already authored:
+Eggbench M002 routine scope is implemented and conditionally closed:
 
-1. `plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md` — blocked on the SynVoid asset-contract closure.
-2. `plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md` — blocked on M002a closure.
+1. `plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md` — conditionally closed (`plans/closure/security-qualification/002a-status.md`).
+2. `plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md` — conditionally closed (umbrella `plans/closure/security-qualification/002b-status.md`).
 
-Do not implement M002a by copying SynVoid's internal corpus or translating Detect/Pass semantics inside Eggbench. External Oracles M003 netem remains separate.
+When the upstream contract closes, the Eggbench handoff is the live proof
+against the real export (harness Stages B/C, hosted four-lane,
+`live-synvoid-linux`), then M003 research/planning. Do not implement M002a by copying SynVoid's internal corpus or translating Detect/Pass semantics inside Eggbench. External Oracles M003 netem remains separate.

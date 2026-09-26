@@ -1,6 +1,8 @@
 # Security Qualification M002a — SynVoid Controlled Correctness Profile
 
-Status: authored; blocked on SynVoid qualification-asset contract closure
+Status: conditionally closed by plans/closure/security-qualification/002a-status.md
+(implementation `b74f861`; routine scope green; live reverse-proxy proof and
+the SynVoid upstream asset contract remain named conditions)
 
 Repository baseline: `c77a755ba33f103526f44d574afb9dd2676228e3`
 
