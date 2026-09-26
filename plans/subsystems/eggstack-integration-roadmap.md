@@ -94,7 +94,7 @@ with recorded deviations limited to controlled-origin `Date` suppression
 and compare-reader/writer alignment (neither changes metric, lifecycle, or
 verdict semantics).
 
-M004 implementation is unblocked subject to its own implementation plan.
+M004 subsequently closed under `plans/closure/eggstack-integration/004b-status.md`; Security Qualification now owns the follow-up profile layer.
 
 ## 2D. M004 Eggsec handoff re-audit — 2026-09-25
 
