@@ -46,7 +46,7 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001a/M001b closed; M001c ready | none |
+| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 ready for implementation planning | No current blocker; re-audit SynVoid/Eggsec seams at M002 handoff |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -66,11 +66,7 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 ## Dependency-ready implementation plans
 
-| Subsystem | Milestone | Status | Plan | Dependencies |
-|---|---|---|---|---|
-| Security qualification | M001c Qualification suite execution/receipt + M001 closure | ready | plans/implementation/security-qualification/001c-qualification-suite-execution-and-m001-closure.md | M001a and M001b closures: plans/closure/security-qualification/001a-status.md, plans/closure/security-qualification/001b-status.md |
-
-M001a and M001b are closed at `plans/closure/security-qualification/001a-status.md` and `plans/closure/security-qualification/001b-status.md`; M001c is the next dependency-ready plan.
+No implementation plan is currently ready for handoff. M001a, M001b, and umbrella M001c are closed at `plans/closure/security-qualification/001a-status.md`, `plans/closure/security-qualification/001b-status.md`, and `plans/closure/security-qualification/001c-status.md`. Security Qualification M002 is unblocked and ready for planning, but no authored M002 plan exists yet.
 
 Historical post-M003 live-tool C001 stopped with evidence and successor C002 is closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`. No corrective handoff remains open.
 
@@ -152,7 +148,7 @@ External Oracles M003 netem remains a separate later system-level impairment bou
 
 Security qualification retains separate correctness and performance gate families. Faster execution never overrides a security-correctness failure.
 
-Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is now fully planned as M001a -> M001b -> M001c. M001a and M001b are closed; M001c is ready. M001 owns reusable named profiles, corpus/config digests, expected-outcome matrices, fixed-corpus observable correctness, and suite-level qualification receipts above the initial WAF-bypass family.
+Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed after the ordered M001a -> M001b -> M001c sequence. M001 owns reusable named profiles, corpus/config digests, expected-outcome matrices, fixed-corpus observable correctness, and suite-level qualification receipts above the initial WAF-bypass family. M002 is dependency-ready for planning, with a current upstream-seam re-audit required at handoff.
 
 ### Gate H — Distributed execution
 
@@ -219,16 +215,16 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-Security Qualification M001c is dependency-ready:
+Security Qualification M001 is closed. M002 is the next dependency-ready milestone:
 
-`plans/implementation/security-qualification/001c-qualification-suite-execution-and-m001-closure.md`
+`plans/subsystems/security-qualification-roadmap.md` §5; the M002 implementation plan has not yet been authored.
 
 Ordered sequence:
 
 1. M001a — profile/corpus/config identity, generalized bounded content-tree hashing, deterministic expansion, and generic static HTTP bindings;
 2. M001b — fixed-corpus HTTP correctness through Eggfetch, correctness policy v2, and ComparisonReceipt v4;
-3. M001c — bounded serial suite execution, immutable qualification receipt, and M001 closure.
+3. M001c — bounded serial suite execution, immutable qualification receipt, and M001 closure (closed).
 
-M001b closed after M001a. M001c is unblocked by M001b closure.
+M001b closed after M001a, then M001c closed the umbrella M001 milestone. M002 is unblocked by the complete M001 closure.
 
 No Eggsec or SynVoid upstream blocker is currently identified. External Oracles M003 netem remains separate.

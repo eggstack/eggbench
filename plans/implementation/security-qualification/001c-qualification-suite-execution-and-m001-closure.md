@@ -1,8 +1,10 @@
 # Security Qualification M001c — Qualification Suite Execution, Receipt, and M001 Closure
 
-Status: ready
+Status: closed
 
-Repository baseline: `afd9322`
+Repository baseline: `33aa90d`
+
+Closure record: `plans/closure/security-qualification/001c-status.md`
 
 Source roadmap:
 

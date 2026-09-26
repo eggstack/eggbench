@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001a and M001b closed; M001c ready)
+Status: active (M001 closed; M002 ready for planning)
 
 Long-term references:
 
@@ -274,9 +274,9 @@ Ordered implementation decomposition:
 2. **M001b — Fixed-corpus HTTP correctness family**  
    Closed and hosted-qualified. Executes immutable corpus cases through Eggfetch outside performance timing, adds sanitized observable-status evidence, correctness policy v2, and ComparisonReceipt v4 compatibility.
 3. **M001c — Qualification suite execution/receipt and M001 closure**  
-   Ready. Run explicit scenarios serially through ordinary run/compare machinery and produce the immutable qualification receipt without recomputing metrics/security semantics.
+   Closed by `plans/closure/security-qualification/001c-status.md`. Runs explicit scenarios serially through ordinary run/compare machinery and produces an immutable qualification receipt without recomputing metrics/security semantics.
 
-### M002 — SynVoid suite
+### M002 — SynVoid suite (ready for implementation planning)
 
 Build local controlled-origin WAF/proxy profiles and compare native and external workload drivers. Preserve target configuration and security result evidence.
 
@@ -301,9 +301,9 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 - M004a (`plans/implementation/eggstack-integration/004a-eggsec-strict-waf-correctness-adapter.md`) is closed and establishes the first strict Eggsec correctness executor/evidence contract.
 - M004b (`plans/implementation/eggstack-integration/004b-security-correctness-gate-and-m004-closure.md`) is closed and establishes the generic independent correctness gate family plus combined verdict precedence.
 
-Security Qualification M001 is now implementation-planned.
+Security Qualification M001 is closed by `plans/closure/security-qualification/001c-status.md`.
 
 - M001a closed at `plans/closure/security-qualification/001a-status.md` (implementation `1622054`, hosted CI run `36214130746`, live-tools run `36214130734`).
-- M001b is closed and hosted-qualified; M001c is dependency-ready.
+- M001b is closed and hosted-qualified; M001c is closed and M002 is dependency-ready for implementation planning.
 
-No Eggsec or SynVoid upstream blocker is currently known. The next executable handoff is M001c.
+No Eggsec or SynVoid upstream blocker is currently known. The next handoff is to author and execute the M002 SynVoid profile plan after re-auditing the current SynVoid and Eggsec seams.
