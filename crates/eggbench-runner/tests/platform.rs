@@ -38,6 +38,7 @@ fn plan() -> ResolvedPlan {
             lifecycle: Lifecycle::Managed,
             depends_on: Vec::new(),
             config: BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,

@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001a ready; M001b/M001c authored and dependency-blocked)
+Status: active (M001a closing; M001b/M001c authored and dependency-blocked)
 
 Long-term references:
 
@@ -303,7 +303,7 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 
 Security Qualification M001 is now implementation-planned.
 
-- M001a is dependency-ready.
+- M001a implementation is committed as `1622054`; hosted closure evidence is pending.
 - M001b is authored but hard-blocked on M001a closure.
 - M001c is authored but hard-blocked on M001b closure.
 

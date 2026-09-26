@@ -46,7 +46,7 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001a ready; M001b/M001c authored and dependency-blocked | M001a is the next executable handoff; M001b requires M001a closure; M001c requires M001b closure |
+| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001a implementation `1622054` is closing; M001b/M001c authored and dependency-blocked | M001b requires M001a closure; M001c requires M001b closure |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -68,9 +68,9 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Plan | Dependencies |
 |---|---|---|---|---|
-| Security qualification | M001a Profile/corpus/config identity + static HTTP bindings | ready | plans/implementation/security-qualification/001a-profile-corpus-config-identity-and-static-http-bindings.md | Eggstack M004 closed; measurement/comparison qualified |
+| Security qualification | M001a Profile/corpus/config identity + static HTTP bindings | closing | plans/implementation/security-qualification/001a-profile-corpus-config-identity-and-static-http-bindings.md | Hosted CI 36213901206 and live qualification 36213901211 pending |
 
-M001a is the next executable handoff.
+M001a implementation `1622054` is under hosted qualification. M001b remains blocked on its formal closure.
 
 Historical post-M003 live-tool C001 stopped with evidence and successor C002 is closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`. No corrective handoff remains open.
 
