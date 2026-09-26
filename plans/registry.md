@@ -75,11 +75,11 @@ Historical post-M003 live-tool C001 stopped with evidence and successor C002 is 
 
 ## Authored but dependency-blocked implementation plans
 
-No implementation plan is currently dependency-blocked. Eggstack M004b is
-dependency-ready (M004a closed); its closure unblocks Security
-Qualification M001 implementation planning/handoff.
+No implementation plan is currently dependency-blocked.
 
-Security Qualification M001 may be researched in parallel but implementation remains gated on M004b closure. External Oracles M003 netem remains separate.
+Eggstack M004 is closed. Security Qualification M001 is unblocked for its own
+implementation planning/handoff but has no authored implementation plan yet.
+External Oracles M003 netem remains separate.
 
 ## Current execution order and dependency gates
 
@@ -134,14 +134,14 @@ C001 correctly stopped under its frozen-contract rule. Its successor C002 (imple
 
 External Oracles M001/M002 are hosted-qualified. Eggstack M001-M003 are closed and hosted-qualified, including additive real-binary EggReplay/Eggprobe interoperability through post-M003 live-tool C002 (implementation `98f16e6`; hosted runs `36177440371` and `36177440220`).
 
-Eggstack M004 is now planned as two ordered stages:
+Eggstack M004 closed as two ordered stages:
 
 1. **M004a Eggsec strict WAF correctness adapter** — closed (implementation `273e5b1`; closure `plans/closure/eggstack-integration/004a-status.md`).
 2. **M004b security correctness gate family and M004 closure** — closed (implementation `b2de53e`; umbrella closure `plans/closure/eggstack-integration/004b-status.md`).
 
 M004a consumes Eggsec through an external strict-scope CLI boundary, initially only the bounded `waf --json` bypass semantics on local/private targets. It introduces a distinct correctness execution/evidence category and never turns Eggsec security results into performance metrics.
 
-M004b consumes M004a's sanitized evidence through a dedicated correctness gate family. ComparisonReceipt v3 records a performance-only verdict, a typed correctness section, and a conservative combined verdict. Performance cannot override failed correctness. Security Qualification M001 remains the owner of broader reusable profiles/corpora and is gated on M004b closure.
+M004b consumes M004a's sanitized evidence through a dedicated correctness gate family. ComparisonReceipt v3 records a performance-only verdict, a typed correctness section, and a conservative combined verdict. Performance cannot override failed correctness. Security Qualification M001 now owns the broader reusable profiles/corpora follow-up and is unblocked for its own implementation planning.
 
 Audited Eggsec source baseline for M004 planning: `0509ac668adfd78e9899cd3428a807d0b3c9f27b` (workspace 0.1.0, Rust 1.89; evolving source tree, no immutable release selected for this machine contract).
 
