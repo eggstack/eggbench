@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 ready for planning)
+Status: active (M001 closed; M002 implementation-planned, blocked on SynVoid asset-contract closure)
 
 Long-term references:
 
@@ -120,7 +120,7 @@ The M001 architecture is now captured in three ordered implementation plans:
 
 - `plans/implementation/security-qualification/001a-profile-corpus-config-identity-and-static-http-bindings.md` — closed at `plans/closure/security-qualification/001a-status.md`;
 - `plans/implementation/security-qualification/001b-fixed-corpus-http-correctness-family.md` — closed at `plans/closure/security-qualification/001b-status.md`;
-- `plans/implementation/security-qualification/001c-qualification-suite-execution-and-m001-closure.md` — ready after M001b closure.
+- `plans/implementation/security-qualification/001c-qualification-suite-execution-and-m001-closure.md` — closed at `plans/closure/security-qualification/001c-status.md`.
 
 **M001a — qualification profile, corpus, and configuration identity**
 
@@ -276,11 +276,24 @@ Ordered implementation decomposition:
 3. **M001c — Qualification suite execution/receipt and M001 closure**  
    Closed by `plans/closure/security-qualification/001c-status.md`. Runs explicit scenarios serially through ordinary run/compare machinery and produces an immutable qualification receipt without recomputing metrics/security semantics.
 
-### M002 — SynVoid suite (ready for implementation planning)
+### M002 — SynVoid reproducible qualification suite
 
-Build local controlled-origin WAF/proxy profiles and compare native and external workload drivers. Preserve target configuration and security result evidence.
+Status: implementation-planned; blocked on the SynVoid-owned qualification-asset contract.
 
-Start with bounded local profiles rather than internet-facing or defense-lab flood modes.
+Cross-repo prerequisite:
+
+- `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md` — planned and registered in SynVoid's roadmap. SynVoid owns the exported live-proxy-compatible WAF fixture subset, Detect/Pass-to-observable mapping, minimal loopback config materialization, and provenance.
+
+Eggbench implementation sequence:
+
+1. **M002a — SynVoid controlled correctness profile**  
+   `plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md`  
+   Authored; blocked on the SynVoid asset-contract closure. Consumes only the SynVoid-owned normalized export, runs SynVoid as a generic managed command subject, and proves the exported WAF corpus through M001 fixed-corpus correctness.
+2. **M002b — SynVoid performance/resource suite and M002 closure**  
+   `plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md`  
+   Authored; blocked on M002a closure. Adds native Eggfetch and independent oha/h2load benign proxy workloads, direct-origin controls, explicit baseline-relative performance comparison, Gregg host telemetry where available, and umbrella M002 closure.
+
+M002 v1 remains bounded/local. Current driver truth means the following earlier roadmap ideas are explicitly deferred rather than approximated incorrectly: mixed malicious traffic under load, arbitrary request-body attack load, explicit connection-churn controls, and SynVoid Prometheus/event-loop/queue metric ingestion. These become M003 candidates unless an existing qualified seam evolves before M002 implementation.
 
 ### M003 — Reusable security performance patterns
 
@@ -304,6 +317,11 @@ Measurement/comparison prerequisites are closed and hosted-qualified. Eggstack M
 Security Qualification M001 is closed by `plans/closure/security-qualification/001c-status.md`.
 
 - M001a closed at `plans/closure/security-qualification/001a-status.md` (implementation `1622054`, hosted CI run `36214130746`, live-tools run `36214130734`).
-- M001b is closed and hosted-qualified; M001c is closed and M002 is dependency-ready for implementation planning.
+- M001b is closed and hosted-qualified.
+- M001c is closed and provides the reusable suite/receipt substrate.
 
-No Eggsec or SynVoid upstream blocker is currently known. The next handoff is to author and execute the M002 SynVoid profile plan after re-auditing the current SynVoid and Eggsec seams.
+M002 is now fully implementation-planned, but Eggbench execution is intentionally blocked on one SynVoid-owned upstream prerequisite: `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`.
+
+Planning-time SynVoid re-audit at `49b4624b696b4c3aa0172b0326a04ae9e275ca3f` found package version 1.1.0, a supported `--no-default-features` minimal WAF/proxy runtime, `--foreground --config-path` lifecycle, an authoritative WAF fixture corpus with Detect/Pass semantics, and no existing Eggbench export contract. The upstream plan therefore owns fixture selection/mapping/config materialization; Eggbench does not duplicate those semantics.
+
+After that upstream plan closes, M002a is the next Eggbench executable handoff. M002b follows M002a closure.
