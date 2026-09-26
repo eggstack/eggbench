@@ -6012,6 +6012,7 @@ mod tests {
             lifecycle: crate::Lifecycle::External,
             depends_on: Vec::new(),
             config: std::collections::BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,

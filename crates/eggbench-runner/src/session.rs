@@ -302,6 +302,16 @@ impl LocalSession {
             .filter(|service| service.lifecycle == eggbench_core::Lifecycle::External)
             .map(|service| service.name.as_str().to_owned())
             .collect();
+        let mut bindings = RuntimeBindings::new();
+        for service in &resolved.topology {
+            if service.lifecycle == eggbench_core::Lifecycle::External
+                && let Some(url) = &service.http_url
+            {
+                bindings
+                    .insert(service.name.as_str(), "http_url", url.clone())
+                    .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+            }
+        }
         Ok(Self {
             spawn_plan,
             options,
@@ -311,7 +321,7 @@ impl LocalSession {
             events: Vec::new(),
             prepared_at: Instant::now(),
             next_seq: 0,
-            bindings: RuntimeBindings::new(),
+            bindings,
         })
     }
 
@@ -492,6 +502,15 @@ impl LocalSession {
                         return Err(attach_cleanup(error, cleanup));
                     }
                     self.push_event(&spec.identity, LifecycleEventKind::Ready, Some(pid));
+                    if let Some(url) = &spec.http_url {
+                        let mut declared = RuntimeBindings::new();
+                        declared
+                            .insert(&spec.identity, "http_url", url.clone())
+                            .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+                        self.bindings
+                            .merge_checked(&declared)
+                            .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+                    }
                 }
                 LaunchKind::Adapter => {
                     let spec = self
@@ -512,7 +531,9 @@ impl LocalSession {
                                 let cleanup = self.teardown_running().await;
                                 return Err(attach_cleanup(error, cleanup));
                             }
-                            self.bindings.merge(&bindings);
+                            self.bindings
+                                .merge_checked(&bindings)
+                                .map_err(|detail| RunnerError::InvalidPlan { detail })?;
                             self.push_event(&spec.identity, LifecycleEventKind::Ready, None);
                         }
                         Err(error) => {
@@ -569,7 +590,24 @@ impl LocalSession {
         // Adapter `start` returns after adapter-owned readiness; bindings are
         // captured here so workloads receive the startup-established map.
         // The handle moves into `running` so shutdown owns it.
-        let bindings = handle.bindings();
+        let mut bindings = handle.bindings();
+        if let Some(url) = &spec.http_url {
+            let mut declared = RuntimeBindings::new();
+            declared
+                .insert(&spec.identity, "http_url", url.clone())
+                .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+            if let Err(detail) = bindings.merge_checked(&declared) {
+                let mut handle = handle;
+                let shutdown = handle.shutdown(spec.grace).await;
+                let cleanup = shutdown.err().map_or_else(String::new, |message| {
+                    format!("; adapter cleanup failed: {message}")
+                });
+                return Err(RunnerError::UnsupportedService {
+                    service: spec.identity.clone(),
+                    detail: format!("{detail}; adapter binding conflict{cleanup}"),
+                });
+            }
+        }
         self.running
             .push(RunningManagedService::Adapter(RunningAdapter {
                 identity: spec.identity.clone(),

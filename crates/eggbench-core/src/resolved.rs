@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-/// Current resolved-plan schema version (v4 adds `security_checks`).
-pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(4);
+/// Current resolved-plan schema version (v5 retains static service bindings).
+pub const RESOLVED_PLAN_SCHEMA_VERSION: SchemaVersion = SchemaVersion(5);
+/// Previous resolved-plan schema version, still accepted on read.
+pub const RESOLVED_PLAN_SCHEMA_VERSION_4: SchemaVersion = SchemaVersion(4);
 /// Previous resolved-plan schema version, still accepted on read.
 pub const RESOLVED_PLAN_SCHEMA_VERSION_3: SchemaVersion = SchemaVersion(3);
 /// Older resolved-plan schema version, still accepted on read.
@@ -1207,6 +1209,7 @@ mod tests {
             lifecycle: crate::Lifecycle::External,
             depends_on: Vec::new(),
             config: std::collections::BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,
@@ -1279,6 +1282,7 @@ mod tests {
             lifecycle: crate::Lifecycle::External,
             depends_on: Vec::new(),
             config: std::collections::BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,
@@ -1305,6 +1309,7 @@ mod tests {
             lifecycle: crate::Lifecycle::External,
             depends_on: Vec::new(),
             config: std::collections::BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,

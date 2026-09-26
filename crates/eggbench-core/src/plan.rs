@@ -1,8 +1,9 @@
 use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
     EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_5, EXPERIMENT_PLAN_SCHEMA_VERSION_6, Name, NetworkPathRequest,
-    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_5, EXPERIMENT_PLAN_SCHEMA_VERSION_6,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_7, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
+    RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -238,6 +239,10 @@ pub struct Service {
     /// Opaque non-secret config values.
     #[serde(default)]
     pub config: BTreeMap<String, String>,
+    /// Optional static non-secret HTTP endpoint published as a runtime binding
+    /// by managed command and external services (plan schema v7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_url: Option<String>,
     /// Optional readiness request.
     pub readiness: Option<Readiness>,
     /// Optional shutdown request.
@@ -746,6 +751,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_4
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
@@ -884,6 +890,15 @@ impl ExperimentPlan {
             return invalid("invalid_bound", "at most 256 services are allowed");
         }
         for service in &self.services {
+            if let Some(url) = &service.http_url {
+                if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7 {
+                    return invalid(
+                        "unsupported_option",
+                        "service http_url requires plan schema version 7",
+                    );
+                }
+                validate_static_http_url(url)?;
+            }
             if services.insert(service.name.clone(), service).is_some() {
                 return invalid(
                     "duplicate_identity",
@@ -1175,6 +1190,30 @@ fn validate_workload(w: &Workload) -> Result<(), PlanError> {
 /// confined by construction, bounded, and free of absolute/traversal/control
 /// characters. Filesystem existence and symlink-escape checks happen in
 /// driver preflight against `RunnerOptions.workspace_root`.
+fn validate_static_http_url(value: &str) -> Result<(), PlanError> {
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return invalid(
+            "invalid_binding",
+            "http_url must be an absolute HTTP or HTTPS URL",
+        );
+    };
+    if !matches!(scheme, "http" | "https") || rest.is_empty() || rest.contains('#') {
+        return invalid(
+            "invalid_binding",
+            "http_url must use HTTP/HTTPS and have no fragment",
+        );
+    }
+    let authority = rest.split(['/', '?']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') || authority.chars().any(char::is_whitespace)
+    {
+        return invalid(
+            "invalid_binding",
+            "http_url authority is invalid or contains credentials",
+        );
+    }
+    Ok(())
+}
+
 fn validate_semantic_fixture_path(fixture: &str) -> Result<(), PlanError> {
     if fixture.is_empty() || fixture.len() > 512 {
         return invalid(
@@ -1814,12 +1853,28 @@ mod tests {
             lifecycle: Lifecycle::External,
             depends_on: Vec::new(),
             config: BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,
             log_limit_bytes: 4096,
         });
         plan
+    }
+
+    #[test]
+    fn static_http_binding_is_versioned_and_rejects_unsafe_urls() {
+        let mut plan = ExperimentPlan::from_json(VALID).unwrap();
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_7;
+        let mut service = plan_with_service().services.remove(0);
+        service.http_url = Some("http://127.0.0.1:8080/base".into());
+        plan.services.push(service.clone());
+        assert!(plan.validate().is_ok());
+        service.http_url = Some("http://user:pass@127.0.0.1:8080/".into());
+        plan.services[0] = service;
+        assert!(plan.validate().is_err());
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_6;
+        assert!(plan.validate().is_err());
     }
     fn error_category(result: Result<(), PlanError>) -> String {
         match result.unwrap_err() {
@@ -1916,6 +1971,7 @@ mod tests {
             lifecycle: Lifecycle::External,
             depends_on: vec![Name::new("api").unwrap()],
             config: BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,

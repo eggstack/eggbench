@@ -6,6 +6,7 @@ mod evidence;
 mod metrics;
 mod network_path;
 mod plan;
+mod qualification;
 mod resolved;
 mod security;
 mod types;
@@ -15,6 +16,7 @@ pub use evidence::*;
 pub use metrics::*;
 pub use network_path::*;
 pub use plan::*;
+pub use qualification::*;
 pub use resolved::*;
 pub use security::*;
 pub use types::*;
@@ -33,3 +35,5 @@ pub const EXPERIMENT_PLAN_SCHEMA_VERSION_4: SchemaVersion = SchemaVersion(4);
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_5: SchemaVersion = SchemaVersion(5);
 /// Security-correctness experiment-plan schema version (adds `security_checks`).
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_6: SchemaVersion = SchemaVersion(6);
+/// Static service HTTP binding plan schema version.
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_7: SchemaVersion = SchemaVersion(7);

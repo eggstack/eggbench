@@ -102,6 +102,24 @@ impl RuntimeBindings {
                 .or_insert_with(|| value.to_owned());
         }
     }
+
+    /// Merge bindings while rejecting conflicting declarations.
+    ///
+    /// # Errors
+    /// Returns an error when two sources provide different values for the same
+    /// service binding or when the new binding is malformed.
+    pub fn merge_checked(&mut self, other: &RuntimeBindings) -> Result<(), String> {
+        for (service, key, value) in other.iter() {
+            if let Some(existing) = self.get(service, key) {
+                if existing != value {
+                    return Err(format!("conflicting runtime binding {service}.{key}"));
+                }
+            } else {
+                self.insert(service, key, value.to_owned())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Request passed to one named-service adapter start.

@@ -38,11 +38,10 @@ use eggbench_runner::{
     WorkloadArtifact, WorkloadExecutor, WorkloadOutput,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::future::Future;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -74,9 +73,6 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Validate/replay preflight timeout (separate from per-trial timeout).
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Fixture traversal bounds.
-const MAX_FIXTURE_FILES: usize = 1024;
-const MAX_FIXTURE_FILE_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_FIXTURE_AGGREGATE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_FIXTURE_REL_PATH: usize = 512;
 const MAX_FIXTURE_DEPTH: usize = 16;
 /// Replay report bounds.
@@ -462,148 +458,16 @@ pub fn compute_fixture_identity(
 ) -> Result<FixtureIdentity, DriverError> {
     let failed = |detail: String| DriverError::execution(ErrorCategory::UnsupportedOption, detail);
     validate_fixture_path_syntax(fixture).map_err(|e| failed(e.to_string()))?;
-    let workspace_canonical = std::fs::canonicalize(workspace_root)
-        .map_err(|e| failed(format!("workspace root is not accessible: {e}")))?;
-    let joined = join_workspace(workspace_root, fixture)?;
-    let fixture_canonical = std::fs::canonicalize(&joined)
-        .map_err(|_| failed("fixture path does not exist or is not accessible".to_owned()))?;
-    if !fixture_canonical.starts_with(&workspace_canonical) {
-        return Err(failed("fixture escapes the workspace root".to_owned()));
-    }
-    let metadata = std::fs::symlink_metadata(&fixture_canonical)
-        .map_err(|e| failed(format!("fixture metadata failed: {e}")))?;
-    if !metadata.is_dir() {
-        return Err(failed("fixture must be a directory".to_owned()));
-    }
-    let mut records: Vec<(String, u64, String)> = Vec::new();
-    let mut total_bytes: u64 = 0;
-    let mut stack = vec![fixture_canonical.clone()];
-    let mut seen_dirs = 0usize;
-    while let Some(dir) = stack.pop() {
-        seen_dirs += 1;
-        if seen_dirs > MAX_FIXTURE_FILES + 16 {
-            return Err(failed("fixture traversal exceeds bound".to_owned()));
-        }
-        let entries = std::fs::read_dir(&dir)
-            .map_err(|e| failed(format!("fixture traversal failed: {e}")))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| failed(format!("fixture entry failed: {e}")))?;
-            let path = entry.path();
-            let symlink_meta = std::fs::symlink_metadata(&path)
-                .map_err(|e| failed(format!("fixture metadata failed: {e}")))?;
-            if symlink_meta.file_type().is_symlink() {
-                let target = std::fs::canonicalize(&path)
-                    .map_err(|_| failed("fixture symlink cannot be resolved".to_owned()))?;
-                if !target.starts_with(&workspace_canonical) {
-                    return Err(failed("fixture symlink escapes the workspace".to_owned()));
-                }
-                let target_meta = std::fs::metadata(&target)
-                    .map_err(|e| failed(format!("symlink target failed: {e}")))?;
-                if !target_meta.is_file() {
-                    return Err(failed(
-                        "fixture symlinks must resolve to regular files".to_owned(),
-                    ));
-                }
-                let rel = target
-                    .strip_prefix(&workspace_canonical)
-                    .map_err(|_| failed("symlink target escapes workspace".to_owned()))?;
-                let _ = rel;
-                // Hash through the link path but bound it as a file.
-                hash_one_file(&path, &fixture_canonical, &mut records, &mut total_bytes)?;
-            } else if symlink_meta.is_dir() {
-                let canonical = std::fs::canonicalize(&path)
-                    .map_err(|_| failed("fixture directory failed".to_owned()))?;
-                if !canonical.starts_with(&workspace_canonical) {
-                    return Err(failed("fixture escapes the workspace".to_owned()));
-                }
-                stack.push(canonical);
-            } else if symlink_meta.is_file() {
-                hash_one_file(&path, &fixture_canonical, &mut records, &mut total_bytes)?;
-            } else {
-                return Err(failed("fixture contains special files".to_owned()));
-            }
-            if records.len() > MAX_FIXTURE_FILES {
-                return Err(failed("fixture file count exceeds bound".to_owned()));
-            }
-            if total_bytes > MAX_FIXTURE_AGGREGATE_BYTES {
-                return Err(failed("fixture aggregate bytes exceed bound".to_owned()));
-            }
-        }
-    }
-    if records.is_empty() {
+    let identity = eggbench_core::content_tree_identity(workspace_root, fixture)
+        .map_err(|error| failed(format!("fixture identity failed: {error}")))?;
+    if identity.file_count == 0 {
         return Err(failed("fixture contains no regular files".to_owned()));
     }
-    records.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut hasher = Sha256::new();
-    for (rel, len, sha) in &records {
-        hasher.update(rel.as_bytes());
-        hasher.update([0u8]);
-        hasher.update(len.to_be_bytes());
-        hasher.update([0u8]);
-        hasher.update(sha.as_bytes());
-        hasher.update([0u8]);
-    }
     Ok(FixtureIdentity {
-        aggregate_sha256: hex_encode(hasher.finalize()),
-        file_count: records.len(),
-        total_bytes,
+        aggregate_sha256: identity.aggregate_sha256,
+        file_count: identity.file_count,
+        total_bytes: identity.total_bytes,
     })
-}
-
-fn hash_one_file(
-    path: &Path,
-    fixture_root: &Path,
-    records: &mut Vec<(String, u64, String)>,
-    total_bytes: &mut u64,
-) -> Result<(), DriverError> {
-    let failed = |detail: String| DriverError::execution(ErrorCategory::UnsupportedOption, detail);
-    let rel = path
-        .strip_prefix(fixture_root)
-        .map_err(|_| failed("fixture path escapes fixture root".to_owned()))?;
-    let mut rel_text = String::new();
-    for component in rel.components() {
-        match component {
-            Component::Normal(part) => {
-                let text = part.to_string_lossy();
-                if text.len() > 128 {
-                    return Err(failed("fixture component too long".to_owned()));
-                }
-                if !rel_text.is_empty() {
-                    rel_text.push('/');
-                }
-                rel_text.push_str(&text);
-            }
-            _ => return Err(failed("fixture path is not confined".to_owned())),
-        }
-    }
-    if rel_text.is_empty() || rel_text.len() > MAX_FIXTURE_REL_PATH {
-        return Err(failed("fixture relative path out of bounds".to_owned()));
-    }
-    // Depth bound relative to the fixture root.
-    if rel.components().count() > MAX_FIXTURE_DEPTH {
-        return Err(failed("fixture depth exceeds bound".to_owned()));
-    }
-    let bytes = std::fs::read(path).map_err(|e| failed(format!("fixture read failed: {e}")))?;
-    if bytes.len() as u64 > MAX_FIXTURE_FILE_BYTES {
-        return Err(failed("fixture file exceeds bound".to_owned()));
-    }
-    *total_bytes = total_bytes
-        .checked_add(bytes.len() as u64)
-        .ok_or_else(|| failed("fixture aggregate overflow".to_owned()))?;
-    let sha = hex_encode(Sha256::digest(&bytes));
-    records.push((rel_text, bytes.len() as u64, sha));
-    Ok(())
-}
-
-fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 /// Run `eggreplay validate --fixture <path> --output json` before startup.
@@ -1188,7 +1052,10 @@ mod tests {
         std::fs::write(fixture.join("b.eggr"), b"fixture-b").unwrap();
         let first = compute_fixture_identity(&workspace, "fx").unwrap();
         assert_eq!(first.file_count, 2);
-        assert_eq!(first.aggregate_sha256.len(), 64);
+        assert_eq!(
+            first.aggregate_sha256,
+            "cbbccb211f6de5ad3850440e5347bd66ce9c637f73410de96446e82727dbf760"
+        );
         // A second workspace with identical contents yields the same digest.
         let root2 = tempfile::tempdir().unwrap();
         let workspace2 = root2.path().join("ws");

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "minimal-local",
+  "owner": "Eggbench example",
+  "scenarios": [
+    { "id": "replay-fixture", "plan": "eggstack-replay.json" }
+  ],
+  "corpus": { "path": "security-corpus.json" },
+  "target_config": { "path": "security-config.json" }
+}

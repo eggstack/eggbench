@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "owner": "Eggbench example",
+  "corpus_id": "minimal-http",
+  "cases": [
+    {
+      "id": "root-is-available",
+      "category": "smoke",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/",
+        "headers": [],
+        "body": { "kind": "none" }
+      },
+      "expectation": { "status_exact": 200 }
+    }
+  ]
+}

@@ -90,6 +90,7 @@ fn managed(service: &str, args: &[&str], depends_on: &[&str], log_limit_bytes: u
         lifecycle: Lifecycle::Managed,
         depends_on: depends_on.iter().map(|dep| name(dep)).collect(),
         config: BTreeMap::new(),
+        http_url: None,
         readiness: None,
         shutdown: None,
         working_directory: None,
@@ -214,6 +215,7 @@ async fn spawn_failure_before_readiness() {
         lifecycle: Lifecycle::Managed,
         depends_on: Vec::new(),
         config: BTreeMap::new(),
+        http_url: None,
         readiness: None,
         shutdown: None,
         working_directory: None,
@@ -898,6 +900,7 @@ async fn explicit_executable_paths_are_resolved_and_bare_names_rejected() {
         lifecycle: Lifecycle::Managed,
         depends_on: Vec::new(),
         config: BTreeMap::new(),
+        http_url: None,
         readiness: None,
         shutdown: None,
         working_directory: None,
@@ -926,6 +929,7 @@ async fn explicit_executable_paths_are_resolved_and_bare_names_rejected() {
             lifecycle: Lifecycle::Managed,
             depends_on: Vec::new(),
             config: BTreeMap::new(),
+            http_url: None,
             readiness: None,
             shutdown: None,
             working_directory: None,
@@ -953,6 +957,7 @@ async fn unsupported_service_and_platform_fail_explicitly() {
         lifecycle: Lifecycle::Managed,
         depends_on: Vec::new(),
         config: BTreeMap::new(),
+        http_url: None,
         readiness: None,
         shutdown: None,
         working_directory: None,
@@ -1026,6 +1031,7 @@ fn named(service: &str, service_type: &str, depends_on: &[&str]) -> Service {
         lifecycle: Lifecycle::Managed,
         depends_on: depends_on.iter().map(|dep| name(dep)).collect(),
         config: BTreeMap::new(),
+        http_url: None,
         readiness: None,
         shutdown: None,
         working_directory: None,
@@ -1145,10 +1151,14 @@ async fn mixed_services_start_in_dependency_order_and_stop_in_reverse() {
     );
     let mut resolved = base_resolved();
     // Adapter service depends on the command process: unified order applies.
-    resolved.topology = vec![
-        managed("app", &["sleep", "30000"], &[], 4096),
-        named("origin", "fake-svc", &["app"]),
-    ];
+    let mut app = managed("app", &["sleep", "30000"], &[], 4096);
+    app.http_url = Some("http://127.0.0.1:11/app".to_owned());
+    let mut origin = named("origin", "fake-svc", &["app"]);
+    origin.http_url = Some("http://127.0.0.1:9/bench".to_owned());
+    let mut external = named("external", "unused", &[]);
+    external.lifecycle = Lifecycle::External;
+    external.http_url = Some("http://127.0.0.1:12/external".to_owned());
+    resolved.topology = vec![app, origin, external];
     let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
     assert_eq!(session.spawn_order(), vec!["app", "origin"]);
     let report = session.startup(&CancellationToken::new()).await.unwrap();
@@ -1157,6 +1167,14 @@ async fn mixed_services_start_in_dependency_order_and_stop_in_reverse() {
     assert_eq!(
         session.runtime_bindings().get("origin", "http_url"),
         Some("http://127.0.0.1:9/bench")
+    );
+    assert_eq!(
+        session.runtime_bindings().get("app", "http_url"),
+        Some("http://127.0.0.1:11/app")
+    );
+    assert_eq!(
+        session.runtime_bindings().get("external", "http_url"),
+        Some("http://127.0.0.1:12/external")
     );
     // Adapter services own no process logs.
     assert!(session.logs("origin").await.is_none());
@@ -1173,7 +1191,7 @@ async fn mixed_services_start_in_dependency_order_and_stop_in_reverse() {
         Some("http://127.0.0.1:9/bench")
     );
     let topology = session.runtime_topology();
-    assert_eq!(topology.services.len(), 2);
+    assert_eq!(topology.services.len(), 3);
     let entry = topology
         .services
         .iter()
@@ -1184,6 +1202,26 @@ async fn mixed_services_start_in_dependency_order_and_stop_in_reverse() {
     assert_eq!(
         entry.bindings.get("http_url").map(String::as_str),
         Some("http://127.0.0.1:9/bench")
+    );
+}
+
+#[tokio::test]
+async fn conflicting_static_and_adapter_http_bindings_fail_closed_and_stop_adapter() {
+    let root = temp_root();
+    let events = Arc::new(AsyncMutex::new(Vec::new()));
+    let (runner_options, events) = options_with(
+        root.path(),
+        FakeAdapter::new("fake-svc", Arc::clone(&events)),
+    );
+    let mut resolved = base_resolved();
+    let mut origin = named("origin", "fake-svc", &[]);
+    origin.http_url = Some("http://127.0.0.1:10/declared".to_owned());
+    resolved.topology = vec![origin];
+    let mut session = LocalSession::prepare(&resolved, runner_options).unwrap();
+    assert!(session.startup(&CancellationToken::new()).await.is_err());
+    assert_eq!(
+        events.lock().await.as_slice(),
+        ["start:origin", "stop:origin"]
     );
 }
 

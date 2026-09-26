@@ -50,6 +50,8 @@ pub struct ProcessSpec {
     pub shutdown: Option<Shutdown>,
     /// Whether this spec is the experiment subject.
     pub is_subject: bool,
+    /// Static non-secret `http_url` binding from the service declaration.
+    pub http_url: Option<String>,
 }
 
 impl fmt::Debug for ProcessSpec {
@@ -64,6 +66,7 @@ impl fmt::Debug for ProcessSpec {
             .field("readiness", &self.readiness)
             .field("shutdown", &self.shutdown)
             .field("is_subject", &self.is_subject)
+            .field("http_url", &self.http_url)
             .finish()
     }
 }
@@ -93,6 +96,8 @@ pub struct AdapterSpec {
     pub service_type: String,
     /// Opaque non-secret config values.
     pub config: BTreeMap<String, String>,
+    /// Static non-secret `http_url` binding declared on the service.
+    pub http_url: Option<String>,
     /// Declared readiness request.
     pub readiness: Option<Readiness>,
     /// Graceful shutdown allowance.
@@ -174,6 +179,7 @@ impl fmt::Debug for PrepareOptions {
 /// # Errors
 /// Returns [`RunnerError`] for schema mismatches, unsupported kinds, unknown
 /// working directories, missing secrets, cycles, or unsupported platforms.
+#[allow(clippy::too_many_lines)]
 pub fn prepare(
     resolved: &ResolvedPlan,
     options: &PrepareOptions,
@@ -222,6 +228,7 @@ pub fn prepare(
             readiness: None,
             shutdown: None,
             is_subject: true,
+            http_url: None,
         });
         launch_order.push(LaunchEntry {
             identity: SUBJECT_IDENTITY.to_owned(),
@@ -257,6 +264,7 @@ pub fn prepare(
                     readiness: service.readiness.clone(),
                     shutdown: service.shutdown.clone(),
                     is_subject: false,
+                    http_url: service.http_url.clone(),
                 });
                 launch_order.push(LaunchEntry {
                     identity: service.name.as_str().to_owned(),
@@ -427,6 +435,7 @@ fn adapter_spec(
         identity: service.name.as_str().to_owned(),
         service_type: service_type.as_str().to_owned(),
         config: service.config.clone(),
+        http_url: service.http_url.clone(),
         readiness: service.readiness.clone(),
         grace: service
             .shutdown

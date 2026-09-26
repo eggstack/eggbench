@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "source_plan_schema_version": 1,
   "experiment": "smoke",
   "subject": {"kind": "external", "target": "api", "revision": null, "digest": null},
