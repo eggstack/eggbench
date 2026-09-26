@@ -46,7 +46,7 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active planning | plans/subsystems/security-qualification-roadmap.md | M001 research/planning; implementation unblocked by M004b closure | M001 builds reusable security profiles on the M004 correctness substrate |
+| Security qualification | active planning | plans/subsystems/security-qualification-roadmap.md | M001 research grounded; implementation plans not yet authored | M001 handoff research defines profile/corpus/config identity, fixed-corpus correctness, and suite receipt stages above the closed M004 substrate |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -67,9 +67,9 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 ## Dependency-ready implementation plans
 
 No capability implementation plan is currently dependency-ready.
-Eggstack M004 is closed; Security Qualification M001 awaits its own
-implementation planning (research may proceed; handoff requires an
-authored M001 plan against the M004 substrate).
+Eggstack M004 is closed. Security Qualification M001 research is grounded in
+`plans/subsystems/security-qualification-roadmap.md` §2A; handoff now requires
+authored M001 implementation plans against that researched contract.
 
 Historical post-M003 live-tool C001 stopped with evidence and successor C002 is closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`. No corrective handoff remains open.
 
@@ -218,7 +218,14 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-No capability handoff is currently dependency-ready. The next expected
-handoff is Security Qualification M001 implementation planning, which
-has no authored plan yet; it builds on the closed M004 correctness
-substrate. External Oracles M003 netem remains separate.
+No capability implementation handoff is currently dependency-ready.
+
+The next planning handoff is authoring Security Qualification M001 against the
+grounded §2A research. The recommended implementation sequence is:
+
+1. profile/corpus/config identity and deterministic expansion;
+2. fixed-corpus HTTP correctness family plus a new correctness-policy/receipt compatibility boundary;
+3. bounded qualification execution/receipt and M001 closure.
+
+No Eggsec or SynVoid upstream blocker is currently identified. External Oracles
+M003 netem remains separate.
