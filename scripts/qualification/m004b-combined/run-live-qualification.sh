@@ -240,7 +240,7 @@ def check(name, cond, detail=""):
 def receipt(label):
     return json.load(open(f"{work}/receipt-{label}.json"))
 a, c, e, f, d = (receipt(k) for k in "ACEFD")
-check("receipts are schema v3", all(r["schema_version"] == 3 for r in (a, c, e, f, d)), "v3")
+check("new receipts are schema v4", all(r["schema_version"] == 4 for r in (a, c, e, f, d)), "v4")
 check("case-A Pass/Pass => Pass",
       a["performance_verdict"] == "pass" and a["correctness"]["aggregate_verdict"] == "pass"
       and a["aggregate_verdict"] == "pass", json.dumps(a["aggregate_verdict"]))
@@ -269,7 +269,7 @@ check("no security data in TrialMetrics",
 check("rendering separates sections",
       all("aggregate_verdict" in r and "correctness" in r for r in (a, c, e, f, d))
       and all("performance_verdict" in r for r in (a, c, e, d)),
-      "typed v3 fields (performance absent only for correctness-only F)")
+      "typed v4 fields (performance absent only for correctness-only F)")
 sys.exit(0 if all(ok) else 1)
 EOF
 [ $? -eq 0 ] \

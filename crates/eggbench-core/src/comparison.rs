@@ -5399,6 +5399,26 @@ mod tests {
             correctness_section(&corpus).unwrap().policy_id,
             SECURITY_CORRECTNESS_POLICY_V2
         );
+
+        let mut mixed = security_input();
+        let waf_record = correctness_record_with(CorrectnessDisposition::Pass, 4, 0, 0);
+        let mut http_record = correctness_record_with(CorrectnessDisposition::Fail, 1, 0, 1);
+        http_record.id = Name::new("http-smoke").unwrap();
+        http_record.source = Name::new("eggbench-http-corpus").unwrap();
+        http_record.family = Name::new(SECURITY_CORRECTNESS_FAMILY_HTTP_OBSERVABLE).unwrap();
+        http_record.observed = CorrectnessObserved::HttpCorpus {
+            evaluated_cases: 1,
+            passed_cases: 0,
+            failed_cases: 1,
+            invalid_cases: 0,
+        };
+        http_record.expectation = CorrectnessExpectationRecord::AllCasesMatch;
+        http_record.evidence_path = ArtifactPath::new("security/http-smoke.json").unwrap();
+        mixed.security_records = Some(vec![waf_record, http_record]);
+        let section = correctness_section(&mixed).unwrap();
+        assert_eq!(section.policy_id, SECURITY_CORRECTNESS_POLICY_V2);
+        assert_eq!(section.aggregate_verdict, AggregateVerdict::Fail);
+        assert_eq!(section.checks.len(), 2);
     }
 
     #[test]
