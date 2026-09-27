@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 conditionally closed on shared upstream/live conditions; M003 ready for research/planning)
+Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 ready, C002 blocked; M003 research/planning may proceed)
 
 Long-term references:
 
@@ -307,6 +307,39 @@ Eggbench implementation sequence:
 
 M002 v1 remains bounded/local. Current driver truth means the following earlier roadmap ideas are explicitly deferred rather than approximated incorrectly: mixed malicious traffic under load, arbitrary request-body attack load, explicit connection-churn controls, and SynVoid Prometheus/event-loop/queue metric ingestion. These become M003 candidates unless an existing qualified seam evolves before M002 implementation.
 
+### M002 post-conditional-closure corrective
+
+The routine M002 implementation at `b74f861` remains conditionally closed.
+Two proof gaps are now registered under:
+
+`plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md`
+
+Trigger evidence:
+
+- exact conditional-closure HEAD `660ab472...`;
+- hosted CI run `36262615058` passed Linux stable, Linux Rust 1.89 and
+  Windows stable but failed macOS workspace all-feature tests;
+- live workflow `36262614991` was green, but the real SynVoid Stage B
+  remained NOT-EXECUTED because the owner asset contract was still open.
+
+Corrective sequence:
+
+1. **C001 — macOS hosted portability restoration**  
+   `plans/implementation/security-qualification-m002-corrective/001-macos-hosted-portability-restoration.md` — **ready**.
+2. **C002 — real SynVoid qualification and final M002 closure**  
+   `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md` — **blocked on C001 closure and SynVoid asset-contract closure**.
+
+In parallel, SynVoid's owner-side contract is now implementation-ready at:
+
+`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
+
+M002 becomes fully closed only after exact-head four-lane CI is green and
+`live-synvoid-linux` executes real owner-exported SynVoid stages rather than
+passing with those stages NOT-EXECUTED.
+
+M003 research/planning may proceed in parallel. M003 implementation must not
+treat M002 as fully qualified until C002 closes.
+
 ### M003 — Reusable security performance patterns
 
 Extend to Eggsec defense-validation/load profiles and other authorized local security services without turning Eggbench into a scanner.
@@ -332,11 +365,7 @@ Security Qualification M001 is closed by `plans/closure/security-qualification/0
 - M001b is closed and hosted-qualified.
 - M001c is closed and provides the reusable suite/receipt substrate.
 
-M002 is conditionally closed (routine scope green at implementation `b74f861`;
-closures `plans/closure/security-qualification/002a-status.md` and
-`plans/closure/security-qualification/002b-status.md`). Full closure still
-requires one SynVoid-owned upstream prerequisite:
-`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`.
+M002 is conditionally closed (routine scope green at implementation `b74f861`; closures `plans/closure/security-qualification/002a-status.md` and `plans/closure/security-qualification/002b-status.md`). Full closure is now governed by the post-M002 corrective: C001 restores macOS/four-lane hosted qualification, while C002 requires the closed SynVoid owner-side asset contract plus real reverse-proxy/live proof.
 
 Implementation-time SynVoid re-audit at
 `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1` (package 1.1.0) confirmed the
@@ -348,9 +377,6 @@ existing Eggbench export contract. The upstream plan therefore still owns
 fixture selection/mapping/config materialization; Eggbench does not duplicate
 those semantics.
 
-When that upstream plan closes, the remaining Eggbench handoff is the live
-proof: harness Stage B/C real-SynVoid runs plus hosted four-lane and
-`live-synvoid-linux` qualification. M003 is ready for research/planning with
-the deferred items (mixed malicious load, body-attack campaigns, connection
+SynVoid owner-side implementation and Eggbench C001 may proceed in parallel. After both close, C002 owns the real Stage B/C proof, exact-head four-lane/live qualification, and terminal M002 closure. M003 is ready for research/planning with the deferred items (mixed malicious load, body-attack campaigns, connection
 churn, Prometheus ingestion, per-scenario qualify drivers, binding
 interpolation, Gregg-gated resources) carried explicitly.
