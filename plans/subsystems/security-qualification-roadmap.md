@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 blocked; M003 research/planning may proceed)
+Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 blocked on live-host repeatability + real live execution; SynVoid owner asset contract closed at `30e68af8`; M003a ready and M003b-d authored)
 
 Long-term references:
 
@@ -280,17 +280,26 @@ Ordered implementation decomposition:
 
 Status: conditionally closed by `plans/closure/security-qualification/002a-status.md`
 and umbrella `plans/closure/security-qualification/002b-status.md`
-(implementation `b74f861`; routine scope green). Remaining conditions, shared by
-both: the SynVoid-owned qualification-asset contract
-(`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`) is
-still open, so live reverse-proxy Pass/negative proofs and hosted four-lane +
-live-job runs are pending. No Eggbench translation of Detect/Pass semantics was
-added to work around the blocker; the harness fails closed until the upstream
-closes.
+(implementation `b74f861`; routine scope green). The previously missing
+SynVoid-owned qualification-asset contract is now **closed upstream**:
+`dbowm91/synvoid@30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`,
+implementation `ae045481752b8f750d6e6079b185c526a09c91d5`, with the
+proof-bearing closeout at
+`architecture/eggbench_security_qualification_asset_contract_closeout.md`.
+The owner contract supplies the 15-case live-proxy corpus, deterministic
+materializer, loopback minimal config, provenance, 15/15 live semantic proof,
+and 2/2 performance-path proof.
 
-Cross-repo prerequisite:
+The upstream asset dependency is therefore satisfied. Remaining M002 terminal
+conditions are Eggbench C002 work: exact-head/four-lane verification,
+resolution of the live-host same-source repeatability failure, real
+`live-synvoid-linux` Stage B/C execution against the owner export, and final
+evidence reconciliation. Eggbench still does not translate SynVoid
+Detect/Pass semantics itself.
 
-- `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md` — planned and registered in SynVoid's roadmap. SynVoid owns the exported live-proxy-compatible WAF fixture subset, Detect/Pass-to-observable mapping, minimal loopback config materialization, and provenance.
+Satisfied cross-repo prerequisite:
+
+- `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md` — CLOSED 2026-09-28. SynVoid remains the authority for exported fixture selection, Detect/Pass-to-observable mapping, minimal loopback config materialization, and provenance.
 
 Eggbench implementation sequence:
 
@@ -298,7 +307,8 @@ Eggbench implementation sequence:
    `plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md`  
    Conditionally closed (`plans/closure/security-qualification/002a-status.md`,
    implementation `b74f861`). Routine scope (synthetic stand-in) is green;
-   live proof awaits the SynVoid asset-contract closure.
+   real owner-exported live proof is now available upstream and must be consumed
+   by C002 for terminal Eggbench qualification.
 2. **M002b — SynVoid performance/resource suite and M002 closure**  
    `plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md`  
    Conditionally closed (umbrella `plans/closure/security-qualification/002b-status.md`,
@@ -320,7 +330,9 @@ Trigger evidence:
 - hosted CI run `36262615058` passed Linux stable, Linux Rust 1.89 and
   Windows stable but failed macOS workspace all-feature tests;
 - live workflow `36262614991` was green, but the real SynVoid Stage B
-  remained NOT-EXECUTED because the owner asset contract was still open.
+  remained NOT-EXECUTED because the owner asset contract was still open at
+  that historical execution point. The owner contract has since closed at
+  SynVoid `30e68af8`; the trigger record remains historical evidence.
 
 Corrective sequence:
 
@@ -341,23 +353,67 @@ Corrective sequence:
    live-host repeatability), which the test source itself documents as
    "M002 closure condition" and which belongs to C002.
 2. **C002 — real SynVoid qualification and final M002 closure**  
-   `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md` — **blocked on C001 exact-head hosted re-verification, on the live-host repeatability gap C001 surfaced, and on SynVoid asset-contract closure**.
+   `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md` — **blocked on exact-head hosted re-verification, the live-host repeatability gap C001 surfaced, and actual real `live-synvoid-linux` execution/closure evidence**. The former SynVoid asset-contract blocker is satisfied upstream and must be re-audited/consumed when C002 is re-executed.
 
-In parallel, SynVoid's owner-side contract is still required at:
-
-`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
-
-M002 becomes fully closed only after the C001 four-lane hosted re-verification
+M002 becomes fully closed only after the four-lane hosted re-verification
 (including the live-host repeatability fix) is green and `live-synvoid-linux`
 executes real owner-exported SynVoid stages rather than passing with those
 stages NOT-EXECUTED.
 
-M003 research/planning may proceed in parallel. M003 implementation must not
-treat M002 as fully qualified until C002 closes.
+M003 planning is complete enough for implementation handoff. M003a may proceed
+as generic substrate work, and M003b/c may follow their dependency chain, but
+terminal M003 closure must not treat M002 as fully qualified until C002 closes.
 
 ### M003 — Reusable security performance patterns
 
 Extend to Eggsec defense-validation/load profiles and other authorized local security services without turning Eggbench into a scanner.
+
+#### M003 handoff research — 2026-09-28
+
+Research baseline: `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`.
+
+Re-audited sibling baselines:
+
+- SynVoid current owner qualification baseline: `30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`;
+- Eggsec current main observed during planning: `7ebddbf1669ca1af18957eca27d09e90ed5c718e`.
+
+Findings:
+
+1. **Qualification methodology is not fully frozen.** Profile v1 cannot bind a workload driver per scenario, and `qualify run` currently dispatches with `workload_driver: None`. External oha/h2load scenarios therefore sit outside the profile.
+2. **Dynamic dependency bindings stop at topology publication.** Named adapters can publish ephemeral bindings (for example EggServe `bound_port`), but command argv/env cannot consume a dependency binding at launch time. Reusable owner wrappers therefore need a generic typed binding-resolution seam rather than fixed ports or subject-specific runner code.
+3. **Native HTTP workload shape is too narrow.** `eggfetch-http` is GET-only, uses the target's complete `http_url`, and intentionally keeps one client/pool for the invocation. M003 body/mixed/churn work needs method/path/header/body requests plus explicit connection policy.
+4. **The existing HTTP security corpus should be reused.** It already owns bounded method/path/query/header/body inputs, expected observable status, workspace confinement, and immutable content identity. M003 should schedule those owner-authored cases under load rather than create another payload schema.
+5. **Mixed traffic must be exact, not probabilistic.** Qualification needs a deterministic finite multiset/permutation derived from immutable inputs and the experiment seed so baseline/candidate receive identical mixtures.
+6. **Expected security blocks are not transport failures.** A correct 403 cannot be fed into a generic HTTP-error gate. M003 must separate transport failure, HTTP response, and owner-expected outcome match.
+7. **Connection churn is a method variable.** Current Eggfetch pooling is explicit method provenance. Fresh-per-request must be a comparison-critical connection policy, not a `Connection: close` header approximation.
+8. **Target telemetry has a clean runner seam but no stable SynVoid export yet.** `TelemetryCollector` already has correct trial start/stop ownership. Gregg remains host/testbed telemetry. SynVoid worker payloads now contain event-loop lag, queue percentiles, active connections, worker resource data, body-buffering counters, and CPU-offload counters, but M002 disables metrics and those fields are not yet a frozen live Prometheus contract.
+9. **SynVoid upstream work is required only for telemetry publication.** A new independent handoff is registered at `dbowm91/synvoid:plans/eggbench_security_qualification_m003_telemetry_contract.md`.
+10. **Eggsec needs no upstream change for initial M003.** Its current strict-scope `load` CLI already supports finite requests, concurrency, method, body, headers, timeout, JSON output and rate control; Eggbench can consume it through the existing trusted external-command/scope pattern. Eggsec's load path currently uses Eggfetch, so it is a security-owner execution path, not an independent transport oracle.
+11. **External oha is already capable of more than the Eggbench adapter exposes.** Current upstream supports method/headers, inline/file bodies, URL files, JSON output, explicit HTTP versions, and `--disable-keepalive`; M003 can extend the adapter without an oha upstream change.
+
+Ordered implementation decomposition:
+
+1. **M003a — qualification method binding and runtime binding resolution**  
+   `plans/implementation/security-qualification/003a-qualification-method-binding-and-runtime-binding-resolution.md`  
+   **READY.** Add profile-v2 per-scenario driver binding, generalized non-secret static runtime bindings, and typed dependency binding resolution into command argv/env with auditable evidence.
+2. **M003b — HTTP security load shapes, mixed schedules, and connection policy**  
+   `plans/implementation/security-qualification/003b-http-security-load-shapes-mixed-schedules-and-connection-policy.md`  
+   Authored; blocked on M003a. Reuse immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, and pooled/fresh connection methods; extend oha only for the required independent body/churn subset.
+3. **M003c — subject telemetry and SynVoid metrics ingestion**  
+   `plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md`  
+   Authored; blocked on M003b and the SynVoid owner telemetry contract. Add a generic bounded Prometheus collector and keep `host_*` Gregg semantics separate from `subject_*` target metrics.
+4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
+   `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
+   Authored; blocked on M003a-c and terminal M002 C002 closure. Prove body/mixed/churn/telemetry patterns with real SynVoid plus a strict-scope Eggsec load path and close M003.
+
+Explicitly deferred from M003 v1:
+
+- malformed/raw HTTP and request smuggling;
+- multipart/binary upload performance unless an owner contract expands;
+- challenge/stall/tarpit/drop timing semantics;
+- broad TLS/H2/H3 security matrices;
+- network impairment/netem combinations;
+- unbounded stress/flood traffic.
 
 ## 6. Verification strategy
 
@@ -380,7 +436,7 @@ Security Qualification M001 is closed by `plans/closure/security-qualification/0
 - M001b is closed and hosted-qualified.
 - M001c is closed and provides the reusable suite/receipt substrate.
 
-M002 is conditionally closed (routine scope green at implementation `b74f861`; closures `plans/closure/security-qualification/002a-status.md` and `plans/closure/security-qualification/002b-status.md`). Full closure is now governed by the post-M002 corrective: C001 restores macOS/four-lane hosted qualification, while C002 requires the closed SynVoid owner-side asset contract plus real reverse-proxy/live proof.
+M002 is conditionally closed (routine scope green at implementation `b74f861`; closures `plans/closure/security-qualification/002a-status.md` and `plans/closure/security-qualification/002b-status.md`). Full closure is governed by the post-M002 corrective: C001 restored the runner-side macOS readiness defect; C002 now owns live-host repeatability, exact-head/four-lane verification, real owner-exported SynVoid live stages, and terminal reconciliation. The SynVoid owner-side asset contract prerequisite is closed upstream.
 
 Implementation-time SynVoid re-audit at
 `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1` (package 1.1.0) confirmed the
@@ -392,6 +448,6 @@ existing Eggbench export contract. The upstream plan therefore still owns
 fixture selection/mapping/config materialization; Eggbench does not duplicate
 those semantics.
 
-SynVoid owner-side asset contract is still implementation-required and remains the active gating dependency for Eggbench C002. Eggbench C001 is **STOPPED with verification** at `b98973f` (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition `STOPPED with verification`) — hosted CI run `36451730637` recorded `synvoid_m002a` 7/7 green (including the new routine regression `slow_synvoid_startup_still_passes`) and the live-host repeatability failure surfaced on `synvoid_m002b::perf_same_source_pair_never_fails` is owned by C002. After C002 closes the live-host repeatability gap (alongside real SynVoid `live-synvoid-linux` Stage B and Stage C execution), C002 owns terminal M002 closure. M003 is ready for research/planning with the deferred items (mixed malicious load, body-attack campaigns, connection
-churn, Prometheus ingestion, per-scenario qualify drivers, binding
-interpolation, Gregg-gated resources) carried explicitly.
+SynVoid owner-side asset contract is closed at implementation `ae045481` / current closeout head `30e68af8`, so it is no longer an active C002 blocker. Eggbench C001 is **STOPPED with verification** at `b98973f` (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition `STOPPED with verification`) — hosted CI run `36451730637` recorded `synvoid_m002a` 7/7 green and the live-host repeatability failure surfaced on `synvoid_m002b::perf_same_source_pair_never_fails` is owned by C002. C002 still owns terminal M002 closure through repeatability, exact-head verification, and real `live-synvoid-linux` Stage B/C execution.
+
+M003 research/decomposition is now registered. M003a is dependency-ready; M003b-d are authored with explicit gates. The new SynVoid M003 telemetry handoff is a parallel owner dependency for M003c/d, not a reopening of the M002 asset contract.
