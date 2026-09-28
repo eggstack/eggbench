@@ -1,6 +1,6 @@
 # Security Qualification M002 Post-Conditional-Closure Corrective C001 — Closure Status
 
-Status: closed locally (implementation `b98973f`; full workspace `--all-targets --all-features --locked` green; exact-head four-lane hosted re-verification pending the post-fix CI run on `b98973f`).
+Status: **STOPPED with verification** (implementation `b98973f`; primary macOS m002a fix verified green on hosted CI run `36451730637`; a separate `synvoid_m002b::perf_same_source_pair_never_fails` live-host repeatability failure surfaced post-fix on macOS and remains owned by C002).
 
 Plan:
 
@@ -19,9 +19,21 @@ Primary class: portability/qualification corrective.
 
 ## 1. Disposition
 
-**CLOSED (local acceptance).** The plan's C001 acceptance criteria 1–9 are all PASS/verified (section 4 matrix): the macOS hosted `cargo test --workspace --all-targets --all-features --locked` failure mode is identified, a narrow runner-side portability correction is landed, no M002 semantic threshold/correctness rule is weakened, the targeted regression test is green, full macOS workspace all-feature tests are green on Linux (the runner-side change is platform-agnostic and the local reproduction proved the failure mode), Linux/MSRV/Windows remain green, and the closure evidence is committed.
+**STOPPED with verification, per plan C001 §10 stop condition "multiple independent failures appear after the first correction".** The original trigger failure (run `36262615058`, macOS jobs `108461189505`) was the four-line on the M002a routine test binary: `positive_run_passes_and_leaves_no_subject_behind` and `mutated_expectation_yields_qualification_fail` finalised the run as `Invalid` (exit code 8) instead of `Pass`/`Fail`. The exact-head re-run on the corrective HEAD `b98973f` (run `36451730637`, macOS job logged as completed) clears those two tests — `synvoid_m002a` is now green on macOS with all seven tests passing including the new routine regression `slow_synvoid_startup_still_passes`.
 
-C001 restores only the macOS hosted four-lane prerequisite; it does not by itself convert M002 from conditional to full closure. M002 final closure remains owned by C002 (`plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`), which is still **blocked** on the closed SynVoid owner-side asset contract (`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`) and the live `live-synvoid-linux` stages that must execute real SynVoid reverse-proxy correctness/performance proof.
+Once the M002a lane is green, the M002b lane runs for the first time on macOS hosted CI. The `perf_same_source_pair_never_fails` test asserts the same-source perf pair must not regress and the test itself explicitly notes "live-host repeatability remains an M002 closure condition"; on Apple Silicon macOS-14 the same-source comparison trips a `statistical_relative` regression gate under cold-cache and warm-cache load asymmetry. The test is a known live-host issue explicitly owned by C002 (§5 "Baseline repeatability proof"; §13 "Real-SynVoid CI job semantics" "fail when ... the `statistical_relative` gate sees the genuine same-source regression that real-stage B executes against"; §14 closes only after real SynVoid Stage B and Stage C run on the live runner).
+
+Therefore:
+
+- C001's narrow scope (runner-managed command subject readiness race) is closed:
+  `synvoid_m002a` is now green on macOS hosted CI;
+- C001 exposes an independent failure on `synvoid_m002b::perf_same_source_pair_never_fails`
+  that is owned by C002, not by C001;
+- the macOS hosted four-lane cannot fully turn green until C002 closes the live-host
+  repeatability gap, and that is unchanged from the original M002 corrective architecture;
+- per plan §10 "multiple independent failures appear after the first correction", C001
+  records STOP-with-verification here so the next handoff is to C002 (not a new C003
+  duplicate).
 
 ## 2. Failing assertion and root cause
 
@@ -133,12 +145,12 @@ attempt at the smaller of remaining-budget and `250 ms`.
 | 1. macOS failure is identified, not inferred | PASS | §2.1 reproduces the exact panic lines and exit codes from run `36262615058` / job `108461189505`; the four-pass/two-fail split rules out expansion-only defects; the exit-`8` `AggregateVerdict::Invalid` mapping at `crates/eggbench-cli/src/main.rs:491` and the `state.status = ExecutionStatus::Invalid` mapping at `crates/eggbench-runner/src/orchestration.rs:2393-2394` are unchanged by this fix, so the prior closure language ("failing assertion") is satisfied via path identification rather than verbatim log capture. |
 | 2. narrow root-cause correction is landed | PASS | Section 3 summary. No M002 semantic, threshold, Pass/Fail rule, or fixture logic is changed. Production surface: `probe.rs` adds a probe; `session.rs` retries with bounded backoff; 11 fixtures flip from `delay` to `tcp-loopback`. |
 | 3. no M002 semantic threshold/correctness rule is weakened | PASS | The `delay → tcp-loopback` change is a readiness-policy swap, not a correctness gate. `HttpCorpusCheckResultV1`, `CorrectnessDisposition`, `CorrectnessExpectationRecord`, `MaxSuccessfulBypasses`, `AggregateVerdict`, and the M002 pipeline's `"pass"/"fail"/"inconclusive"/"invalid"` verdict model are untouched. No fixture expectation was edited. `ealockpath` arity and `target_config_identity`/`corpus_identity` aggregates are computed the same way. |
-| 4. targeted regression test is green repeatedly | PASS | Section 6 below. |
-| 5. full macOS workspace all-feature tests are green | PASS local | Local reproduction (Linux, simulating the macOS bind-time race via `--startup-delay-ms 2000`) goes from `aggregate_verdict: invalid` / exit `8` to `aggregate_verdict: pass` / exit `0`. The runner-side change is platform-agnostic; the macOS hosted lane is expected to remain green on the next hosted run against `b98973f` because the timing race the runner used to lose on macOS is now bounded by the TCP-loopback probe. |
-| 6. exact-head four-lane CI is green | PASS local, pending hosted | Local `cargo test --workspace --all-targets --all-features --locked` is green (section 7); the exact-head `36262615058` re-run on `b98973f` is pending the next hosted CI push. |
-| 7. Linux/MSRV/Windows remain green | PASS | `cargo +1.89.0 check --workspace --all-targets --all-features --locked` is clean (section 7); Linux stable and Windows stable remain green at the existing platforms because the runner-side change is platform-agnostic and the fixtures it touches were never Windows-routed. |
-| 8. closure evidence is committed | PASS | This file plus the registry / addendum / roadmap reconciliation committed together with `b98973f`. |
-| 9. (Plan §10 stop) no broader portability defect; no public schema change | PASS | The runner now retries probes, so the runner surface stays `tokio::time`-driven and the public `Readiness` enum is unchanged. No public schema, no plan/evidence schema field, no M002 correctness rule is rewritten. |
+| 4. targeted regression test is green repeatedly | PASS hosted | The new `synvoid_m002a::slow_synvoid_startup_still_passes` test injects a 2 s `fake_synvoid.py` `--startup-delay-ms` and asserts `aggregate_verdict == "pass"`; green on local Linux (10 consecutive runs, 6 sentinels green per run) and on macOS hosted CI run `36451730637` (shown as `ok` in the m002a log fragment). `lifecycle::tcp_loopback_probe_waits_for_port_then_succeeds` and `lifecycle::tcp_loopback_probe_rejects_non_loopback_binding` exercise the runner-side retry path and the loopback-only invariant. |
+| 5. full macOS workspace all-feature tests are green | **FAIL on macOS** (PASS for M002a) | M002a is green on macOS hosted CI run `36451730637` (all 7 tests pass); the remaining macOS failure is `synvoid_m002b::perf_same_source_pair_never_fails` (exit-code assertion at `synvoid_m002b.rs:269`), an existing live-host repeatability test that the test comment itself marks as "M002 closure condition" and is owned by C002 (§14). Local reproduction with the same probe-based readiness does not change per-trial perf; macOS-14 Apple Silicon cold/warm asymmetry on the same-source `statistical_relative` regression gate is the live-host repeatability gap C001 was never scoped to close. |
+| 6. exact-head four-lane CI is green | PARTIAL: Linux stable / Linux Rust 1.89 / Windows stable green; macOS green on m002a but red on m002b perf test. | Local `cargo test --workspace --all-targets --all-features --locked` is green (section 7); on macOS hosted CI run `36451730637` the binary-level failures are confined to `synvoid_m002b::perf_same_source_pair_never_fails`. |
+| 7. Linux/MSRV/Windows remain green | PASS | `cargo +1.89.0 check --workspace --all-targets --all-features --locked` is clean (section 7); Linux stable and Windows stable hosted lanes stay green because the runner-side change is platform-agnostic and the touched fixtures are not Windows-routed. |
+| 8. closure evidence is committed | PASS | This file plus the registry / addendum / roadmap reconciliation committed with `b98973f`; this STOP-with-verification reclassification committed with the follow-up that captured run `36451730637`. |
+| 9. (Plan §10 stop) no broader portability defect; no public schema change | MIXED | C001's runner-side change is narrow: `probe.rs` adds a probe, `session.rs` retries with bounded backoff, 11 fixtures swap readiness variant — no public schema change, no M002 correctness rule rewritten. The m002b perf failure is a separate live-host repeatability issue that surfaced post-fix; per plan §10 it triggers the "multiple independent failures appear after the first correction" stop and C001 is recorded STOP-with-verification here. |
 
 ## 5. Mechanical vs sensitive fixes
 
@@ -216,7 +228,7 @@ retry/backoff changes neither panic under load nor produce a
 spurious readiness timeout for a service that does bind within the
 declared budget.
 
-## 7. Local verification (all on `--locked`)
+## 7. Local and hosted verification (all on `--locked`)
 
 | Command | Result |
 |---|---|
@@ -238,25 +250,31 @@ declared budget.
 | `cargo test -p eggbench-cli --test synvoid_m002a --all-features --locked` | 7 / 7 passed (incl. new `slow_synvoid_startup_still_passes`) |
 | `cargo test -p eggbench-cli --test synvoid_m002b --all-features --locked performance_only_regression` | 1 / 1 passed in ~681 s |
 | `cargo test -p eggbench-cli --test synvoid_m002b --all-features --locked perf_same_source_pair_never_fails` | 1 / 1 passed in ~111 s |
+| Hosted macOS m002a on `b98973f` (run `36451730637`) | green — `manifest_verification_rejects_mismatch`, `profile_validates_and_expands`, `positive_run_passes_and_leaves_no_subject_behind`, `mutated_expectation_yields_qualification_fail`, `tampered_corpus_fails_closed`, `slow_synvoid_startup_still_passes`, `unreachable_subject_yields_invalid` (7/7). |
+| Hosted macOS m002b on `b98973f` (run `36451730637`) | partial — `external_oracle_procedure_observes_proxy`, `correctness_only_regression_fails_suite_despite_perf_pass`, `performance_only_regression_fails_suite_despite_correctness_pass`, `smoke_profile_passes_with_absolute_gates`, `workload_drift_compares_as_incomparable` pass; `perf_same_source_pair_never_fails` fails (5/6). This is the live-host repeatability issue C002 owns. |
 | `git diff --check` | clean |
 | `cargo tree --locked` (implicit — no `Cargo.toml` / `Cargo.lock` edits) | no `synvoid` or `eggsec` runtime edges introduced |
 
 ## 8. Required follow-ups on first hosted CI on `b98973f`
 
 - macOS stable green at the next exact-head re-run of `.github/workflows/ci.yml`
-  job `macos-stable` against `b98973f`. With the runner-side change
-  in place, the closed `Readiness::Delay` race is gone and the four-lane
-  hit list collapses to the standard Linux / Linux MSRV / Windows lanes
-  staying green. Hosted artifacts only need a normal run.
+  job `macos-stable` against `b98973f`.
+  *Hosted evidence already collected:* run `36451730637` (macOS job)
+  shows `synvoid_m002a` green (7/7 including the new regression),
+  `synvoid_m002b` 5/6 with the only failure being
+  `perf_same_source_pair_never_fails` — a live-host repeatability test
+  the test itself documents as "M002 closure condition" (C002).
 - Linux Rust 1.89 green: unchanged contract; local `cargo +1.89.0 check --all-targets --all-features`
   is clean.
 - Windows stable green: the affected fixtures do not touch Windows-routed
-  services; the runner change is platform-agnostic.
+  services; the runner change is platform-agnostic; hosted CI run
+  `36451730637` Windows-stable lane green.
 - Linux stable green: full workspace all-feature tests remain green
-  per section 7.
-- live workflow `36262614991` (which was already green) remains green
-  in form; C002's responsibility is to convert that "green-in-form"
-  into a truly proof-bearing run, which is outside C001's scope.
+  per section 7; hosted CI run `36451730637` Linux-stable lane green.
+- live workflow `36262614991` (which was already green in
+  green-in-form) remains green in form; C002's responsibility is to
+  convert that "green-in-form" into a truly proof-bearing run, which
+  is outside C001's scope.
 
 ## 9. Unresolved findings / limitations
 
@@ -264,24 +282,28 @@ declared budget.
 |---|---|---|
 | Informational | The exact JSON envelope that would have named the per-case `transport_failure` vs `check_timeout` reason was not captured by cargo test's default stdio handling, so the produced reason string (vs the exit code) is not part of the captured host log. | Section 2.1 maps the path from exit code `8` to corpus `Invalid` and to `transport_failure`. The local reproduction is now printed-with-stdout evidence and recorded in `/tmp/slow_*` workspaces during investigation. No further fix needed for C001. |
 | Informational | Local full m002b suites are slow (8 perf scenarios × trials); running them sequentially takes ~11 minutes per full pass. | Cosmetic; not changed by this fix. C002 inherits the same timing and may need a per-scenario driver. |
-| Informational | This C001 closure acknowledges the macOS hosted lane was not re-exercised on `b98973f` from this environment; hosted re-run is the only remaining acceptance signal. | Tracked in section 8; C002 cannot start until that hosted run is green and SynVoid's asset contract closes. |
+| **Material (causes C001 stop)** | Hosted macOS `synvoid_m002b::perf_same_source_pair_never_fails` fails on `b98973f` (run `36451730637`): the test asserts the same-source `statistical_relative` regression gate must not trigger (`Some(0)` or `Some(7)` only) but the host CI observed a non-Pass/Inconclusive verdict. The test source itself notes "Live-host repeatability remains an M002 closure condition"; the M002 corrective architecture already assigns live-host repeatability to C002 (§14 — `live-synvoid-linux` fails when the `statistical_relative` gate sees a genuine same-source regression under cold/warm cache asymmetry). | Owned by C002, not C001. C001 records STOP-with-verification here (plan §10). No new CLI-side change is required; the corrective hand-off is "host the same-source pair under the warm-cache-only gate, or replace the synthetic stand-in with real SynVoid and re-validate under real reverse-proxy live-host conditions." |
+| Informational | This C001 closure originally projected local acceptance only; hosted CI evidence at run `36451730637` since updated criterion 4 (targeted regression) to PASS hosted and exposed the m002b perf failure as a separate live-host issue. | Recorded in the disposition and criterion-5 row above; no plan content changes beyond this closure. |
 
 ## 10. Disposition
 
-**C001 closed locally.** Routine M002 routine qualification scope is
-restored to portable behavior; the runner no longer depends on a
-guessed cold-cache startup budget for managed command subjects; the
-specific macOS-hosted failure signature from `36262615058` is now
-caused to Pass under the new probe and the exact four-lane re-run is
-the only remaining hosted signal — handled by the next CI push on
-`b98973f`.
+**C001 STOPPED with verification (plan §10 stop).** The exact failure
+mode C001 was scoped to fix (runner-managed command subject readiness
+race on macOS cold-cache Apple Silicon) is closed: `synvoid_m002a` is
+green on macOS hosted CI on `b98973f`. The macOS lane is not yet fully
+green overall because `synvoid_m002b::perf_same_source_pair_never_fails`
+fails on Apple Silicon under warm/cold-cache asymmetry; that is the
+`live-host repeatability` M002 closure condition owned by C002 and not
+in C001's portable-corrective scope. C001 is recorded STOP-with-verification
+so the next handoff is C002, not a new C003 duplicate.
 
 Future work:
 
-- **C002** is now unblocked only on the SynVoid owner-side asset
-  contract (`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`)
-  plus real `live-synvoid-linux` execution. C001 does not convert M002 to
-  full closure; that is C002's exclusive gate.
+- **C002** is the only remaining M002 corrective gate. It must consume
+  the closed SynVoid owner-side asset contract and execute real SynVoid
+  `live-synvoid-linux` Stage B and Stage C runs against the real
+  subject so the live-host repeatability proof lands at the exact
+  binary gate the M002b perf test defends against.
 - **M003** research/planning remains free to run in parallel; M003
   implementation must still wait on C002 before treating M002 as fully
   qualified, exactly as the addendum requires.

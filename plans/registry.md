@@ -46,8 +46,8 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active corrective | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 routine scope conditionally closed; corrective C001 closed locally / C002 blocked | M002 final close needs closed SynVoid asset contract plus real `live-synvoid-linux` execution (C002); C001 closed locally at `b98973f`, exact-head hosted four-lane re-verification pending |
-| Security qualification M002 post-conditional-closure corrective | active | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 closed locally (`b98973f`); C002 blocked | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md; C002 requires exact-head hosted four-lane re-verification of C001 plus SynVoid owner asset-contract closure |
+| Security qualification | active corrective | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 routine scope conditionally closed; corrective C001 STOPPED with verification / C002 blocked | C001 runner-side fix verified at `b98973f` (m002a green on hosted CI 36451730637); m002b `perf_same_source_pair_never_fails` exposes Apple Silicon live-host repeatability owned by C002; M002 final close needs closed SynVoid asset contract plus real `live-synvoid-linux` execution |
+| Security qualification M002 post-conditional-closure corrective | active | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f` (m002a green, m002b perf issue is C002); C002 blocked | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED); C002 requires exact-head hosted four-lane re-verification of C001 plus SynVoid owner asset-contract closure plus the live-host repeatability gap C001 exposed |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -59,7 +59,7 @@ Canonical direction remains in:
 | Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M002 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/002-status.md; C001 evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md |
 | Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
-| Security qualification M002 post-conditional-closure corrective C001 | closed (local acceptance; exact-head hosted four-lane re-verification pending first push) | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/001-status.md (implementation `b98973f`) |
+| Security qualification M002 post-conditional-closure corrective C001 | STOPPED with verification — runner-side fix verified; m002b perf issue remains as separate live-host repeatability owned by C002 | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/001-status.md (implementation `b98973f`, STOPPED) |
 | Local runner/lifecycle M003 | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md; corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
 | Measurement/comparison M001 | closed (qualified) | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md; qualification corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
 | Measurement/comparison M002 | closed | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/002-status.md |
@@ -69,15 +69,20 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 ## Dependency-ready implementation plans
 
 No plan in this category is ready for execution today. The M002 corrective
-C001 (macOS hosted portability restoration) is now closed locally
-(`b98973f`; closure `plans/closure/security-qualification-m002-corrective/001-status.md`).
-The exact-head hosted four-lane re-verification of that closure will land
-on the first push through CI; M002 final closure remains owned by C002
-(see "Authored but dependency-blocked implementation plans" below).
+C001 (macOS hosted portability restoration) is **STOPPED with verification**
+at `b98973f` (closure `plans/closure/security-qualification-m002-corrective/001-status.md`,
+exact disposition `STOPPED with verification`). The C001 runner-side fix is
+verified green by macOS hosted CI run `36451730637`: `synvoid_m002a` is
+7/7 green (including the new routine regression
+`slow_synvoid_startup_still_passes`). The exact-host hosted four-lane
+cannot fully turn green because C001's first correction surfaced an
+independent failure on `synvoid_m002b::perf_same_source_pair_never_fails`
+(Apple Silicon live-host repeatability) that the test source itself
+marks as "M002 closure condition" and that is owned by C002.
 
 Cross-repo work may proceed in parallel: SynVoid's owner-side
-`plans/eggbench_security_qualification_asset_contract.md` is also ready for
-implementation in `dbowm91/synvoid` and remains the C002 blocker.
+`plans/eggbench_security_qualification_asset_contract.md` is also ready
+for implementation in `dbowm91/synvoid` and remains the C002 blocker.
 
 Historical post-M003 live-tool C001 stopped with evidence and successor C002 is closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`. No older corrective handoff remains open.
 
@@ -92,7 +97,7 @@ Historical post-M003 live-tool C001 stopped with evidence and successor C002 is 
 
 | Subsystem | Milestone | Status | Plan | Blocker |
 |---|---|---|---|---|
-| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | blocked | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 closed locally (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, SHA `b98973f`); still needs exact-head hosted four-lane re-verification + SynVoid owner asset-contract closure |
+| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | blocked | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 STOPPED with verification (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, SHA `b98973f`) — m002a green on hosted CI 36451730637 but m002b `perf_same_source_pair_never_fails` exposed as live-host repeatability issue; C002 needs exact-head hosted four-lane re-verification of C001 plus real `live-synvoid-linux` stages plus SynVoid owner asset-contract closure |
 
 External Oracles M003 netem remains separate.
 
@@ -166,7 +171,7 @@ External Oracles M003 netem remains a separate later system-level impairment bou
 
 Security qualification retains separate correctness and performance gate families. Faster execution never overrides a security-correctness failure.
 
-Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed. M002 routine scope landed at `b74f861` and remains historically conditionally closed. The post-M002 corrective now controls terminal qualification: **C001 is closed locally at `b98973f`** (closure `plans/closure/security-qualification-m002-corrective/001-status.md`); the runner-side `tcp-loopback` readiness probe restores the failed macOS/four-lane hosted lane without changing any M002 semantic or threshold. C002 remains blocked on the SynVoid owner-side asset contract plus real `live-synvoid-linux` execution. Eggbench must not translate SynVoid Detect/Pass semantics itself.
+Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed. M002 routine scope landed at `b74f861` and remains historically conditionally closed. The post-M002 corrective now controls terminal qualification: **C001 is STOPPED with verification at `b98973f`** (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition `STOPPED with verification`); the runner-side `tcp-loopback` readiness probe restores the failed macOS `synvoid_m002a` lane (hosted CI run `36451730637` shows 7/7 m002a green including the new routine regression `slow_synvoid_startup_still_passes`) and exposes an independent live-host repeatability failure on `synvoid_m002b::perf_same_source_pair_never_fails` whose owner is C002. C002 remains blocked on the SynVoid owner-side asset contract plus real `live-synvoid-linux` execution. Eggbench must not translate SynVoid Detect/Pass semantics itself.
 
 ### Gate H — Distributed execution
 
@@ -266,10 +271,13 @@ One cross-repo handoff is the active gating dependency:
 - SynVoid owner-side qualification asset contract:
   `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
 
-Eggbench C001 is closed locally (implementation `b98973f`; closure
-`plans/closure/security-qualification-m002-corrective/001-status.md`); the
-exact-head hosted four-lane re-verification of that closure is expected on
-the next push and is not a planning artifact.
+Eggbench C001 is **STOPPED with verification** (implementation
+`b98973f`; closure `plans/closure/security-qualification-m002-corrective/001-status.md`).
+The C001 runner-side fix is verified green by hosted CI run
+`36451730637`: `synvoid_m002a` is 7/7 green. The independent
+`synvoid_m002b::perf_same_source_pair_never_fails` failure surfaced
+post-fix is the live-host repeatability M002 closure condition, owned
+by C002.
 
 Once SynVoid's owner-side contract is closed, Eggbench C002 is the only
 remaining handoff:
