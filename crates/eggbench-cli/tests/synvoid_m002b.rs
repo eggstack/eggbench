@@ -220,7 +220,9 @@ fn smoke_profile_passes_with_absolute_gates() {
     assert_eq!(
         run.status.code(),
         Some(0),
-        "stderr: {}",
+        "exit: {:?}\nstdout: {}\nstderr: {}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
     let result = receipt(&root.join("suite"));
