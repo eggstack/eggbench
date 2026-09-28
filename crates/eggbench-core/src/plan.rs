@@ -2,8 +2,9 @@ use crate::{
     BasisPoints, DurationMs, EXPERIMENT_PLAN_SCHEMA_VERSION, EXPERIMENT_PLAN_SCHEMA_VERSION_2,
     EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4,
     EXPERIMENT_PLAN_SCHEMA_VERSION_5, EXPERIMENT_PLAN_SCHEMA_VERSION_6,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_7, EXPERIMENT_PLAN_SCHEMA_VERSION_8, Name, NetworkPathRequest,
-    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_7, EXPERIMENT_PLAN_SCHEMA_VERSION_8,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_9, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
+    RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -270,6 +271,15 @@ pub struct Service {
     /// by managed command and external services (plan schema v7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_url: Option<String>,
+    /// Bounded, non-secret runtime facts published by this service (schema v9).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub static_bindings: BTreeMap<String, String>,
+    /// Dependency binding replacements for managed command argv (schema v9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binding_args: Vec<RuntimeBindingArg>,
+    /// Dependency binding sources for managed command environment variables (schema v9).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub binding_env: BTreeMap<String, RuntimeBindingSource>,
     /// Optional readiness request.
     pub readiness: Option<Readiness>,
     /// Optional shutdown request.
@@ -278,6 +288,28 @@ pub struct Service {
     pub working_directory: Option<String>,
     /// Maximum bytes retained for each log.
     pub log_limit_bytes: u64,
+}
+
+/// Replace one complete argv element with a dependency's runtime binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBindingArg {
+    /// Zero-based argument index; index zero (the executable) is not replaceable.
+    pub index: usize,
+    /// Binding producer, which must be a declared dependency.
+    pub source_service: Name,
+    /// Binding key published by the producer.
+    pub source_key: String,
+}
+
+/// Source for one non-secret managed command environment variable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBindingSource {
+    /// Binding producer, which must be a declared dependency.
+    pub source_service: Name,
+    /// Binding key published by the producer.
+    pub source_key: String,
 }
 
 /// Declarative service kind.
@@ -780,6 +812,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
@@ -789,6 +822,7 @@ impl ExperimentPlan {
         if self.security_checks.is_some()
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
         {
             return invalid(
                 "unsupported_option",
@@ -800,6 +834,7 @@ impl ExperimentPlan {
         }
         if self.http_corpus_checks.is_some()
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
         {
             return invalid(
                 "unsupported_option",
@@ -817,6 +852,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
         {
             return invalid(
                 "unsupported_option",
@@ -835,6 +871,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_5
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
         {
             return invalid(
                 "unsupported_option",
@@ -933,9 +970,57 @@ impl ExperimentPlan {
             return invalid("invalid_bound", "at most 256 services are allowed");
         }
         for service in &self.services {
+            if (!service.binding_args.is_empty() || !service.binding_env.is_empty())
+                && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+            {
+                return invalid(
+                    "unsupported_option",
+                    "binding references require plan schema version 9",
+                );
+            }
+            if !service.static_bindings.is_empty() {
+                if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9 {
+                    return invalid(
+                        "unsupported_option",
+                        "static_bindings require plan schema version 9",
+                    );
+                }
+                if service.static_bindings.len() > 32 {
+                    return invalid(
+                        "invalid_bound",
+                        "at most 32 static bindings are allowed per service",
+                    );
+                }
+                for (key, value) in &service.static_bindings {
+                    if Name::new(key).is_err()
+                        || key.chars().any(|c| c.is_whitespace() || c == '/')
+                        || value.is_empty()
+                        || value.len() > 2048
+                        || value.chars().any(char::is_control)
+                        || looks_secret(value)
+                    {
+                        return invalid(
+                            "invalid_bound",
+                            format!("service {} has an invalid static binding", service.name),
+                        );
+                    }
+                }
+                if service
+                    .http_url
+                    .as_ref()
+                    .zip(service.static_bindings.get("http_url"))
+                    .is_some_and(|(legacy, current)| legacy != current)
+                {
+                    return invalid(
+                        "contradictory_configuration",
+                        format!("service {} has conflicting http_url bindings", service.name),
+                    );
+                }
+            }
             if let Some(url) = &service.http_url {
                 if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
                     && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
+                    && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
                 {
                     return invalid(
                         "unsupported_option",
@@ -967,6 +1052,50 @@ impl ExperimentPlan {
                     "contradictory_configuration",
                     format!("managed command service {} needs a program", service.name),
                 );
+            }
+            if !service.binding_args.is_empty() || !service.binding_env.is_empty() {
+                let ServiceKind::Command { argv } = &service.kind else {
+                    return invalid(
+                        "contradictory_configuration",
+                        "runtime binding destinations require command services",
+                    );
+                };
+                let mut destinations = BTreeSet::new();
+                for reference in &service.binding_args {
+                    if reference.index == 0
+                        || reference.index >= argv.len()
+                        || !destinations.insert(reference.index)
+                    {
+                        return invalid(
+                            "invalid_bound",
+                            format!(
+                                "service {} has an invalid or duplicate binding argv destination",
+                                service.name
+                            ),
+                        );
+                    }
+                    validate_binding_source(
+                        reference.source_service.as_str(),
+                        &reference.source_key,
+                        &service.depends_on,
+                    )?;
+                }
+                for (key, reference) in &service.binding_env {
+                    if !valid_env_name(key) {
+                        return invalid(
+                            "invalid_bound",
+                            format!(
+                                "service {} has an invalid environment binding destination",
+                                service.name
+                            ),
+                        );
+                    }
+                    validate_binding_source(
+                        reference.source_service.as_str(),
+                        &reference.source_key,
+                        &service.depends_on,
+                    )?;
+                }
             }
             if service.lifecycle == Lifecycle::External
                 && matches!(service.kind, ServiceKind::Command { .. })
@@ -1121,6 +1250,38 @@ impl ExperimentPlan {
     }
 }
 
+fn validate_binding_source(
+    source: &str,
+    key: &str,
+    dependencies: &[Name],
+) -> Result<(), PlanError> {
+    if !dependencies
+        .iter()
+        .any(|dependency| dependency.as_str() == source)
+    {
+        return invalid(
+            "missing_reference",
+            format!("runtime binding source {source} must be a declared dependency"),
+        );
+    }
+    if Name::new(key).is_err()
+        || key
+            .chars()
+            .any(|character| character.is_whitespace() || character == '/')
+    {
+        return invalid("invalid_bound", "runtime binding source key is invalid");
+    }
+    Ok(())
+}
+
+fn valid_env_name(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        && !key.as_bytes()[0].is_ascii_digit()
+}
+
 impl Workload {
     /// Destination service or external target of this workload.
     #[must_use]
@@ -1258,6 +1419,20 @@ fn validate_static_http_url(value: &str) -> Result<(), PlanError> {
         );
     }
     Ok(())
+}
+
+fn looks_secret(value: &str) -> bool {
+    let lowered = value.to_ascii_lowercase();
+    [
+        "password=",
+        "token=",
+        "secret=",
+        "authorization:",
+        "bearer ",
+        "api_key=",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
 }
 
 fn validate_semantic_fixture_path(fixture: &str) -> Result<(), PlanError> {
@@ -2017,6 +2192,9 @@ mod tests {
             depends_on: Vec::new(),
             config: BTreeMap::new(),
             http_url: None,
+            static_bindings: BTreeMap::new(),
+            binding_args: Vec::new(),
+            binding_env: BTreeMap::new(),
             readiness: None,
             shutdown: None,
             working_directory: None,
@@ -2030,6 +2208,10 @@ mod tests {
         let mut plan = ExperimentPlan::from_json(VALID).unwrap();
         plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_7;
         let mut service = plan_with_service().services.remove(0);
+        service.lifecycle = Lifecycle::Managed;
+        service.kind = ServiceKind::Command {
+            argv: vec!["wrapper".into(), "placeholder".into()],
+        };
         service.http_url = Some("http://127.0.0.1:8080/base".into());
         plan.services.push(service.clone());
         assert!(plan.validate().is_ok());
@@ -2037,6 +2219,51 @@ mod tests {
         plan.services[0] = service;
         assert!(plan.validate().is_err());
         plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_6;
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn static_binding_map_merges_legacy_url_and_rejects_conflict() {
+        let mut plan = ExperimentPlan::from_json(VALID).unwrap();
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_9;
+        let mut service = plan_with_service().services.remove(0);
+        service.http_url = Some("http://127.0.0.1:8080/".into());
+        service
+            .static_bindings
+            .insert("http_url".into(), "http://127.0.0.1:8080/".into());
+        service
+            .static_bindings
+            .insert("metrics_url".into(), "http://127.0.0.1:9090/metrics".into());
+        plan.services.push(service.clone());
+        assert!(plan.validate().is_ok());
+        service
+            .static_bindings
+            .insert("http_url".into(), "http://127.0.0.1:9999/".into());
+        plan.services[0] = service;
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn binding_reference_requires_dependency_and_valid_destination() {
+        let mut plan = ExperimentPlan::from_json(VALID).unwrap();
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_9;
+        let mut service = plan_with_service().services.remove(0);
+        service.lifecycle = Lifecycle::Managed;
+        service.kind = ServiceKind::Command {
+            argv: vec!["wrapper".into(), "placeholder".into()],
+        };
+        service.binding_args.push(RuntimeBindingArg {
+            index: 1,
+            source_service: Name::new("origin").unwrap(),
+            source_key: "bound_port".into(),
+        });
+        service.depends_on.push(Name::new("origin").unwrap());
+        plan.services.push(service);
+        let mut origin = plan_with_service().services.remove(0);
+        origin.name = Name::new("origin").unwrap();
+        plan.services.push(origin);
+        assert!(plan.validate().is_ok());
+        plan.services[0].depends_on.clear();
         assert!(plan.validate().is_err());
     }
 
@@ -2158,6 +2385,9 @@ mod tests {
             depends_on: vec![Name::new("api").unwrap()],
             config: BTreeMap::new(),
             http_url: None,
+            static_bindings: BTreeMap::new(),
+            binding_args: Vec::new(),
+            binding_env: BTreeMap::new(),
             readiness: None,
             shutdown: None,
             working_directory: None,

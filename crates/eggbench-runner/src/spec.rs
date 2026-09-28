@@ -11,7 +11,8 @@ use crate::platform::{PlatformAdapter, PlatformSupport};
 use crate::secret::SecretProvider;
 use crate::service::ServiceAdapterRegistry;
 use eggbench_core::{
-    Lifecycle, Name, Readiness, ResolvedPlan, Service, ServiceKind, Shutdown, Subject,
+    Lifecycle, Name, Readiness, ResolvedPlan, RuntimeBindingArg, RuntimeBindingSource, Service,
+    ServiceKind, Shutdown, Subject,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -52,6 +53,12 @@ pub struct ProcessSpec {
     pub is_subject: bool,
     /// Static non-secret `http_url` binding from the service declaration.
     pub http_url: Option<String>,
+    /// General bounded non-secret bindings published after readiness.
+    pub static_bindings: BTreeMap<String, String>,
+    /// Deferred dependency binding destinations.
+    pub binding_args: Vec<RuntimeBindingArg>,
+    /// Deferred environment binding destinations.
+    pub binding_env: BTreeMap<String, RuntimeBindingSource>,
 }
 
 impl fmt::Debug for ProcessSpec {
@@ -67,6 +74,9 @@ impl fmt::Debug for ProcessSpec {
             .field("shutdown", &self.shutdown)
             .field("is_subject", &self.is_subject)
             .field("http_url", &self.http_url)
+            .field("static_bindings", &self.static_bindings)
+            .field("binding_args", &self.binding_args)
+            .field("binding_env", &self.binding_env.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -98,6 +108,8 @@ pub struct AdapterSpec {
     pub config: BTreeMap<String, String>,
     /// Static non-secret `http_url` binding declared on the service.
     pub http_url: Option<String>,
+    /// General bounded non-secret bindings published after readiness.
+    pub static_bindings: BTreeMap<String, String>,
     /// Declared readiness request.
     pub readiness: Option<Readiness>,
     /// Graceful shutdown allowance.
@@ -229,6 +241,9 @@ pub fn prepare(
             shutdown: None,
             is_subject: true,
             http_url: None,
+            static_bindings: BTreeMap::new(),
+            binding_args: Vec::new(),
+            binding_env: BTreeMap::new(),
         });
         launch_order.push(LaunchEntry {
             identity: SUBJECT_IDENTITY.to_owned(),
@@ -265,6 +280,9 @@ pub fn prepare(
                     shutdown: service.shutdown.clone(),
                     is_subject: false,
                     http_url: service.http_url.clone(),
+                    static_bindings: service.static_bindings.clone(),
+                    binding_args: service.binding_args.clone(),
+                    binding_env: service.binding_env.clone(),
                 });
                 launch_order.push(LaunchEntry {
                     identity: service.name.as_str().to_owned(),
@@ -436,6 +454,7 @@ fn adapter_spec(
         service_type: service_type.as_str().to_owned(),
         config: service.config.clone(),
         http_url: service.http_url.clone(),
+        static_bindings: service.static_bindings.clone(),
         readiness: service.readiness.clone(),
         grace: service
             .shutdown

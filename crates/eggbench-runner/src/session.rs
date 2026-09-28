@@ -15,12 +15,14 @@ use crate::platform::{PlatformAdapter, PlatformSupport};
 use crate::probe::{ProbeContext, ProbeRegistry};
 use crate::secret::SecretProvider;
 use crate::service::{
-    ManagedServiceHandle, RUNTIME_TOPOLOGY_SCHEMA_VERSION, RuntimeBindings, RuntimeTopology,
-    ServiceAdapterRegistry, ServiceOwnership, ServiceStartRequest, ServiceTopologyEntry,
+    BindingConsumption, ManagedServiceHandle, RUNTIME_TOPOLOGY_SCHEMA_VERSION, RuntimeBindings,
+    RuntimeTopology, ServiceAdapterRegistry, ServiceOwnership, ServiceStartRequest,
+    ServiceTopologyEntry,
 };
 use crate::spec::{AdapterSpec, LaunchKind, PrepareOptions, ProcessSpec, SpawnPlan, prepare};
 use eggbench_core::Readiness;
 use eggbench_core::ResolvedPlan;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -248,6 +250,7 @@ pub struct LocalSession {
     /// Startup-established runtime bindings, retained through teardown for
     /// final evidence.
     bindings: RuntimeBindings,
+    binding_consumptions: Vec<BindingConsumption>,
 }
 
 impl fmt::Debug for LocalSession {
@@ -276,6 +279,7 @@ impl fmt::Debug for LocalSession {
             .field("prepared_at", &self.prepared_at)
             .field("next_seq", &self.next_seq)
             .field("bindings", &self.bindings)
+            .field("binding_consumptions", &self.binding_consumptions)
             .finish()
     }
 }
@@ -304,12 +308,8 @@ impl LocalSession {
             .collect();
         let mut bindings = RuntimeBindings::new();
         for service in &resolved.topology {
-            if service.lifecycle == eggbench_core::Lifecycle::External
-                && let Some(url) = &service.http_url
-            {
-                bindings
-                    .insert(service.name.as_str(), "http_url", url.clone())
-                    .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+            if service.lifecycle == eggbench_core::Lifecycle::External {
+                declare_service_bindings(&mut bindings, service)?;
             }
         }
         Ok(Self {
@@ -322,6 +322,7 @@ impl LocalSession {
             prepared_at: Instant::now(),
             next_seq: 0,
             bindings,
+            binding_consumptions: Vec::new(),
         })
     }
 
@@ -430,16 +431,22 @@ impl LocalSession {
             });
         }
         for identity in &self.external {
+            let bindings = self
+                .bindings
+                .service_bindings(identity)
+                .cloned()
+                .unwrap_or_default();
             services.push(ServiceTopologyEntry {
                 identity: identity.clone(),
                 ownership: ServiceOwnership::External,
                 service_type: None,
-                bindings: BTreeMap::new(),
+                bindings,
             });
         }
         RuntimeTopology {
             schema_version: RUNTIME_TOPOLOGY_SCHEMA_VERSION,
             services,
+            binding_consumptions: self.binding_consumptions.clone(),
         }
     }
 
@@ -454,6 +461,7 @@ impl LocalSession {
     /// # Errors
     /// Returns [`RunnerError`] for spawn, readiness, timeout, early exit,
     /// cancellation, or capability failures.
+    #[allow(clippy::too_many_lines)]
     pub async fn startup(
         &mut self,
         cancel: &CancellationToken,
@@ -481,7 +489,73 @@ impl LocalSession {
                                 entry.identity
                             ),
                         })?;
-                    let running = match Self::spawn_one(&spec) {
+                    let mut resolved_spec = spec.clone();
+                    let resolution: Result<Vec<BindingConsumption>, RunnerError> = (|| {
+                        let mut evidence = Vec::new();
+                        for reference in &spec.binding_args {
+                            let value = self
+                                .bindings
+                                .get(reference.source_service.as_str(), &reference.source_key)
+                                .ok_or_else(|| RunnerError::InvalidPlan {
+                                    detail: format!(
+                                        "missing runtime binding {}.{}",
+                                        reference.source_service, reference.source_key
+                                    ),
+                                })?;
+                            if value.len() > 2048 || value.chars().any(char::is_control) {
+                                return Err(RunnerError::InvalidPlan {
+                                    detail: "resolved runtime binding is invalid".into(),
+                                });
+                            }
+                            value.clone_into(&mut resolved_spec.argv[reference.index]);
+                            evidence.push(binding_consumption(
+                                &spec.identity,
+                                "argv",
+                                reference.index.to_string(),
+                                reference.source_service.as_str(),
+                                &reference.source_key,
+                                value,
+                            ));
+                        }
+                        for (key, reference) in &spec.binding_env {
+                            let value = self
+                                .bindings
+                                .get(reference.source_service.as_str(), &reference.source_key)
+                                .ok_or_else(|| RunnerError::InvalidPlan {
+                                    detail: format!(
+                                        "missing runtime binding {}.{}",
+                                        reference.source_service, reference.source_key
+                                    ),
+                                })?;
+                            if value.len() > 2048 || value.chars().any(char::is_control) {
+                                return Err(RunnerError::InvalidPlan {
+                                    detail: "resolved runtime binding is invalid".into(),
+                                });
+                            }
+                            resolved_spec.env.insert(key.clone(), value.to_owned());
+                            evidence.push(binding_consumption(
+                                &spec.identity,
+                                "environment",
+                                key.clone(),
+                                reference.source_service.as_str(),
+                                &reference.source_key,
+                                value,
+                            ));
+                        }
+                        Ok(evidence)
+                    })(
+                    );
+                    match resolution {
+                        Ok(evidence) => self.binding_consumptions.extend(evidence),
+                        Err(error) => {
+                            let cleanup = self.teardown_running().await;
+                            return Err(attach_cleanup(error, cleanup));
+                        }
+                    }
+                    if cancel.is_cancelled() {
+                        return self.cancel_after_start().await;
+                    }
+                    let running = match Self::spawn_one(&resolved_spec) {
                         Ok(running) => running,
                         Err(message) => {
                             let cleanup = self.teardown_running().await;
@@ -502,15 +576,12 @@ impl LocalSession {
                         return Err(attach_cleanup(error, cleanup));
                     }
                     self.push_event(&spec.identity, LifecycleEventKind::Ready, Some(pid));
-                    if let Some(url) = &spec.http_url {
-                        let mut declared = RuntimeBindings::new();
-                        declared
-                            .insert(&spec.identity, "http_url", url.clone())
-                            .map_err(|detail| RunnerError::InvalidPlan { detail })?;
-                        self.bindings
-                            .merge_checked(&declared)
-                            .map_err(|detail| RunnerError::InvalidPlan { detail })?;
-                    }
+                    publish_spec_bindings(
+                        &mut self.bindings,
+                        &spec.identity,
+                        spec.http_url.as_deref(),
+                        &spec.static_bindings,
+                    )?;
                 }
                 LaunchKind::Adapter => {
                     let spec = self
@@ -591,11 +662,14 @@ impl LocalSession {
         // captured here so workloads receive the startup-established map.
         // The handle moves into `running` so shutdown owns it.
         let mut bindings = handle.bindings();
-        if let Some(url) = &spec.http_url {
+        if spec.http_url.is_some() || !spec.static_bindings.is_empty() {
             let mut declared = RuntimeBindings::new();
-            declared
-                .insert(&spec.identity, "http_url", url.clone())
-                .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+            publish_spec_bindings(
+                &mut declared,
+                &spec.identity,
+                spec.http_url.as_deref(),
+                &spec.static_bindings,
+            )?;
             if let Err(detail) = bindings.merge_checked(&declared) {
                 let mut handle = handle;
                 let shutdown = handle.shutdown(spec.grace).await;
@@ -991,6 +1065,54 @@ impl LocalSession {
         let cleanup = self.teardown_running().await;
         Err(RunnerError::Cancelled { cleanup })
     }
+}
+
+fn binding_consumption(
+    consumer: &str,
+    destination_kind: &str,
+    destination: String,
+    source_service: &str,
+    source_key: &str,
+    value: &str,
+) -> BindingConsumption {
+    BindingConsumption {
+        consumer: consumer.to_owned(),
+        destination_kind: destination_kind.to_owned(),
+        destination,
+        source_service: source_service.to_owned(),
+        source_key: source_key.to_owned(),
+        value_sha256: format!("{:x}", Sha256::digest(value.as_bytes())),
+        value_in_public_topology: true,
+    }
+}
+
+fn publish_spec_bindings(
+    into: &mut RuntimeBindings,
+    identity: &str,
+    legacy_http_url: Option<&str>,
+    bindings: &BTreeMap<String, String>,
+) -> Result<(), RunnerError> {
+    if let Some(url) = legacy_http_url {
+        into.insert(identity, "http_url", url.to_owned())
+            .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+    }
+    for (key, value) in bindings {
+        into.insert(identity, key, value.clone())
+            .map_err(|detail| RunnerError::InvalidPlan { detail })?;
+    }
+    Ok(())
+}
+
+fn declare_service_bindings(
+    into: &mut RuntimeBindings,
+    service: &eggbench_core::Service,
+) -> Result<(), RunnerError> {
+    publish_spec_bindings(
+        into,
+        service.name.as_str(),
+        service.http_url.as_deref(),
+        &service.static_bindings,
+    )
 }
 
 fn shutdown_grace(spec: &ProcessSpec) -> Duration {

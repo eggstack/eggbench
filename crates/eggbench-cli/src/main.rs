@@ -133,6 +133,7 @@ impl From<InputFormatArg> for InputFormat {
 }
 
 #[tokio::main(flavor = "multi_thread")]
+#[allow(clippy::large_futures)]
 async fn main() -> StdExitCode {
     let cli = Cli::parse();
     let options = CommandOptions {
@@ -154,6 +155,7 @@ async fn main() -> StdExitCode {
     present(&presented, options)
 }
 
+#[allow(clippy::large_futures)]
 async fn qualify(command: &QualifyCommand, options: CommandOptions) -> StdExitCode {
     if let QualifyCommand::Run { profile, output } = command {
         return qualify_run(profile, output, options).await;
@@ -186,7 +188,7 @@ async fn qualify(command: &QualifyCommand, options: CommandOptions) -> StdExitCo
             .map_err(|e| e.to_string())?;
         if matches!(command, QualifyCommand::Validate { .. }) {
             Ok(
-                serde_json::json!({"ok":true,"command":"qualify_validate","profile_id":expansion.profile_id,"scenario_count":expansion.scenarios.len()}),
+                serde_json::json!({"ok":true,"command":"qualify_validate","profile_id":expansion.profile_id,"scenario_count":expansion.scenarios.len(),"scenarios":expansion.scenarios.iter().map(|scenario| serde_json::json!({"id":scenario.id,"workload_driver":scenario.workload_driver})).collect::<Vec<_>>()}),
             )
         } else {
             serde_json::to_value(expansion).map_err(|e| e.to_string())
@@ -218,7 +220,7 @@ async fn qualify(command: &QualifyCommand, options: CommandOptions) -> StdExitCo
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::large_futures)]
 async fn qualify_run(
     profile: &std::path::Path,
     output: &std::path::Path,
@@ -276,6 +278,7 @@ async fn qualify_run(
                     records.push(Record {
                         id: scenario.id.clone(),
                         source_plan_sha256: scenario.source_plan_sha256.clone(),
+                        workload_driver: scenario.workload_driver.clone(),
                         status: State::NotRun,
                         candidate_bundle_path: None,
                         candidate_bundle_identity: None,
@@ -299,7 +302,7 @@ async fn qualify_run(
                         plan,
                         input_format: None,
                         bundle: bundle.clone(),
-                        workload_driver: None,
+                        workload_driver: scenario.workload_driver.clone(),
                     },
                     CommandOptions {
                         json: true,
@@ -323,6 +326,7 @@ async fn qualify_run(
                     records.push(Record {
                         id: scenario.id.clone(),
                         source_plan_sha256: scenario.source_plan_sha256.clone(),
+                        workload_driver: scenario.workload_driver.clone(),
                         status: if cancelled {
                             State::Cancelled
                         } else {
@@ -375,6 +379,7 @@ async fn qualify_run(
                     records.push(Record {
                         id: scenario.id.clone(),
                         source_plan_sha256: scenario.source_plan_sha256.clone(),
+                        workload_driver: scenario.workload_driver.clone(),
                         status: State::Invalid,
                         candidate_bundle_path: Some(bundle_rel),
                         candidate_bundle_identity: None,
@@ -402,6 +407,7 @@ async fn qualify_run(
                 records.push(Record {
                     id: scenario.id.clone(),
                     source_plan_sha256: scenario.source_plan_sha256.clone(),
+                    workload_driver: scenario.workload_driver.clone(),
                     status: if has_verdict {
                         State::Completed
                     } else {
@@ -538,6 +544,9 @@ fn qualify_inspect(path: &std::path::Path, json: bool) -> StdExitCode {
             return Err("scenario order or source identity differs from expansion".into());
         }
         for (expanded, record) in expansion.scenarios.iter().zip(&receipt.scenarios) {
+            if expanded.workload_driver != record.workload_driver {
+                return Err("scenario workload driver differs from frozen expansion".into());
+            }
             if expanded.baseline_identity != record.baseline_bundle_identity {
                 return Err("baseline identity differs from frozen profile reference".into());
             }
@@ -571,6 +580,16 @@ fn qualify_inspect(path: &std::path::Path, json: bool) -> StdExitCode {
                     .ok_or("completed scenario missing bundle path")?,
             )?;
             let bundle = eggbench_core::load_candidate_bundle(&bp).map_err(|e| e.to_string())?;
+            let actual_driver = bundle
+                .resolved
+                .drivers
+                .get(&eggbench_core::DriverCategory::Workload)
+                .map(|driver| driver.descriptor.name.as_str().to_owned());
+            if let Some(expected) = &expanded.workload_driver
+                && actual_driver.as_deref() != Some(expected.as_str())
+            {
+                return Err("scenario bundle workload driver differs from frozen selection".into());
+            }
             if Some(&bundle.identity) != record.candidate_bundle_identity.as_ref() {
                 return Err("candidate bundle identity mismatch".into());
             }
@@ -660,7 +679,7 @@ mod qualification_e2e_tests {
     use super::*;
 
     #[tokio::test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::large_futures)]
     async fn fixed_corpus_suite_runs_serially_and_continues_after_correctness_fail() {
         let temp = tempfile::tempdir().expect("temporary workspace");
         let root = temp.path();

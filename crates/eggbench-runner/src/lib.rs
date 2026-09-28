@@ -75,9 +75,9 @@ pub use probe::{
 };
 pub use secret::{MapSecretProvider, SecretProvider};
 pub use service::{
-    BoxFuture, ManagedServiceAdapter, ManagedServiceHandle, RUNTIME_TOPOLOGY_SCHEMA_VERSION,
-    RuntimeBindings, RuntimeTopology, ServiceAdapterRegistry, ServiceOwnership,
-    ServiceStartRequest, ServiceTopologyEntry,
+    BindingConsumption, BoxFuture, ManagedServiceAdapter, ManagedServiceHandle,
+    RUNTIME_TOPOLOGY_SCHEMA_VERSION, RuntimeBindings, RuntimeTopology, ServiceAdapterRegistry,
+    ServiceOwnership, ServiceStartRequest, ServiceTopologyEntry,
 };
 pub use telemetry::{
     FakeTelemetryCollector, FakeTelemetryHandle, MAX_TELEMETRY_DETAIL_LEN, TelemetryCapability,

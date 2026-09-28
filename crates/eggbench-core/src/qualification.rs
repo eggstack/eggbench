@@ -13,6 +13,7 @@ use std::{
 pub const SECURITY_PROFILE_SCHEMA_VERSION: u32 = 1;
 pub const HTTP_SECURITY_CORPUS_SCHEMA_VERSION: u32 = 1;
 pub const QUALIFICATION_EXPANSION_POLICY: &str = "eggbench.security-profile-expansion.v1";
+pub const QUALIFICATION_EXPANSION_POLICY_V2: &str = "eggbench.security-profile-expansion.v2";
 pub const CONTENT_TREE_MAX_FILES: usize = 1024;
 pub const CONTENT_TREE_MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 pub const CONTENT_TREE_MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
@@ -39,6 +40,9 @@ pub struct QualificationScenarioRef {
     /// Explicit baseline bundle path; absent means absolute-only comparison.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline_bundle: Option<String>,
+    /// Optional frozen ordinary workload driver (profile schema v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_driver: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +297,9 @@ pub struct ExpandedScenarioV1 {
     pub source_plan_sha256: String,
     pub source_plan_schema: u32,
     pub source_plan_path_context: String,
+    /// Frozen workload driver selection, if explicitly declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_driver: Option<String>,
     /// Frozen explicit baseline identity, resolved before candidate execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline_identity: Option<crate::BundleIdentity>,
@@ -326,6 +333,9 @@ pub struct SecurityQualificationReceiptV1 {
 pub struct QualificationScenarioRecordV1 {
     pub id: String,
     pub source_plan_sha256: String,
+    /// Driver selection frozen by expansion and used for this scenario.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_driver: Option<String>,
     pub status: QualificationScenarioStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub candidate_bundle_path: Option<String>,
@@ -428,6 +438,7 @@ mod suite_policy_tests {
         let record = |status, perf, correctness, verdict| R {
             id: "case".into(),
             source_plan_sha256: "a".repeat(64),
+            workload_driver: None,
             status,
             candidate_bundle_path: None,
             candidate_bundle_identity: None,
@@ -523,7 +534,7 @@ impl SecurityQualificationProfileV1 {
     /// Returns an error when any profile field violates the v1 contract.
     #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), QualificationInputError> {
-        if self.schema_version != 1 {
+        if !matches!(self.schema_version, 1 | 2) {
             return Err(QualificationInputError::Invalid(
                 "unsupported profile schema".into(),
             ));
@@ -540,6 +551,16 @@ impl SecurityQualificationProfileV1 {
         for s in &self.scenarios {
             validate_name(&s.id)?;
             validate_relative(&s.plan)?;
+            if self.schema_version == 1 && s.workload_driver.is_some() {
+                return Err(QualificationInputError::Invalid(
+                    "workload_driver requires profile schema version 2".into(),
+                ));
+            }
+            if let Some(driver) = &s.workload_driver {
+                validate_name(driver).map_err(|_| {
+                    QualificationInputError::Invalid("invalid workload driver name".into())
+                })?;
+            }
             if !ids.insert(&s.id) {
                 return Err(QualificationInputError::Invalid(
                     "duplicate scenario ID".into(),
@@ -856,6 +877,7 @@ pub fn expand_qualification_profile(
             source_plan_sha256: digest,
             source_plan_schema: parsed.schema_version.0,
             source_plan_path_context: s.plan.clone(),
+            workload_driver: s.workload_driver.clone(),
             baseline_identity: if let Some(path) = &s.baseline_bundle {
                 validate_relative(path)?;
                 let baseline = canonical_confined_path(&root, path)?;
@@ -871,7 +893,12 @@ pub fn expand_qualification_profile(
     }
     Ok(QualificationExpansionV1 {
         schema_version: 1,
-        expansion_policy: QUALIFICATION_EXPANSION_POLICY.into(),
+        expansion_policy: if profile.schema_version == 1 {
+            QUALIFICATION_EXPANSION_POLICY
+        } else {
+            QUALIFICATION_EXPANSION_POLICY_V2
+        }
+        .into(),
         profile_id: profile.id,
         profile_sha256: format!("{:x}", Sha256::digest(&bytes)),
         corpus_identity: corpus,
@@ -1072,6 +1099,27 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn profile_v1_shape_is_unchanged_and_v2_freezes_valid_driver_names() {
+        let v1 = r#"{"schema_version":1,"id":"profile","owner":"owner","scenarios":[{"id":"case","plan":"case.json"}],"corpus":{"path":"corpus.json"},"target_config":{"path":"target.json"}}"#;
+        let parsed = SecurityQualificationProfileV1::from_json(v1).unwrap();
+        let encoded = serde_json::to_value(parsed).unwrap();
+        assert!(encoded["scenarios"][0].get("workload_driver").is_none());
+        let v2 = v1
+            .replace("\"schema_version\":1", "\"schema_version\":2")
+            .replace(
+                "\"plan\":\"case.json\"",
+                "\"plan\":\"case.json\",\"workload_driver\":\"eggfetch-http\"",
+            );
+        let parsed = SecurityQualificationProfileV1::from_json(&v2).unwrap();
+        assert_eq!(
+            parsed.scenarios[0].workload_driver.as_deref(),
+            Some("eggfetch-http")
+        );
+        let invalid = v2.replace("eggfetch-http", "not a driver");
+        assert!(SecurityQualificationProfileV1::from_json(&invalid).is_err());
+    }
+
+    #[test]
     fn content_identity_is_order_independent_and_content_sensitive() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("tree/z")).unwrap();
@@ -1204,6 +1252,7 @@ mod tests {
                 id: "baseline".into(),
                 plan: "plan.json".into(),
                 baseline_bundle: None,
+                workload_driver: None,
             }],
             corpus: ContentInputRef {
                 path: "corpus.json".into(),

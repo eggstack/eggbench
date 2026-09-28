@@ -59,8 +59,15 @@ impl RuntimeBindings {
         if key.chars().any(|c| c.is_whitespace() || c == '/') {
             return Err("binding key is not well-formed".to_owned());
         }
-        if value.chars().any(char::is_control) {
+        if value.len() > 4096 || value.chars().any(char::is_control) {
             return Err("binding value is not well-formed".to_owned());
+        }
+        if self
+            .services
+            .get(service)
+            .is_some_and(|bindings| bindings.len() >= 64 && !bindings.contains_key(key))
+        {
+            return Err("service runtime binding count exceeds limit".to_owned());
         }
         self.services
             .entry(service.to_owned())
@@ -247,7 +254,7 @@ pub struct ServiceTopologyEntry {
 
 /// Schema version of the [`RuntimeTopology`] evidence artifact.
 pub const RUNTIME_TOPOLOGY_SCHEMA_VERSION: eggbench_core::SchemaVersion =
-    eggbench_core::SchemaVersion(1);
+    eggbench_core::SchemaVersion(2);
 
 /// Versioned runner-owned runtime-topology evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,4 +264,27 @@ pub struct RuntimeTopology {
     pub schema_version: eggbench_core::SchemaVersion,
     /// One entry per started or external service, in spawn order.
     pub services: Vec<ServiceTopologyEntry>,
+    /// Auditable, payload-free records of bindings consumed by commands.
+    #[serde(default)]
+    pub binding_consumptions: Vec<BindingConsumption>,
+}
+
+/// Payload-free evidence for one dependency binding destination.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingConsumption {
+    /// Command consuming the value.
+    pub consumer: String,
+    /// Destination kind (`argv` or `environment`).
+    pub destination_kind: String,
+    /// Argument index or environment variable name.
+    pub destination: String,
+    /// Producing service.
+    pub source_service: String,
+    /// Published binding key.
+    pub source_key: String,
+    /// SHA-256 of the resolved value.
+    pub value_sha256: String,
+    /// Whether that exact value is available through public topology bindings.
+    pub value_in_public_topology: bool,
 }
