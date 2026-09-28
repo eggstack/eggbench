@@ -15,6 +15,7 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 
 const PERF_SCENARIOS: [&str; 8] = [
     "perf-small-c1",
@@ -26,6 +27,18 @@ const PERF_SCENARIOS: [&str; 8] = [
     "control-small",
     "control-large",
 ];
+
+// These qualification profiles intentionally create several concurrent local
+// HTTP processes and run hundreds of requests. Running the scenarios from
+// this one integration-test binary in parallel makes each test perturb the
+// others' same-source measurements (most visibly on hosted macOS).
+static QUALIFICATION_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn qualification_test_lock() -> MutexGuard<'static, ()> {
+    QUALIFICATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_eggbench"))
@@ -185,6 +198,7 @@ fn expanded_corpus_digest(workspace: &Path) -> String {
 
 #[test]
 fn smoke_profile_passes_with_absolute_gates() {
+    let _lock = qualification_test_lock();
     if !require_tool("python3") {
         return;
     }
@@ -244,6 +258,7 @@ fn smoke_profile_passes_with_absolute_gates() {
 
 #[test]
 fn perf_same_source_pair_never_fails() {
+    let _lock = qualification_test_lock();
     if !require_tool("python3") {
         return;
     }
@@ -300,6 +315,7 @@ fn perf_same_source_pair_never_fails() {
 
 #[test]
 fn correctness_only_regression_fails_suite_despite_perf_pass() {
+    let _lock = qualification_test_lock();
     if !require_tool("python3") {
         return;
     }
@@ -350,6 +366,7 @@ fn correctness_only_regression_fails_suite_despite_perf_pass() {
 
 #[test]
 fn performance_only_regression_fails_suite_despite_correctness_pass() {
+    let _lock = qualification_test_lock();
     if !require_tool("python3") {
         return;
     }
@@ -402,6 +419,7 @@ fn performance_only_regression_fails_suite_despite_correctness_pass() {
 
 #[test]
 fn workload_drift_compares_as_incomparable() {
+    let _lock = qualification_test_lock();
     if !require_tool("python3") {
         return;
     }
@@ -451,6 +469,7 @@ fn workload_drift_compares_as_incomparable() {
 
 #[test]
 fn external_oracle_procedure_observes_proxy() {
+    let _lock = qualification_test_lock();
     if !require_tool("python3") {
         return;
     }
