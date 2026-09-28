@@ -202,6 +202,75 @@ async fn unknown_probe_fails_before_spawn() {
 }
 
 #[tokio::test]
+async fn tcp_loopback_probe_waits_for_port_then_succeeds() {
+    // M002 post-closure corrective C001 regression. The runner used to call
+    // the readiness probe exactly once; a slow-binding managed command
+    // service could therefore bypass the probe entirely. The C001 fix
+    // retries the probe on failure until success or timeout, so a
+    // service that takes a noticeable fraction of the readiness budget
+    // to bind the loopback port now declares ready correctly.
+    let root = temp_root();
+    let _bind_log = root.path().join("bind-path.txt");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("reserve free port")
+        .local_addr()
+        .expect("listener address")
+        .port();
+    let port_str = port.to_string();
+    let delay_ms_str = "400".to_owned();
+    let hold_ms_str = "30000".to_owned();
+    let mut resolved = base_resolved();
+    let mut service = managed(
+        "delayed-bind",
+        &[
+            "bind-after-sleep",
+            "/dev/null",
+            &delay_ms_str,
+            &port_str,
+            &hold_ms_str,
+        ],
+        &[],
+        4096,
+    );
+    service.http_url = Some(format!("http://127.0.0.1:{port}/"));
+    service.readiness = Some(Readiness::Probe {
+        probe: name("tcp-loopback"),
+        timeout_ms: delay_ms(2000),
+    });
+    resolved.topology = vec![service];
+    let mut session = LocalSession::prepare(&resolved, options(root.path())).unwrap();
+    let outcome = session.run(&CancellationToken::new()).await.unwrap();
+    assert_eq!(outcome.started, vec!["delayed-bind".to_owned()]);
+    assert!(outcome.cleanup.is_empty());
+    assert!(!session.is_running());
+}
+
+#[tokio::test]
+async fn tcp_loopback_probe_rejects_non_loopback_binding() {
+    // The probe only accepts loopback IPv4 bindings; an external or
+    // non-IPv4 host is rejected explicitly without any network I/O.
+    let root = temp_root();
+    let mut resolved = base_resolved();
+    let mut service = managed("subject", &["sleep", "30000"], &[], 4096);
+    service.http_url = Some("http://example.com:80/".to_owned());
+    service.readiness = Some(Readiness::Probe {
+        probe: name("tcp-loopback"),
+        timeout_ms: delay_ms(150),
+    });
+    resolved.topology = vec![service];
+    let mut session = LocalSession::prepare(&resolved, options(root.path())).unwrap();
+    let error = session
+        .startup(&CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, RunnerError::ReadinessTimeout { .. }),
+        "expected readiness timeout, got {error:?}"
+    );
+    assert!(!session.is_running());
+}
+
+#[tokio::test]
 async fn spawn_failure_before_readiness() {
     let root = temp_root();
     let mut resolved = base_resolved();

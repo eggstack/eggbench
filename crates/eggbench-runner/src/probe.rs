@@ -9,11 +9,14 @@ use eggbench_core::Name;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use std::pin::Pin;
 use std::sync::Arc;
 
 /// Name of the deterministic built-in liveness probe.
 pub const PROCESS_ALIVE_PROBE: &str = "process-alive";
+/// Name of the deterministic built-in TCP-loopback readiness probe.
+pub const TCP_LOOPBACK_PROBE: &str = "tcp-loopback";
 /// Name of the built-in fake probe that always reports ready.
 pub const FAKE_OK_PROBE: &str = "fake-ok";
 /// Name of the built-in fake probe that always reports failure.
@@ -30,6 +33,10 @@ pub struct ProbeContext {
     pub pid: Option<u32>,
     /// Whether the observed process is currently alive.
     pub alive: bool,
+    /// Static non-secret `http_url` binding from the service declaration,
+    /// when the service exposes a known loopback endpoint. Used by the
+    /// `tcp-loopback` probe; absent otherwise.
+    pub http_url: Option<String>,
 }
 
 /// Readiness probe failure detail without secret values.
@@ -65,6 +72,7 @@ impl ProbeRegistry {
     pub fn with_builtins() -> Self {
         let mut registry = Self::default();
         registry.register(PROCESS_ALIVE_PROBE, ProcessAliveProbe);
+        registry.register(TCP_LOOPBACK_PROBE, TcpLoopbackProbe);
         registry.register(FAKE_OK_PROBE, FakeOkProbe);
         registry.register(FAKE_FAIL_PROBE, FakeFailProbe);
         registry.register(FAKE_NEVER_PROBE, FakeNeverProbe);
@@ -100,6 +108,98 @@ impl ReadinessProbe for ProcessAliveProbe {
             }
         })
     }
+}
+
+/// Loopback TCP-connect readiness probe.
+///
+/// Verifies that a managed service exposing a static `http_url` binding has
+/// actually accepted a TCP connection on the declared port. Replaces the
+/// fixed-delay readiness check for managed command subjects whose bind time
+/// varies across platforms (macOS Python startup, Apple Silicon cold cache,
+/// etc.); the runner no longer depends on a guessed startup delay.
+///
+/// Only loopback IPv4 bindings are accepted; non-loopback or non-HTTP
+/// bindings are rejected explicitly without any network I/O.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TcpLoopbackProbe;
+
+impl ReadinessProbe for TcpLoopbackProbe {
+    fn check<'a>(&'a self, ctx: &'a ProbeContext) -> ProbeFuture<'a> {
+        Box::pin(async move {
+            let url = ctx.http_url.as_deref().ok_or_else(|| {
+                ProbeFailure(format!(
+                    "service {} has no http_url binding for tcp-loopback probe",
+                    ctx.service
+                ))
+            })?;
+            let target = parse_loopback_http_url(url).map_err(|error| {
+                ProbeFailure(format!(
+                    "service {} http_url is not a loopback http binding: {error}",
+                    ctx.service
+                ))
+            })?;
+            let stream = tokio::task::spawn_blocking(move || {
+                std::net::TcpStream::connect((target.host, target.port))
+            })
+            .await
+            .map_err(|error| ProbeFailure(format!("tcp-loopback probe task panicked: {error}")))?
+            .map_err(|error| {
+                ProbeFailure(format!(
+                    "tcp-loopback connect to {}:{} failed: {error}",
+                    target.host, target.port
+                ))
+            })?;
+            drop(stream);
+            Ok(())
+        })
+    }
+}
+
+/// Parsed host/port from a loopback `http://` URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopbackHttpTarget {
+    host: Ipv4Addr,
+    port: u16,
+}
+
+/// Parse a loopback `http://host:port[/path]` URL into a [`LoopbackHttpTarget`].
+///
+/// The runner confines this probe to loopback IPv4 because that is the only
+/// scope the runner ever issues subject bindings for; non-loopback bindings
+/// are rejected explicitly so a future schema change cannot silently broaden
+/// the probe's network reach.
+fn parse_loopback_http_url(url: &str) -> Result<LoopbackHttpTarget, String> {
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| "binding must use http:// scheme".to_owned())?;
+    let authority_end = rest
+        .find(['/', '?', '#'])
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return Err("binding has empty authority".to_owned());
+    }
+    if authority.contains('@') {
+        return Err("binding must not contain credentials".to_owned());
+    }
+    let Some((host_str, port_str)) = authority.rsplit_once(':') else {
+        return Err("binding authority must include an explicit port".to_owned());
+    };
+    let host: Ipv4Addr = host_str
+        .parse()
+        .map_err(|_| format!("binding host {host_str:?} is not an IPv4 literal"))?;
+    if !host.is_loopback() {
+        return Err(format!(
+            "binding host {host:?} is not loopback; tcp-loopback probe only accepts loopback"
+        ));
+    }
+    let port: u16 = port_str
+        .parse()
+        .map_err(|_| format!("binding port {port_str:?} is not u16"))?;
+    if port == 0 {
+        return Err("binding port 0 is reserved".to_owned());
+    }
+    Ok(LoopbackHttpTarget { host, port })
 }
 
 /// Fake probe that always reports ready; for deterministic tests.

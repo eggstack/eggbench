@@ -2,15 +2,16 @@
 //!
 //! Invoked through `CARGO_BIN_EXE_eggbench-child-fixture` with one mode:
 //! `exit`, `sleep`, `exit-after`, `has-env`, `emit-stdout`, `emit-stderr`, `emit-both`,
-//! `term-exit`, `term-ignore`, or `descendant`. All modes are deterministic
-//! and argv-driven; the fixture never reads secret values.
+//! `term-exit`, `term-ignore`, `descendant`, or `bind-after-sleep`. All modes
+//! are deterministic and argv-driven; the fixture never reads secret values.
 
 use std::io::Write;
+use std::net::TcpListener;
 use std::time::Duration;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: eggbench-child-fixture <exit|sleep|exit-after|has-env|emit-stdout|emit-stderr|emit-both|emit-sleep|term-exit|term-ignore|descendant> [args]"
+        "usage: eggbench-child-fixture <exit|sleep|exit-after|has-env|emit-stdout|emit-stderr|emit-both|emit-sleep|term-exit|term-ignore|descendant|bind-after-sleep> [args]"
     );
     std::process::exit(2);
 }
@@ -56,6 +57,7 @@ fn emit(stream: &str, total: u64) {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     match arg(&args, 1) {
@@ -149,6 +151,34 @@ async fn main() {
             let grandchild = child.id().unwrap_or_else(|| usage());
             std::fs::write(&pidfile, grandchild.to_string()).unwrap_or_else(|_| usage());
             let _ = child.wait().await;
+        }
+        "bind-after-sleep" => {
+            // M002 post-closure corrective C001 regression helper: sleep
+            // for the requested delay, then write the file written in
+            // `path` (no port yet because we have not bound), then bind
+            // a loopback listener to the requested port, write the bind
+            // notification to `path` so the test can observe timing, and
+            // accept connections until the parent terminates the process.
+            // Args: path-file delay-ms port hold-ms
+            let path = arg(&args, 2).to_owned();
+            let delay_ms = parse_u64(arg(&args, 3));
+            let port = parse_u64(arg(&args, 4));
+            let hold_ms = parse_u64(arg(&args, 5));
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            std::fs::write(&path, format!("bound {port}")).unwrap_or_else(|_| usage());
+            let listener =
+                TcpListener::bind(("127.0.0.1", u16::try_from(port).unwrap_or_else(|_| usage())))
+                    .unwrap_or_else(|_| usage());
+            std::fs::write(&path, format!("ready {port}")).unwrap_or_else(|_| usage());
+            // Hold the listener open for hold-ms; the test will normally
+            // terminate us via the runner's process-group cleanup before
+            // then, but the bound timeout guarantees the fixture exits
+            // cleanly even if the test mishandles cleanup.
+            listener.set_nonblocking(true).unwrap_or_else(|_| usage());
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(hold_ms);
+            while tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
         _ => usage(),
     }

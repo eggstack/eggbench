@@ -124,9 +124,18 @@ def main() -> int:
         "(M002b performance-only regression proof). Never changes WAF "
         "semantics: block/pass decisions are identical with any delay.",
     )
+    parser.add_argument(
+        "--startup-delay-ms",
+        type=float,
+        default=0.0,
+        help="Qualification-only delay injected before the server binds, "
+        "exercising the runner's TCP-loopback readiness probe (C001 regression).",
+    )
     args = parser.parse_args()
     Handler.delay_ms = args.delay_ms
     Handler.port = args.port
+    if args.startup_delay_ms > 0:
+        time.sleep(args.startup_delay_ms / 1000.0)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     sys.stderr.write("fake-synvoid listening on 127.0.0.1:%d\n" % args.port)
     try:

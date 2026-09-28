@@ -258,6 +258,57 @@ fn positive_run_passes_and_leaves_no_subject_behind() {
 }
 
 #[test]
+fn slow_synvoid_startup_still_passes() {
+    // M002 post-closure corrective C001 (macOS hosted portability restoration)
+    // regression. Before C001, the `synvoid` managed command service used a
+    // 500 ms `delay` readiness check; that was shorter than the actual
+    // Python `ThreadingHTTPServer` bind time on slow runners (Apple Silicon
+    // Python 3 cold caches, etc.), so the workload and HTTP corpus checks
+    // ran before the listen socket was bound and reported transport failures
+    // as `Invalid`. C001 moves the fixture to the `tcp-loopback` readiness
+    // probe (bounded retry until the loopback port accepts a connection).
+    // This test simulates the slow-bind path by injecting a 2 s startup
+    // delay into `fake_synvoid.py` and asserts the suite still passes,
+    // guarding against future regressions of that exact failure mode.
+    if !require_python3() {
+        return;
+    }
+    let workspace = copy_workspace();
+    let root = workspace.path();
+    let port = free_port();
+    patch_subject_port(root, port);
+    let plan_path = root.join("scenarios/waf-correctness.json");
+    let mut plan = read_json(&plan_path);
+    let argv = plan["services"][1]["kind"]["argv"]
+        .as_array_mut()
+        .expect("service argv");
+    argv.push("--startup-delay-ms".into());
+    argv.push("2000".into());
+    write_json(&plan_path, &plan);
+
+    let run = qualify(
+        root,
+        &[
+            "qualify",
+            "run",
+            "profile.json",
+            "--output",
+            "suite",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let result = receipt(&root.join("suite"));
+    assert_eq!(result["aggregate_verdict"], "pass");
+    assert_eq!(result["execution_complete"], true);
+}
+
+#[test]
 fn mutated_expectation_yields_qualification_fail() {
     if !require_python3() {
         return;

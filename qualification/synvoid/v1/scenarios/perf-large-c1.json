@@ -48,8 +48,9 @@
       "config": {},
       "http_url": "http://127.0.0.1:18080/bench/large",
       "readiness": {
-        "kind": "delay",
-        "after_ms": 500
+        "kind": "probe",
+        "probe": "tcp-loopback",
+        "timeout_ms": 20000
       },
       "shutdown": {
         "grace_ms": 3000,

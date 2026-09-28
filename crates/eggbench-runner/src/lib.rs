@@ -71,7 +71,7 @@ pub use platform::{
 pub use probe::{
     FAKE_FAIL_PROBE, FAKE_NEVER_PROBE, FAKE_OK_PROBE, FakeFailProbe, FakeNeverProbe, FakeOkProbe,
     PROCESS_ALIVE_PROBE, ProbeContext, ProbeFailure, ProbeRegistry, ProcessAliveProbe,
-    ReadinessProbe,
+    ReadinessProbe, TCP_LOOPBACK_PROBE, TcpLoopbackProbe,
 };
 pub use secret::{MapSecretProvider, SecretProvider};
 pub use service::{

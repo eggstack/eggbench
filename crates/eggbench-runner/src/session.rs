@@ -825,30 +825,61 @@ impl LocalSession {
                         probe: probe.as_str().to_owned(),
                     }
                 })?;
-                let ctx = ProbeContext {
-                    service: spec.identity.clone(),
-                    pid: Some(pid),
-                    alive: self.options.platform.is_alive(pid),
-                };
                 let timeout = Duration::from_millis(timeout_ms.get());
-                tokio::select! {
-                    () = cancel.cancelled() => {
-                        Err(RunnerError::Cancelled { cleanup: Vec::new() })
+                let deadline = tokio::time::Instant::now() + timeout;
+                // Per-probe-attempt ceiling so a hung probe (e.g.
+                // `fake-never` or a stalled TCP connect) cannot survive a
+                // full backoff cycle. The probe budget is bounded by
+                // `min(attempt_cap, remaining)`.
+                let attempt_cap = Duration::from_millis(250);
+                loop {
+                    let ctx = ProbeContext {
+                        service: spec.identity.clone(),
+                        pid: Some(pid),
+                        alive: self.options.platform.is_alive(pid),
+                        http_url: spec.http_url.clone(),
+                    };
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        return Err(RunnerError::ReadinessTimeout {
+                            service: spec.identity.clone(),
+                            timeout_ms: timeout_ms.get(),
+                            cleanup: Vec::new(),
+                        });
                     }
-                    result = tokio::time::timeout(timeout, probe_impl.check(&ctx)) => {
-                        match result {
-                            Err(_) => Err(RunnerError::ReadinessTimeout {
-                                service: spec.identity.clone(),
-                                timeout_ms: timeout_ms.get(),
-                                cleanup: Vec::new(),
-                            }),
-                            Ok(Err(failure)) => Err(RunnerError::ReadinessFailed {
-                                service: spec.identity.clone(),
-                                message: failure.to_string(),
-                                cleanup: Vec::new(),
-                            }),
-                            Ok(Ok(())) => self.check_alive(spec, pid),
+                    let attempt_budget = (deadline - now).min(attempt_cap);
+                    let timed = tokio::time::timeout(attempt_budget, probe_impl.check(&ctx));
+                    tokio::select! {
+                        () = cancel.cancelled() => {
+                            return Err(RunnerError::Cancelled { cleanup: Vec::new() });
                         }
+                        result = timed => {
+                            if let Ok(Ok(())) = result {
+                                return self.check_alive(spec, pid);
+                            }
+                            // Otherwise probe reported not-ready or the
+                            // per-attempt timeout fired; retry until the
+                            // overall deadline.
+                        }
+                    }
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        return Err(RunnerError::ReadinessTimeout {
+                            service: spec.identity.clone(),
+                            timeout_ms: timeout_ms.get(),
+                            cleanup: Vec::new(),
+                        });
+                    }
+                    // Bounded backoff so a fast-fail probe (e.g. TCP RST)
+                    // does not waste CPU; cap at 250ms to keep tail latency
+                    // tight.
+                    let remaining = deadline - now;
+                    let backoff = remaining.min(attempt_cap);
+                    tokio::select! {
+                        () = cancel.cancelled() => {
+                            return Err(RunnerError::Cancelled { cleanup: Vec::new() });
+                        }
+                        () = tokio::time::sleep(backoff) => {}
                     }
                 }
             }
