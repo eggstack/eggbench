@@ -285,7 +285,9 @@ fn perf_same_source_pair_never_fails() {
     // (Live-host repeatability remains an M002 closure condition.)
     assert!(
         run.status.code() == Some(0) || run.status.code() == Some(7),
-        "stderr: {}",
+        "exit: {:?}\nstdout: {}\nstderr: {}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
     let result = receipt(&root.join("suite"));
