@@ -97,7 +97,7 @@ Historical post-M003 live-tool C001 stopped with evidence and successor C002 is 
 
 | Subsystem | Milestone | Status | Plan | Blocker |
 |---|---|---|---|---|
-| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | blocked | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 STOPPED with verification (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, SHA `b98973f`) — m002a green on hosted CI 36451730637 but m002b `perf_same_source_pair_never_fails` exposed as live-host repeatability issue; C002 needs exact-head hosted four-lane re-verification of C001 plus real `live-synvoid-linux` stages plus SynVoid owner asset-contract closure |
+| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | blocked (execution attempted; prerequisites fail — see status) | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 STOPPED with verification (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, SHA `b98973f`) — m002a green on hosted CI 36451730637 but m002b `perf_same_source_pair_never_fails` exposed as live-host repeatability issue; C002 execution at `b52e2a5` recorded BLOCKED in `plans/closure/security-qualification-m002-corrective/002-status.md` (contract absent at pinned SynVoid SHA `7f1b7945`; synthetic m002a 7/7 + same-source perf Pass locally; no production change); C002 needs exact-head hosted four-lane re-verification of C001 plus real `live-synvoid-linux` stages plus SynVoid owner asset-contract closure |
 
 External Oracles M003 netem remains separate.
 

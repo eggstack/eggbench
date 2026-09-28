@@ -58,6 +58,10 @@ This corrective closes two outstanding proof gaps:
    `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
    — blocked on C001 exact-head hosted re-verification, on the live-host
    repeatability gap C001 exposed, and on SynVoid asset-contract closure.
+   Execution attempted at `b52e2a5` and recorded BLOCKED in
+   `plans/closure/security-qualification-m002-corrective/002-status.md`
+   (all three hard prerequisites fail; synthetic m002a 7/7 + same-source
+   perf Pass locally; Stage B verified NOT-EXECUTED; no production change).
 
 ## Invariants
 
