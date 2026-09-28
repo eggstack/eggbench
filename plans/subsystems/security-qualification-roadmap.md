@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 ready, C002 blocked; M003 research/planning may proceed)
+Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 closed locally at `b98973f` / C002 blocked; M003 research/planning may proceed)
 
 Long-term references:
 
@@ -325,17 +325,27 @@ Trigger evidence:
 Corrective sequence:
 
 1. **C001 — macOS hosted portability restoration**  
-   `plans/implementation/security-qualification-m002-corrective/001-macos-hosted-portability-restoration.md` — **ready**.
+   `plans/implementation/security-qualification-m002-corrective/001-macos-hosted-portability-restoration.md`
+   → closure `plans/closure/security-qualification-m002-corrective/001-status.md`
+   — **closed locally** at implementation `b98973f`
+   (`fix(qualification): restore macOS hosted portability via tcp-loopback
+   readiness probe`). Replaced the runner's `delay`-based readiness check
+   for managed command subjects with a `tcp-loopback` probe that retries
+   the connect against the declared budget so the cold-cache Python
+   `ThreadingHTTPServer` bind time on Apple Silicon can no longer declare
+   the service ready before the listen socket exists. Exact-head hosted
+   four-lane re-verification on `b98973f` is the remaining acceptance
+   signal.
 2. **C002 — real SynVoid qualification and final M002 closure**  
-   `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md` — **blocked on C001 closure and SynVoid asset-contract closure**.
+   `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md` — **blocked on C001 exact-head hosted re-verification and SynVoid asset-contract closure**.
 
-In parallel, SynVoid's owner-side contract is now implementation-ready at:
+In parallel, SynVoid's owner-side contract is still required at:
 
 `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
 
-M002 becomes fully closed only after exact-head four-lane CI is green and
-`live-synvoid-linux` executes real owner-exported SynVoid stages rather than
-passing with those stages NOT-EXECUTED.
+M002 becomes fully closed only after the C001 four-lane hosted re-verification
+is green and `live-synvoid-linux` executes real owner-exported SynVoid
+stages rather than passing with those stages NOT-EXECUTED.
 
 M003 research/planning may proceed in parallel. M003 implementation must not
 treat M002 as fully qualified until C002 closes.
@@ -377,6 +387,6 @@ existing Eggbench export contract. The upstream plan therefore still owns
 fixture selection/mapping/config materialization; Eggbench does not duplicate
 those semantics.
 
-SynVoid owner-side implementation and Eggbench C001 may proceed in parallel. After both close, C002 owns the real Stage B/C proof, exact-head four-lane/live qualification, and terminal M002 closure. M003 is ready for research/planning with the deferred items (mixed malicious load, body-attack campaigns, connection
+SynVoid owner-side asset contract is still implementation-required and remains the active gating dependency for Eggbench C002. Eggbench C001 is closed locally at `b98973f` (closure `plans/closure/security-qualification-m002-corrective/001-status.md`); the exact-head four-lane hosted re-verification of C001 is the remaining acceptance signal and is expected on the next push. After both the C001 re-verification and the SynVoid owner-side closure land, C002 owns the real Stage B/C proof, exact-head four-lane/live qualification, and terminal M002 closure. M003 is ready for research/planning with the deferred items (mixed malicious load, body-attack campaigns, connection
 churn, Prometheus ingestion, per-scenario qualify drivers, binding
 interpolation, Gregg-gated resources) carried explicitly.

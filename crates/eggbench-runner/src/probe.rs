@@ -172,9 +172,7 @@ fn parse_loopback_http_url(url: &str) -> Result<LoopbackHttpTarget, String> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| "binding must use http:// scheme".to_owned())?;
-    let authority_end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     if authority.is_empty() {
         return Err("binding has empty authority".to_owned());

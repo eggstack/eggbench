@@ -1,6 +1,6 @@
 # Security Qualification M002 Post-Conditional-Closure Corrective Addendum
 
-Status: active
+Status: active (C001 closed locally at `b98973f`; C002 still blocked on closed SynVoid asset contract + real `live-synvoid-linux` execution)
 
 Baseline: `660ab472ebf214e1378da777b1f06412decc008a`
 
@@ -43,10 +43,14 @@ This corrective closes two outstanding proof gaps:
 
 1. **C001 — macOS hosted portability restoration**
    `plans/implementation/security-qualification-m002-corrective/001-macos-hosted-portability-restoration.md`
-   — ready.
+   → closure `plans/closure/security-qualification-m002-corrective/001-status.md`
+   — **closed locally** at implementation `b98973f`
+   (`fix(qualification): restore macOS hosted portability via tcp-loopback
+   readiness probe`); local workspace all-feature tests + MSRV green;
+   exact-head four-lane hosted re-verification pending the next push.
 2. **C002 — real SynVoid qualification and final M002 closure**
    `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
-   — blocked on C001 closure and SynVoid asset-contract closure.
+   — blocked on C001 hosted re-verification and SynVoid asset-contract closure.
 
 ## Invariants
 
