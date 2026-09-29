@@ -1,12 +1,23 @@
 # Security Qualification M003d — Eggsec Load Profiles, Live Qualification, and M003 Closure
 
-Status: Eggsec load adapter slice implemented at `739f382` (status record: `plans/closure/security-qualification/003d-status.md`); overall plan remains blocked on M003c terminal qualification and Security Qualification M002 C002 closure.
+Status: Eggsec load adapter slice implemented at `739f382` (status record: `plans/closure/security-qualification/003d-status.md`); **corrective required before further terminal work** because exact-head four-lane CI exposed adapter integration defects. The narrow corrective is READY at `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`. Overall M003d closure remains gated on M003c terminal qualification and Security Qualification M002 C002 closure.
 
 Research baselines:
 
-- `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`
-- current Eggsec main observed during planning: `eggstack/eggsec@7ebddbf1669ca1af18957eca27d09e90ed5c718e`
-- current SynVoid owner qualification contract: `dbowm91/synvoid@30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`
+- original Eggbench planning baseline:
+  `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`;
+- current corrective/reconciliation baseline:
+  `eggstack/eggbench@a96407017716b8ca7d18da8237a135b1a49af8cc`;
+- Eggsec baseline used for the adapter design:
+  `eggstack/eggsec@7ebddbf1669ca1af18957eca27d09e90ed5c718e`
+  (current Eggsec main was rechecked during reconciliation; no new upstream
+  requirement was identified for the CI repair);
+- closed SynVoid M002 asset-contract implementation:
+  `dbowm91/synvoid@ae045481752b8f750d6e6079b185c526a09c91d5`;
+- closed SynVoid M003 telemetry-v2 corrective implementation:
+  `dbowm91/synvoid@739e7ba6f02c5e3f83fe9ff5321b09213182b193`;
+- SynVoid current telemetry closeout head observed:
+  `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`.
 
 ## 1. Objective
 
@@ -24,15 +35,33 @@ The terminal M003 profile must demonstrate:
 
 Eggbench must remain a laboratory/orchestrator, not a scanner.
 
+## 1A. Post-slice corrective gate
+
+Hosted evidence after the adapter slice is stronger than the initial local
+verification record.
+
+On exact-head normal CI run `36607614262`:
+
+- Linux MSRV passed;
+- Linux stable and macOS stable failed the stale production runtime
+  workload/descriptor count assertion after `eggsec-load` was added;
+- Windows stable failed strict Clippy because Unix-only permission mutation
+  leaves `DirBuilder`/`OpenOptions` unnecessarily mutable on Windows.
+
+The adapter's strict-scope/load semantics are not being redesigned. Repair
+these integration/portability defects under
+`003d-corrective-eggsec-load-ci-portability-and-unblock.md`, obtain green
+four-lane + exact-head live evidence, and only then continue terminal M003d
+profile work.
+
+The same corrective is now the direct unblocker for M002 C002's remaining
+four-lane closure criterion.
+
 ## 2. M002 gate
 
 M003 terminal closure is not allowed until the post-M002 corrective C002 closes.
 
-The SynVoid owner asset contract that was absent when C002 was first attempted is now closed upstream, but C002 still owns:
-
-- real `live-synvoid-linux` execution;
-- final same-source/live-host repeatability adjudication;
-- terminal M002 evidence/roadmap reconciliation.
+The SynVoid owner asset contract that was absent when C002 was first attempted is closed upstream. C002's real `live-synvoid-linux` execution is now green on hosted run `36607614200`; its remaining terminal blocker is exact-head four-lane normal CI, currently red because of the M003d adapter defects assigned to the corrective above. After the corrective lands, C002 must revalidate exact-head hosted evidence and perform terminal roadmap/registry reconciliation.
 
 M003a-c substrate may land independently, but this plan must not claim M003 completion while M002 remains conditionally closed.
 
@@ -262,6 +291,18 @@ Stop and re-plan if:
 
 ## 14. Handoff
 
-Blocked until M003a-M003c and M002 C002 close.
+Immediate handoff order:
+
+1. execute `003d-corrective-eggsec-load-ci-portability-and-unblock.md`;
+2. use the resulting green exact-head four-lane/live evidence to close M002
+   C002 if no new C002-owned defect appears;
+3. close M003c on the now-available SynVoid v2 owner contract and real
+   Eggbench current-head telemetry trials;
+4. resume this plan's profile/baseline/live/negative-demonstration work;
+5. write the terminal M003 closure only after all acceptance criteria remain
+   satisfied on green hosted evidence.
+
+M003a-b are already closed. SynVoid telemetry v2 is already closed and is no
+longer an upstream blocker.
 
 No Eggsec upstream implementation plan is required for this initial milestone.
