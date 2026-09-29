@@ -36,6 +36,7 @@ use eggbench_runner::{
     DrainContext, FailureCategory, InvocationContext, WorkloadArtifact, WorkloadExecutor,
     WorkloadOutput,
 };
+use sha2::Digest as _;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -124,7 +125,6 @@ fn http_origin(binding: &str) -> Result<String, FailureCategory> {
 }
 
 fn digest_json<T: serde::Serialize>(value: &T) -> Result<String, FailureCategory> {
-    use sha2::Digest as _;
     let encoded = serde_json::to_vec(value).map_err(|_| FailureCategory::WorkloadFailed)?;
     Ok(format!("{:x}", sha2::Sha256::digest(encoded)))
 }
@@ -134,11 +134,12 @@ fn deterministic_shuffle(values: &mut [usize], state: &mut u64) {
         *state ^= *state << 13;
         *state ^= *state >> 7;
         *state ^= *state << 17;
-        let other = (*state as usize) % (index + 1);
+        let other = usize::try_from(*state).unwrap_or(usize::MAX) % (index + 1);
         values.swap(index, other);
     }
 }
 
+#[allow(clippy::too_many_arguments)] // These are the complete immutable schedule and timing inputs.
 async fn run_http_corpus_schedule(
     pooled_client: &eggfetch_core::Client,
     origin: &str,
@@ -207,9 +208,8 @@ async fn issue_http_corpus_case(shared: &HttpCorpusShared, case_index: usize) ->
         transport_error: Some(error),
         expected_match: None,
     };
-    let method = match eggfetch_core::Method::from_bytes(case.request.method.as_bytes()) {
-        Ok(method) => method,
-        Err(_) => return failed(CATEGORY_TRANSPORT),
+    let Ok(method) = eggfetch_core::Method::from_bytes(case.request.method.as_bytes()) else {
+        return failed(CATEGORY_TRANSPORT);
     };
     let url = format!("{}{}", shared.origin, case.request.path_and_query);
     let client = match shared.connection_policy {
@@ -281,6 +281,7 @@ async fn issue_http_corpus_case(shared: &HttpCorpusShared, case_index: usize) ->
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // Builds the bounded, payload-free method and metric evidence together.
 fn build_http_corpus_output(
     cases: &[HttpSecurityCaseV1],
     default_headers: &[(String, String)],
@@ -672,7 +673,6 @@ impl EggfetchWorkload {
         let mut schedule_rng = seed ^ 0x9e37_79b9_7f4a_7c15;
         deterministic_shuffle(&mut selected, &mut schedule_rng);
         let mut order_hasher = sha2::Sha256::new();
-        use sha2::Digest as _;
         for &index in &selected {
             order_hasher.update(corpus.cases[index].id.as_bytes());
             order_hasher.update([0]);
@@ -1447,6 +1447,7 @@ mod http_corpus_load_tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::float_cmp)] // Rates are exact integer ratios in this fixture.
     async fn fresh_per_request_uses_distinct_connections_and_mismatch_is_separate() {
         let (outcomes, _, connections, requests, cancel) =
             run_case(HttpConnectionPolicy::FreshPerRequest, 200, 403).await;

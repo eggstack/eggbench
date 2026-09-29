@@ -317,6 +317,7 @@ fn oha_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverError
     Ok(args)
 }
 
+#[allow(clippy::too_many_lines)] // Validation, safe argument construction, and retained body lifetime stay together.
 fn oha_http_corpus_argv(
     workload: &Workload,
     target_url: &str,
