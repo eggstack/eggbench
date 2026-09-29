@@ -206,6 +206,8 @@ threshold, or schema weakened. `cargo fmt --check`, `cargo check`,
    files under `crates/*/src`, so neither failure is C002's. Still,
    criterion 11 requires green — it is now owned by the M003d repair,
    not by further C002 work (C002 §10 forbids production changes).
+   The registered repair authority is
+   `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
    Note the macOS lane failed before reaching the `synvoid_m002b`
    synthetic test, so the known same-source risk lane produced no new
    signal either way;
@@ -214,7 +216,9 @@ threshold, or schema weakened. `cargo fmt --check`, `cargo check`,
    success; `live-synvoid-linux` executed every real stage
    (pass=25 stopped=0 notexec=5; the 5 NOT-EXECUTED are the optional
    oha/h2load oracles absent from the runner plus Gregg D5);
-3. reconcile roadmap/registry from conditional to closed (criterion 14)
-   only after criterion 11 turns green on a later SHA — that
-   reconciliation must then re-verify C002's evidence still holds
-   exact-head, not assume it.
+3. after the M003d corrective lands, require green four-lane normal CI on
+   the corrective source and re-run/revalidate the live qualification on the
+   same exact source (or a documentation-only descendant) so C002 evidence is
+   exact-head rather than inherited by assumption;
+4. reconcile roadmap/registry from conditional to closed (criterion 14) only
+   after those current-head hosted gates are green.
