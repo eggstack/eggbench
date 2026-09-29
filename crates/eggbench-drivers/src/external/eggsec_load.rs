@@ -250,33 +250,49 @@ impl Drop for ScopeFile {
     }
 }
 
+#[cfg(unix)]
+fn scope_dir_builder() -> std::fs::DirBuilder {
+    use std::os::unix::fs::DirBuilderExt as _;
+    let mut builder = std::fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder
+}
+
+#[cfg(not(unix))]
+fn scope_dir_builder() -> std::fs::DirBuilder {
+    std::fs::DirBuilder::new()
+}
+
+#[cfg(unix)]
+fn scope_file_options() -> std::fs::OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    options.mode(0o600);
+    options
+}
+
+#[cfg(not(unix))]
+fn scope_file_options() -> std::fs::OpenOptions {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    options
+}
+
 fn create_scope_file(digest: &str, bytes: &[u8]) -> Result<ScopeFile, std::io::Error> {
     use std::io::Write as _;
     let root = std::env::temp_dir();
     loop {
         let nonce = SCOPE_NONCE.fetch_add(1, Ordering::Relaxed);
         let directory = root.join(format!("eggbench-load-{}-{nonce}", std::process::id()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt as _;
-            builder.mode(0o700);
-        }
-        match builder.create(&directory) {
+        match scope_dir_builder().create(&directory) {
             Ok(()) => {
                 let path = directory.join(format!("{digest}.toml"));
-                let mut options = std::fs::OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt as _;
-                    options.mode(0o600);
-                }
                 let scope_file = ScopeFile {
                     path: path.clone(),
                     directory,
                 };
-                let mut file = options.open(&path)?;
+                let mut file = scope_file_options().open(&path)?;
                 file.write_all(bytes)?;
                 return Ok(scope_file);
             }
@@ -871,6 +887,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn scope_file_is_private_exclusive_and_removed_on_drop() {
+        let digest = "b".repeat(64);
+        let scope = create_scope_file(&digest, b"[[targets]]\n").expect("scope file created");
+        let path = scope.path.clone();
+        let directory = scope.directory.clone();
+        assert!(path.is_file());
+        assert_eq!(
+            path.file_name().unwrap(),
+            std::ffi::OsString::from(format!("{digest}.toml"))
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                directory.metadata().unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // The exclusive-create contract rejects a second writer.
+        assert_eq!(
+            scope_file_options()
+                .open(&path)
+                .expect_err("create_new refuses an existing scope file")
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        drop(scope);
+        assert!(!path.exists());
+        assert!(!directory.exists());
     }
 
     #[test]

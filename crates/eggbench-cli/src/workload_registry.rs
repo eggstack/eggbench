@@ -807,6 +807,64 @@ pub fn gregg_endpoint_config_error(plan: &eggbench_core::ExperimentPlan) -> Opti
 mod tests {
     use super::*;
 
+    /// Workload drivers the production catalog registers without any Cargo
+    /// feature. Adding a new unconditional workload driver must be declared
+    /// here so the production runtime inventory cannot drift silently.
+    const EXPECTED_UNCONDITIONAL_WORKLOADS: [&str; 5] = [
+        "eggsec-load",
+        "eggreplay-semantic",
+        "h2load",
+        "iperf3",
+        "oha",
+    ];
+
+    /// Non-workload production descriptors the catalog registers without any
+    /// Cargo feature. `eggprobe` is diagnostic and `eggsec-waf` is
+    /// correctness; neither appears in the workload inventory.
+    const EXPECTED_UNCONDITIONAL_NON_WORKLOADS: [&str; 2] = ["eggprobe", "eggsec-waf"];
+
+    /// The exact production driver set for the compiled feature matrix.
+    ///
+    /// Test-only and non-semantic: it is a hand-maintained expectation, not a
+    /// derivation of the catalog, so a registration change cannot validate
+    /// itself. Counts in the runtime tests are taken from this list's length
+    /// so the expected totals can never drift away from the expected names.
+    fn expected_production_driver_names() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = EXPECTED_UNCONDITIONAL_WORKLOADS
+            .iter()
+            .chain(EXPECTED_UNCONDITIONAL_NON_WORKLOADS.iter())
+            .copied()
+            .collect();
+        #[cfg(feature = "eggstack-http")]
+        names.extend(["eggbench-http-corpus", "eggfetch-http", "eggserve-origin"]);
+        #[cfg(feature = "eggstack-path")]
+        names.extend(["eggress-route", "eggchaos-stream"]);
+        #[cfg(feature = "gregg")]
+        names.push("gregg");
+        #[cfg(feature = "prometheus-http")]
+        names.push("prometheus-http");
+        names.sort_unstable();
+        names
+    }
+
+    /// The exact production workload driver set for the compiled feature
+    /// matrix. `eggfetch-http` is the only feature-gated workload driver and
+    /// remains the unique workload default.
+    fn expected_production_workload_names() -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = EXPECTED_UNCONDITIONAL_WORKLOADS.to_vec();
+        #[cfg(feature = "eggstack-http")]
+        names.push("eggfetch-http");
+        names.sort_unstable();
+        names
+    }
+
+    fn inventory_names(inventory: &[DriverInventoryEntry]) -> Vec<&str> {
+        inventory
+            .iter()
+            .map(|entry| entry.descriptor.name.as_str())
+            .collect()
+    }
+
     #[cfg(feature = "prometheus-http")]
     #[test]
     fn prometheus_mapping_requires_pinned_digest_and_rejects_symlink_escape() {
@@ -852,35 +910,17 @@ mod tests {
     #[test]
     fn production_registry_contains_no_fake_driver() {
         let registry = WorkloadRegistry::production();
-        // The external oracles plus EggReplay register unconditionally; only
-        // the native Eggfetch driver is feature-gated (and remains the unique
-        // default).
-        let mut expected = vec![
-            "eggsec-load",
-            "eggreplay-semantic",
-            "h2load",
-            "iperf3",
-            "oha",
-        ];
-        #[cfg(feature = "eggstack-http")]
-        expected.push("eggfetch-http");
+        // The external oracles plus EggReplay and Eggsec load register
+        // unconditionally; only the native Eggfetch driver is feature-gated
+        // (and remains the unique default).
+        let expected = expected_production_workload_names();
         let inventory = registry.inventory();
-        let mut names: Vec<&str> = inventory
-            .iter()
-            .map(|entry| entry.descriptor.name.as_str())
-            .collect();
-        names.sort_unstable();
-        expected.sort_unstable();
+        let names = inventory_names(&inventory);
         assert_eq!(names, expected);
         #[cfg(feature = "eggstack-http")]
         assert_eq!(registry.default_workload().unwrap().name, "eggfetch-http");
         assert!(registry.has_workload_driver());
-        assert!(
-            !registry
-                .inventory()
-                .iter()
-                .any(|entry| entry.descriptor.name == "fake-load")
-        );
+        assert!(!names.contains(&"fake-load"));
     }
 
     #[test]
@@ -910,27 +950,34 @@ mod tests {
     #[test]
     fn production_runtime_reports_no_driver() {
         let runtime = ProductionRuntime::new();
-        // Workload inventory always carries the external drivers (three
-        // oracles plus EggReplay); the native descriptors join with
-        // eggstack-http (+gregg). The catalog additionally carries the
-        // Eggprobe diagnostic descriptor, which never appears in the
-        // workload inventory.
-        let expected_workload: usize = 4 + usize::from(cfg!(feature = "eggstack-http"));
-        let expected_descriptors: usize = 6
-            + 3 * usize::from(cfg!(feature = "eggstack-http"))
-            + 2 * usize::from(cfg!(feature = "eggstack-path"))
-            + usize::from(cfg!(feature = "gregg"))
-            + usize::from(cfg!(feature = "prometheus-http"));
+        // The workload inventory carries every Workload-category catalog
+        // descriptor; the diagnostic/correctness/service/telemetry
+        // descriptors stay in the catalog view only. Both expectations are
+        // hand-maintained name lists, and the counts are derived from those
+        // lists so the totals can never silently drift from the names.
+        let expected_workloads = expected_production_workload_names();
+        let expected_descriptors = expected_production_driver_names();
         assert!(runtime.has_workload_driver());
-        assert_eq!(runtime.inventory().len(), expected_workload);
-        assert_eq!(runtime.driver_descriptors().len(), expected_descriptors);
+        assert_eq!(inventory_names(&runtime.inventory()), expected_workloads);
+        let descriptors = runtime.driver_descriptors();
+        assert_eq!(descriptors.len(), expected_descriptors.len());
+        let mut descriptor_names: Vec<&str> = descriptors
+            .iter()
+            .map(|descriptor| descriptor.name.as_str())
+            .collect();
+        descriptor_names.sort_unstable();
+        assert_eq!(descriptor_names, expected_descriptors);
+        assert!(
+            descriptor_names.contains(&"eggsec-load"),
+            "the Eggsec load descriptor must stay in the production catalog"
+        );
     }
 
     #[test]
     fn qualification_runtime_reports_fake_driver() {
         let runtime = QualificationRuntime::new();
         assert!(runtime.has_workload_driver());
-        assert_eq!(runtime.inventory().len(), 1);
+        assert_eq!(inventory_names(&runtime.inventory()), vec!["fake-load"]);
         assert_eq!(runtime.driver_descriptors().len(), 1);
     }
 
