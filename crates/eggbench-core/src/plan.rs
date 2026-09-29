@@ -3,8 +3,8 @@ use crate::{
     EXPERIMENT_PLAN_SCHEMA_VERSION_3, EXPERIMENT_PLAN_SCHEMA_VERSION_4,
     EXPERIMENT_PLAN_SCHEMA_VERSION_5, EXPERIMENT_PLAN_SCHEMA_VERSION_6,
     EXPERIMENT_PLAN_SCHEMA_VERSION_7, EXPERIMENT_PLAN_SCHEMA_VERSION_8,
-    EXPERIMENT_PLAN_SCHEMA_VERSION_9, Name, NetworkPathRequest, PositiveCount, RateMilliRps,
-    RouteMode, SchemaVersion, SecretRef,
+    EXPERIMENT_PLAN_SCHEMA_VERSION_9, EXPERIMENT_PLAN_SCHEMA_VERSION_10, Name, NetworkPathRequest,
+    PositiveCount, RateMilliRps, RouteMode, SchemaVersion, SecretRef,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -419,6 +419,43 @@ pub enum Workload {
         /// Relative workspace path to the immutable `.eggr` fixture directory.
         fixture: String,
     },
+    /// Finite, owner-authored HTTP corpus campaign (schema v10).
+    HttpCorpus {
+        /// Destination service publishing a runtime HTTP binding.
+        target: Name,
+        /// Workspace-relative immutable corpus path.
+        corpus_ref: String,
+        /// Aggregate corpus content digest.
+        corpus_sha256: String,
+        /// Exact finite case multiset to execute.
+        schedule: Vec<HttpCorpusScheduleEntry>,
+        /// Closed-loop workers.
+        concurrency: PositiveCount,
+        /// Physical connection behavior.
+        connection_policy: HttpConnectionPolicy,
+        /// Explicit neutral transport defaults applied to every request.
+        default_headers: Vec<(String, String)>,
+    },
+}
+
+/// One case and its exact positive request count in an HTTP-corpus schedule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCorpusScheduleEntry {
+    /// Owner-authored corpus case identifier.
+    pub case_id: String,
+    /// Number of times this case is issued per invocation.
+    pub count: PositiveCount,
+}
+
+/// HTTP physical connection behavior for a corpus workload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HttpConnectionPolicy {
+    /// Reuse the invocation's client connection pool.
+    Pooled,
+    /// Construct a new client for each request, forcing a fresh connection.
+    FreshPerRequest,
 }
 /// Explicit load model discriminator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -813,6 +850,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10
         {
             return Err(PlanError::UnsupportedVersion(self.schema_version.0));
         }
@@ -823,6 +861,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10
         {
             return invalid(
                 "unsupported_option",
@@ -835,6 +874,7 @@ impl ExperimentPlan {
         if self.http_corpus_checks.is_some()
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10
         {
             return invalid(
                 "unsupported_option",
@@ -853,6 +893,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10
         {
             return invalid(
                 "unsupported_option",
@@ -872,6 +913,7 @@ impl ExperimentPlan {
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_6
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
             && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+            && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10
         {
             return invalid(
                 "unsupported_option",
@@ -880,6 +922,20 @@ impl ExperimentPlan {
                     self.schema_version.0
                 ),
             );
+        }
+        if matches!(self.workload, Workload::HttpCorpus { .. }) {
+            if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10 {
+                return invalid(
+                    "unsupported_option",
+                    "http_corpus workload requires schema version 10",
+                );
+            }
+            if self.seed.is_none() {
+                return invalid(
+                    "missing_fault_seed",
+                    "http_corpus workload requires an explicit seed",
+                );
+            }
         }
         // M003a: SemanticReplay never composes with network_path; the
         // replay uses `--route direct` explicitly and diagnostics bypass the
@@ -1021,6 +1077,7 @@ impl ExperimentPlan {
                 if self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_7
                     && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_8
                     && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_9
+                    && self.schema_version != EXPERIMENT_PLAN_SCHEMA_VERSION_10
                 {
                     return invalid(
                         "unsupported_option",
@@ -1237,6 +1294,20 @@ impl ExperimentPlan {
                 }
             }
         }
+        if matches!(self.workload, Workload::HttpCorpus { .. })
+            && !self.metrics.iter().any(|metric| {
+                metric.name.as_str() == "expected_outcome_mismatch_rate"
+                    && metric.unit.as_str() == "ratio"
+                    && metric.intent == MetricIntent::Primary
+                    && matches!(metric.direction, MetricDirection::LowerIsBetter)
+                    && matches!(metric.gate, Some(Gate::Absolute { value }) if value == 0.0)
+            })
+        {
+            return invalid(
+                "missing_required_metric",
+                "http_corpus workload requires a primary absolute-zero expected_outcome_mismatch_rate gate",
+            );
+        }
         if self.bounds.artifact_bytes == 0
             || self.bounds.total_bytes == 0
             || self.bounds.total_bytes < self.bounds.artifact_bytes
@@ -1343,6 +1414,23 @@ impl Workload {
                 target,
                 fixture: fixture.clone(),
             },
+            Self::HttpCorpus {
+                corpus_ref,
+                corpus_sha256,
+                schedule,
+                concurrency,
+                connection_policy,
+                default_headers,
+                ..
+            } => Self::HttpCorpus {
+                target,
+                corpus_ref: corpus_ref.clone(),
+                corpus_sha256: corpus_sha256.clone(),
+                schedule: schedule.clone(),
+                concurrency: *concurrency,
+                connection_policy: *connection_policy,
+                default_headers: default_headers.clone(),
+            },
         }
     }
 }
@@ -1352,7 +1440,8 @@ fn workload_target(workload: &Workload) -> &Name {
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
         | Workload::TimeBounded { target, .. }
-        | Workload::SemanticReplay { target, .. } => target,
+        | Workload::SemanticReplay { target, .. }
+        | Workload::HttpCorpus { target, .. } => target,
     }
 }
 fn validate_workload(w: &Workload) -> Result<(), PlanError> {
@@ -1390,6 +1479,90 @@ fn validate_workload(w: &Workload) -> Result<(), PlanError> {
         },
         Workload::FiniteCount { .. } => Ok(()),
         Workload::SemanticReplay { fixture, .. } => validate_semantic_fixture_path(fixture),
+        Workload::HttpCorpus {
+            corpus_ref,
+            corpus_sha256,
+            schedule,
+            concurrency,
+            default_headers,
+            ..
+        } => {
+            validate_semantic_fixture_path(corpus_ref)?;
+            if corpus_sha256.len() != 64
+                || !corpus_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return invalid(
+                    "invalid_digest",
+                    "http_corpus corpus_sha256 must contain 64 hexadecimal characters",
+                );
+            }
+            if schedule.is_empty() || schedule.len() > 128 || concurrency.get() > 256 {
+                return invalid(
+                    "invalid_bound",
+                    "http_corpus requires 1..=128 schedule entries and concurrency <= 256",
+                );
+            }
+            if default_headers.len() > 32 {
+                return invalid(
+                    "invalid_bound",
+                    "http_corpus default_headers exceeds 32 entries",
+                );
+            }
+            let mut header_names = BTreeSet::new();
+            for (name, value) in default_headers {
+                let lower = name.to_ascii_lowercase();
+                if name.is_empty()
+                    || name.len() > 256
+                    || !name.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
+                    })
+                    || value.len() > 8192
+                    || value.chars().any(char::is_control)
+                    || !header_names.insert(lower.clone())
+                    || matches!(
+                        lower.as_str(),
+                        "authorization"
+                            | "proxy-authorization"
+                            | "cookie"
+                            | "set-cookie"
+                            | "host"
+                            | "connection"
+                            | "proxy-connection"
+                            | "transfer-encoding"
+                            | "content-length"
+                    )
+                    || looks_secret(value)
+                {
+                    return invalid(
+                        "invalid_bound",
+                        "http_corpus default header is unsafe, duplicated, or secret-bearing",
+                    );
+                }
+            }
+            let mut case_ids = BTreeSet::new();
+            let mut total = 0_u64;
+            for entry in schedule {
+                if Name::new(&entry.case_id).is_err() || !case_ids.insert(entry.case_id.as_str()) {
+                    return invalid(
+                        "invalid_reference",
+                        "http_corpus schedule case IDs must be valid and unique",
+                    );
+                }
+                total = total
+                    .checked_add(u64::from(entry.count.get()))
+                    .ok_or_else(|| PlanError::Validation {
+                        category: "invalid_bound",
+                        detail: "http_corpus request total overflows".to_owned(),
+                    })?;
+            }
+            if total > 1_000_000 {
+                return invalid(
+                    "invalid_bound",
+                    "http_corpus request total must not exceed 1000000",
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -2201,6 +2374,38 @@ mod tests {
             log_limit_bytes: 4096,
         });
         plan
+    }
+
+    #[test]
+    fn http_corpus_workload_requires_schema_seed_and_zero_mismatch_gate() {
+        let mut plan = ExperimentPlan::from_json(VALID).unwrap();
+        plan.schema_version = EXPERIMENT_PLAN_SCHEMA_VERSION_10;
+        plan.workload = Workload::HttpCorpus {
+            target: Name::new("api").unwrap(),
+            corpus_ref: "corpus.json".to_owned(),
+            corpus_sha256: "ab".repeat(32),
+            schedule: vec![HttpCorpusScheduleEntry {
+                case_id: "benign_case".to_owned(),
+                count: PositiveCount::new(10).unwrap(),
+            }],
+            concurrency: PositiveCount::new(2).unwrap(),
+            connection_policy: HttpConnectionPolicy::Pooled,
+            default_headers: vec![(
+                "user-agent".to_owned(),
+                "eggbench-qualification/1".to_owned(),
+            )],
+        };
+        assert!(plan.validate().is_err());
+        plan.metrics.push(MetricRequest {
+            name: Name::new("expected_outcome_mismatch_rate").unwrap(),
+            unit: Name::new("ratio").unwrap(),
+            direction: MetricDirection::LowerIsBetter,
+            intent: MetricIntent::Primary,
+            gate: Some(Gate::Absolute { value: 0.0 }),
+        });
+        assert!(plan.validate().is_ok());
+        plan.seed = None;
+        assert!(plan.validate().is_err());
     }
 
     #[test]

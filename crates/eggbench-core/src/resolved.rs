@@ -99,6 +99,8 @@ pub enum Capability {
     /// `Eggbench` trial (Eggstack M003a). No `ClosedLoop`/`OpenLoop` claim is
     /// required for this capability.
     SemanticReplay,
+    /// Driver executes a deterministic HTTP security-corpus load schedule.
+    HttpCorpus,
     /// Driver executes one diagnostic probe family (Eggstack M003b).
     DiagnosticProbe {
         /// Supported probe family.
@@ -425,6 +427,13 @@ pub fn resolve_plan(
                 .entry(DriverCategory::Workload)
                 .or_default()
                 .insert(Capability::SemanticReplay);
+        }
+        Workload::HttpCorpus { .. } => {
+            let capabilities = required.entry(DriverCategory::Workload).or_default();
+            capabilities.insert(Capability::HttpCorpus);
+            capabilities.insert(Capability::LoadMode {
+                mode: LoadMode::ClosedLoop,
+            });
         }
         _ => {
             required
@@ -825,7 +834,8 @@ fn workload_target(workload: &Workload) -> &Name {
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
         | Workload::TimeBounded { target, .. }
-        | Workload::SemanticReplay { target, .. } => target,
+        | Workload::SemanticReplay { target, .. }
+        | Workload::HttpCorpus { target, .. } => target,
     }
 }
 
@@ -1012,7 +1022,8 @@ fn workload_mode(workload: &Workload) -> LoadMode {
         // that only handle load-model workloads.
         Workload::ClosedLoop { .. }
         | Workload::FiniteCount { .. }
-        | Workload::SemanticReplay { .. } => LoadMode::ClosedLoop,
+        | Workload::SemanticReplay { .. }
+        | Workload::HttpCorpus { .. } => LoadMode::ClosedLoop,
     }
 }
 

@@ -18,8 +18,9 @@ use super::parser::ExternalOutputParser;
 use super::resolver::{BinaryResolver, ResolvedExecutable};
 use super::version::{ToolVersion, VersionProbe, VersionProbeSpec};
 use eggbench_core::{
-    Aggregation, Capability, DriverCategory, DriverDescriptor, HttpVersion, LoadMode, Name,
-    RawMetricObservation, SchemaVersion, Workload,
+    Aggregation, Capability, DriverCategory, DriverDescriptor, HttpCaseBodyV1,
+    HttpConnectionPolicy, HttpVersion, LoadMode, Name, RawMetricObservation, SchemaVersion,
+    Workload, load_http_security_corpus,
 };
 use eggbench_runner::{
     DrainContext, FailureCategory, InvocationContext, WorkloadArtifact, WorkloadExecutor,
@@ -29,6 +30,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::future::Future;
+use std::io::Write;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -154,8 +156,18 @@ impl WorkloadExecutor for OhaWorkload {
             self.ensure_probed(&context.cancellation).await?;
             let target = workload_target_name(&context.workload);
             let url = target_http_url(&context, target)?;
-            let argv =
-                oha_argv(&context.workload, &url).map_err(|error| failure_category(&error))?;
+            let (argv, _body_file) = match &context.workload {
+                Workload::HttpCorpus { .. } => {
+                    let workspace =
+                        std::env::current_dir().map_err(|_| FailureCategory::WorkloadFailed)?;
+                    oha_http_corpus_argv(&context.workload, &url, &workspace)
+                        .map_err(|error| failure_category(&error))?
+                }
+                _ => (
+                    oha_argv(&context.workload, &url).map_err(|error| failure_category(&error))?,
+                    None,
+                ),
+            };
             let spec = ExternalCommandSpec {
                 executable: self.executable.clone(),
                 args: argv,
@@ -190,7 +202,8 @@ fn workload_target_name(workload: &Workload) -> &str {
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
         | Workload::TimeBounded { target, .. }
-        | Workload::SemanticReplay { target, .. } => target.as_str(),
+        | Workload::SemanticReplay { target, .. }
+        | Workload::HttpCorpus { target, .. } => target.as_str(),
     }
 }
 
@@ -294,14 +307,131 @@ fn oha_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverError
                 args.push(humantime(duration_ms.get()).into());
             }
         },
-        Workload::SemanticReplay { .. } => {
+        Workload::SemanticReplay { .. } | Workload::HttpCorpus { .. } => {
             return Err(unsupported(
-                "SemanticReplay requires the eggreplay-semantic driver",
+                "this workload requires a specialized driver invocation",
             ));
         }
     }
     args.push(url.into());
     Ok(args)
+}
+
+fn oha_http_corpus_argv(
+    workload: &Workload,
+    target_url: &str,
+    workspace: &std::path::Path,
+) -> Result<(Vec<OsString>, Option<tempfile::NamedTempFile>), DriverError> {
+    let unsupported = |detail: &str| {
+        DriverError::execution(
+            ErrorCategory::UnsupportedOption,
+            format!("oha HTTP corpus workload: {detail}"),
+        )
+    };
+    let Workload::HttpCorpus {
+        corpus_ref,
+        corpus_sha256,
+        schedule,
+        concurrency,
+        connection_policy,
+        default_headers,
+        ..
+    } = workload
+    else {
+        return Err(unsupported("not an http_corpus workload"));
+    };
+    if schedule.len() != 1 {
+        return Err(unsupported("oha supports exactly one repeated corpus case"));
+    }
+    let (corpus, body_root) = load_http_security_corpus(workspace, corpus_ref, corpus_sha256)
+        .map_err(|_| unsupported("corpus is invalid or digest-mismatched"))?;
+    let entry = &schedule[0];
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.id == entry.case_id)
+        .ok_or_else(|| unsupported("schedule references an unknown case"))?;
+    if default_headers.iter().any(|(name, value)| {
+        case.request.headers.iter().any(|(case_name, case_value)| {
+            case_name.eq_ignore_ascii_case(name) && case_value != value
+        })
+    }) {
+        return Err(unsupported("case header conflicts with a default header"));
+    }
+    let mut args = vec![
+        OsString::from("--no-tui"),
+        OsString::from("--output-format"),
+        OsString::from("json"),
+        OsString::from("-n"),
+        OsString::from(entry.count.get().to_string()),
+        OsString::from("-c"),
+        OsString::from(concurrency.get().to_string()),
+        OsString::from("--method"),
+        OsString::from(&case.request.method),
+    ];
+    for (name, value) in &case.request.headers {
+        args.push(OsString::from("-H"));
+        args.push(OsString::from(format!("{name}: {value}")));
+    }
+    for (name, value) in default_headers {
+        if !case
+            .request
+            .headers
+            .iter()
+            .any(|(case_name, _)| case_name.eq_ignore_ascii_case(name))
+        {
+            args.push(OsString::from("-H"));
+            args.push(OsString::from(format!("{name}: {value}")));
+        }
+    }
+    if *connection_policy == HttpConnectionPolicy::FreshPerRequest {
+        args.push(OsString::from("--disable-keepalive"));
+    }
+    let (body_path, mut body_file) = match &case.request.body {
+        HttpCaseBodyV1::None => (None, None),
+        HttpCaseBodyV1::InlineUtf8(value) => {
+            let mut file = tempfile::NamedTempFile::new()
+                .map_err(|_| unsupported("cannot create bounded body input"))?;
+            file.write_all(value.as_bytes())
+                .map_err(|_| unsupported("cannot write bounded body input"))?;
+            (Some(file.path().to_path_buf()), Some(file))
+        }
+        HttpCaseBodyV1::File(path) => {
+            let body = body_root.join(path);
+            let canonical = std::fs::canonicalize(&body)
+                .map_err(|_| unsupported("body file is unavailable"))?;
+            (Some(canonical), None)
+        }
+    };
+    if let Some(path) = body_path {
+        args.push(OsString::from("-D"));
+        args.push(path.into_os_string());
+    }
+    let origin = target_url
+        .find("://")
+        .map(|scheme_end| {
+            let authority_start = scheme_end + 3;
+            let authority_end = target_url[authority_start..]
+                .find(['/', '?', '#'])
+                .map_or(target_url.len(), |offset| authority_start + offset);
+            format!(
+                "{}://{}",
+                &target_url[..scheme_end],
+                &target_url[authority_start..authority_end]
+            )
+        })
+        .ok_or_else(|| unsupported("target binding is not an absolute HTTP URL"))?;
+    args.push(OsString::from(format!(
+        "{origin}{}",
+        case.request.path_and_query
+    )));
+    // The temporary file must remain open until the child has consumed it.
+    if let Some(file) = &mut body_file {
+        file.as_file_mut()
+            .flush()
+            .map_err(|_| unsupported("cannot flush body input"))?;
+    }
+    Ok((args, body_file))
 }
 
 /// Format milli-rps as an oha `-q` rate, trimming trailing zeros.
@@ -563,6 +693,7 @@ pub fn oha_descriptor() -> DriverDescriptor {
     capabilities.insert(Capability::LoadMode {
         mode: LoadMode::ClosedLoop,
     });
+    capabilities.insert(Capability::HttpCorpus);
     capabilities.insert(Capability::LoadMode {
         mode: LoadMode::OpenLoop,
     });
@@ -587,6 +718,7 @@ pub fn oha_descriptor() -> DriverDescriptor {
 mod tests {
     use super::*;
     use crate::external::command::CapturedStream;
+    use eggbench_core::{HttpCorpusScheduleEntry, PositiveCount};
     use std::path::PathBuf;
 
     pub fn outcome_with_stdout(bytes: &[u8], exit_code: Option<i32>) -> ExternalCommandOutcome {
@@ -754,6 +886,69 @@ mod tests {
             duration_ms: Some(DurationMs::new(1000).unwrap()),
         };
         assert!(oha_argv(&both, "http://127.0.0.1:1/").is_err());
+    }
+
+    #[test]
+    fn corpus_argv_binds_method_body_headers_and_fresh_connection_policy() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let corpus = serde_json::json!({
+            "schema_version": 1,
+            "owner": "test-owner",
+            "corpus_id": "test-corpus",
+            "cases": [{
+                "id": "post-json",
+                "category": null,
+                "request": {
+                    "method": "POST",
+                    "path_and_query": "/submit?q=1",
+                    "headers": [["content-type", "application/json"]],
+                    "body": {"kind": "inline_utf8", "value": "{\"ok\":true}"}
+                },
+                "expectation": {"status_exact": 403}
+            }]
+        });
+        std::fs::write(
+            workspace.path().join("corpus.json"),
+            serde_json::to_vec(&corpus).unwrap(),
+        )
+        .unwrap();
+        let identity = eggbench_core::content_tree_identity(workspace.path(), "corpus.json")
+            .expect("corpus identity");
+        load_http_security_corpus(workspace.path(), "corpus.json", &identity.aggregate_sha256)
+            .expect("test corpus validates");
+        let workload = Workload::HttpCorpus {
+            target: Name::new("subject").unwrap(),
+            corpus_ref: "corpus.json".to_owned(),
+            corpus_sha256: identity.aggregate_sha256,
+            schedule: vec![HttpCorpusScheduleEntry {
+                case_id: "post-json".to_owned(),
+                count: PositiveCount::new(10).unwrap(),
+            }],
+            concurrency: PositiveCount::new(2).unwrap(),
+            connection_policy: HttpConnectionPolicy::FreshPerRequest,
+            default_headers: vec![(
+                "user-agent".to_owned(),
+                "eggbench-qualification/1".to_owned(),
+            )],
+        };
+        let (args, body_file) =
+            oha_http_corpus_argv(&workload, "http://127.0.0.1:8080/ignored", workspace.path())
+                .unwrap();
+        let text = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(text.windows(2).any(|pair| pair == ["--method", "POST"]));
+        assert!(text.contains(&"--disable-keepalive".to_owned()));
+        assert!(text.contains(&"-D".to_owned()));
+        assert!(
+            text.iter()
+                .any(|arg| arg.starts_with("user-agent: eggbench-qualification/1"))
+        );
+        assert_eq!(text.last().unwrap(), "http://127.0.0.1:8080/submit?q=1");
+        assert!(!text.iter().any(|arg| arg.contains("ok")));
+        let body_file = body_file.expect("body input file is retained");
+        assert_eq!(std::fs::read(body_file.path()).unwrap(), br#"{"ok":true}"#);
     }
 
     #[test]

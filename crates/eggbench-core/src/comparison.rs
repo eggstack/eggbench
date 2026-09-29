@@ -3139,6 +3139,22 @@ fn workload_summary(workload: &Workload) -> String {
         // summary keeps only kind + target so semantic vs non-semantic
         // bundles are incomparable without leaking local paths.
         Workload::SemanticReplay { target, .. } => format!("semantic_replay target={target}"),
+        Workload::HttpCorpus {
+            target,
+            corpus_sha256,
+            schedule,
+            concurrency,
+            connection_policy,
+            default_headers,
+            ..
+        } => format!(
+            "http_corpus target={target} corpus_sha256={corpus_sha256} schedule={schedule:?} concurrency={} connection_policy={connection_policy:?} default_headers_sha256={}",
+            concurrency.get(),
+            sha2::Sha256::digest(serde_json::to_vec(default_headers).unwrap_or_default())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        ),
     }
 }
 

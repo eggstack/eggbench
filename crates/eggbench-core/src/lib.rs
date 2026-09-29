@@ -41,3 +41,5 @@ pub const EXPERIMENT_PLAN_SCHEMA_VERSION_7: SchemaVersion = SchemaVersion(7);
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_8: SchemaVersion = SchemaVersion(8);
 /// Generic runtime binding and security-load plan schema version.
 pub const EXPERIMENT_PLAN_SCHEMA_VERSION_9: SchemaVersion = SchemaVersion(9);
+/// HTTP security-corpus workload schema version.
+pub const EXPERIMENT_PLAN_SCHEMA_VERSION_10: SchemaVersion = SchemaVersion(10);

@@ -681,6 +681,7 @@ fn workload_load_mode(plan: &eggbench_core::ExperimentPlan) -> LoadMode {
         | Workload::SemanticReplay { .. } => LoadMode::ClosedLoop,
         Workload::OpenLoop { .. } => LoadMode::OpenLoop,
         Workload::TimeBounded { mode, .. } => *mode,
+        Workload::HttpCorpus { .. } => eggbench_core::LoadMode::ClosedLoop,
     }
 }
 

@@ -113,6 +113,9 @@ pub struct InvocationContext {
     pub workload: Workload,
     /// Deterministic invocation-specific seed, when the plan has a seed.
     pub seed: Option<u64>,
+    /// Method schedule seed: stable across baseline/candidate arms for the
+    /// same trial ordinal and experiment seed.
+    pub schedule_seed: Option<u64>,
     /// Startup-established runtime bindings snapshot. Every invocation of one
     /// run receives the same snapshot; workload drivers must treat it as
     /// read-only and never mutate topology bindings through it.
@@ -1686,7 +1689,11 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
 fn preflight_http_corpus_inputs(
     resolved: &eggbench_core::ResolvedPlan,
 ) -> Result<(), OrchestrationError> {
-    if resolved.http_corpus_checks.is_empty() {
+    let is_load = matches!(
+        &resolved.workload,
+        eggbench_core::Workload::HttpCorpus { .. }
+    );
+    if resolved.http_corpus_checks.is_empty() && !is_load {
         return Ok(());
     }
     let workspace = std::env::current_dir()
@@ -1698,6 +1705,26 @@ fn preflight_http_corpus_inputs(
             &request.corpus_sha256,
         )
         .map_err(|_| OrchestrationError::Preflight("HTTP corpus input is invalid"))?;
+    }
+    if let eggbench_core::Workload::HttpCorpus {
+        corpus_ref,
+        corpus_sha256,
+        schedule,
+        ..
+    } = &resolved.workload
+    {
+        let (corpus, _) =
+            eggbench_core::load_http_security_corpus(&workspace, corpus_ref, corpus_sha256)
+                .map_err(|_| {
+                    OrchestrationError::Preflight("HTTP corpus workload input is invalid")
+                })?;
+        for entry in schedule {
+            if !corpus.cases.iter().any(|case| case.id == entry.case_id) {
+                return Err(OrchestrationError::Preflight(
+                    "HTTP corpus workload references an unknown case",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1747,6 +1774,7 @@ async fn execute_invocation<E: WorkloadExecutor + ?Sized>(
         kind,
         workload: workload_override.unwrap_or_else(|| resolved.workload.clone()),
         seed: resolved.seed.map(|seed| derive_seed(seed, kind)),
+        schedule_seed: resolved.seed.map(|seed| derive_schedule_seed(seed, kind)),
         bindings: bindings.clone(),
         cancellation: child.clone(),
         timeout: limit,
@@ -3204,6 +3232,20 @@ fn derive_seed(seed: u64, kind: InvocationKind) -> u64 {
     };
     mix64(seed ^ namespace)
 }
+
+fn derive_schedule_seed(seed: u64, kind: InvocationKind) -> u64 {
+    let ordinal = match kind {
+        InvocationKind::Warmup { ordinal } => 0x5741_524d_0000_0000_u64 | u64::from(ordinal),
+        InvocationKind::Measured { trial_id, arm } => {
+            let trial = match arm {
+                Some(_) => trial_id.get().div_ceil(2),
+                None => trial_id.get(),
+            };
+            0x5343_4844_0000_0000_u64 | u64::from(trial)
+        }
+    };
+    mix64(seed ^ ordinal)
+}
 fn mix64(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -3607,7 +3649,8 @@ impl WorkloadExecutor for FakeWorkload {
 
 #[cfg(test)]
 mod paired_assignment_tests {
-    use super::{TrialArm, paired_assignment};
+    use super::{InvocationKind, TrialArm, derive_schedule_seed, paired_assignment};
+    use eggbench_core::TrialId;
 
     #[test]
     fn pair_identities_follow_the_alternating_ceiling_schedule() {
@@ -3633,5 +3676,32 @@ mod paired_assignment_tests {
             (TrialArm::Baseline, u32::MAX.div_ceil(2))
         );
         assert_eq!(u32::MAX.div_ceil(2), 2_147_483_648);
+    }
+
+    #[test]
+    fn schedule_seed_is_shared_by_paired_arms_and_stable_by_pair_ordinal() {
+        let first_pair_baseline = derive_schedule_seed(
+            17,
+            InvocationKind::Measured {
+                trial_id: TrialId::new(1).unwrap(),
+                arm: Some(TrialArm::Baseline),
+            },
+        );
+        let first_pair_candidate = derive_schedule_seed(
+            17,
+            InvocationKind::Measured {
+                trial_id: TrialId::new(2).unwrap(),
+                arm: Some(TrialArm::Candidate),
+            },
+        );
+        assert_eq!(first_pair_baseline, first_pair_candidate);
+        let next_pair = derive_schedule_seed(
+            17,
+            InvocationKind::Measured {
+                trial_id: TrialId::new(3).unwrap(),
+                arm: Some(TrialArm::Baseline),
+            },
+        );
+        assert_ne!(first_pair_baseline, next_pair);
     }
 }

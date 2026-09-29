@@ -348,7 +348,8 @@ fn replay_target_name(workload: &Workload) -> &str {
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
         | Workload::TimeBounded { target, .. }
-        | Workload::SemanticReplay { target, .. } => target.as_str(),
+        | Workload::SemanticReplay { target, .. }
+        | Workload::HttpCorpus { target, .. } => target.as_str(),
     }
 }
 

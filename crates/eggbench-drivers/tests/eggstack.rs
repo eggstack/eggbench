@@ -395,6 +395,7 @@ fn invocation(workload: Workload, bindings: eggbench_runner::RuntimeBindings) ->
         kind: InvocationKind::Warmup { ordinal: 1 },
         workload,
         seed: Some(7),
+        schedule_seed: Some(7),
         bindings,
         cancellation: CancellationToken::new(),
         timeout: Duration::from_secs(60),

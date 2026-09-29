@@ -10,6 +10,7 @@ An ExperimentPlan is a versioned request, not an execution script. JSON is the c
 - **v4** adds the `semantic_replay` workload (`target` plus relative workspace `fixture`). v1-v3 plans must omit it; a replay intent in a legacy schema fails validation. v4 plans must omit `network_path`; replay uses `--route direct` explicitly and never composes with the M002 path.
 - **v5** adds the optional `diagnostics` array of pre/post workload diagnostic requests. v1-v4 plans must omit the field entirely (an explicit field, even empty, fails validation). v5 keeps the v4 replay workload and rejects `network_path` whenever diagnostics are requested; diagnostics bypass the benchmark path by design.
 - **v9** adds bounded `static_bindings` and typed `binding_args`/`binding_env` dependency references. These fields are rejected in v1-v8. A binding reference can replace one complete argv element or set a non-secret environment variable only from a declared dependency after that dependency is ready; it does not invoke a shell or interpolate strings.
+- **v10** adds the finite `http_corpus` load workload for owner-authored method/path/header/body cases, exact bounded schedules, explicit neutral default headers, and pooled or fresh-per-request connections. It requires an explicit seed and a zero-tolerance `expected_outcome_mismatch_rate` gate. Earlier schemas reject this workload.
 
 A workload target must name a declared service or the explicitly named external subject. A closed/open workload specifies exactly one of request count or duration. Time-bounded closed-loop plans require concurrency; open-loop plans require an offered rate. Services have stable names, managed/external lifecycle intent, acyclic dependencies, and bounded typed fields. Metric direction, unit, intent, and gates are explicit; diagnostic or informational metrics cannot gate. Secret material is referenced, never embedded.
 
@@ -77,6 +78,24 @@ A v4 replay workload names a target service (or external target) publishing an `
 ```
 
 Fixture paths are relative, forward-slash, bounded (512 bytes, 16 components, 128 bytes per component), and free of absolute prefixes, parent traversal, and control characters. Existence, symlink-escape, directory, traversal-bound, and digest checks run in driver preflight against `RunnerOptions.workspace_root` before managed startup.
+
+## Schema-v10 `http_corpus`
+
+A v10 security-load workload pins a corpus and dispatches its exact finite case multiset with a seed-derived deterministic permutation:
+
+```json
+{
+  "kind": "http_corpus", "target": "subject",
+  "corpus_ref": "corpora/security.json", "corpus_sha256": "<64 hex characters>",
+  "schedule": [{"case_id": "benign_json", "count": 80}, {"case_id": "blocked_xss", "count": 20}],
+  "concurrency": 8, "connection_policy": "pooled",
+  "default_headers": [["user-agent", "eggbench-qualification/1"]]
+}
+```
+
+The corpus path and digest are checked before service startup, and every scheduled case ID must exist. Schedules have 1–128 unique entries and at most one million requests; concurrency is capped at 256. The workload requires a declared seed and a primary lower-is-better `expected_outcome_mismatch_rate` metric with an absolute zero gate. HTTP responses are separate from transport errors; response bodies are consumed for latency and then discarded. The owner-authored status expectation supplies pass/block semantics, so Eggbench never diagnoses payloads.
+
+The runtime target binding supplies only the HTTP authority; request paths come from the corpus. `pooled` reuses the invocation client pool. `fresh_per_request` creates a new client for each request and the native method evidence declares the fresh physical-connection contract. Policy, schedule, corpus digest, and default-header digest participate in workload comparability. Corpus v1 forbids credentials, cookies, Host overrides, and hop-by-hop headers. The oha adapter supports a single repeated case for independent body/churn checks; native Eggfetch owns exact mixed scheduling.
 
 One complete fixture replay is one trial observation. `semantic_findings` (`count`, lower-is-better) is the correctness metric; `semantic_flows` is diagnostic-only. Process wall-clock time never becomes latency. Only absolute gates are supported for `semantic_findings`; relative/statistical gates fail validation with `unsupported_gate`.
 

@@ -93,6 +93,7 @@ pub fn eggfetch_http_descriptor() -> DriverDescriptor {
     capabilities.insert(Capability::LoadMode {
         mode: LoadMode::ClosedLoop,
     });
+    capabilities.insert(Capability::HttpCorpus);
     #[cfg(feature = "eggstack-path")]
     capabilities.insert(Capability::NetworkPath);
     let mut compatible = BTreeSet::new();

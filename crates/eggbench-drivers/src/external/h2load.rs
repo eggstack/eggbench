@@ -222,7 +222,8 @@ fn workload_target_name(workload: &Workload) -> &str {
         | Workload::OpenLoop { target, .. }
         | Workload::FiniteCount { target, .. }
         | Workload::TimeBounded { target, .. }
-        | Workload::SemanticReplay { target, .. } => target.as_str(),
+        | Workload::SemanticReplay { target, .. }
+        | Workload::HttpCorpus { target, .. } => target.as_str(),
     }
 }
 
@@ -299,7 +300,7 @@ fn h2load_argv(workload: &Workload, url: &str) -> Result<Vec<OsString>, DriverEr
                 return Err(unsupported("OpenLoop has no rate-limiter mapping"));
             }
         },
-        Workload::SemanticReplay { .. } => {
+        Workload::SemanticReplay { .. } | Workload::HttpCorpus { .. } => {
             return Err(unsupported(
                 "SemanticReplay requires the eggreplay-semantic driver",
             ));

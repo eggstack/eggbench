@@ -26,7 +26,10 @@
 
 use super::origin::ORIGIN_HTTP_URL_KEY;
 use super::{EGGFETCH_CORE_VERSION, EGGFETCH_HTTP_DRIVER_NAME};
-use eggbench_core::{Aggregation, RawHistogramInput, RawMetricObservation, Workload};
+use eggbench_core::{
+    Aggregation, HttpCaseBodyV1, HttpConnectionPolicy, HttpSecurityCaseV1, RawHistogramInput,
+    RawMetricObservation, Workload, load_http_security_corpus,
+};
 #[cfg(feature = "eggstack-path")]
 use eggbench_runner::RunEvidenceArtifact;
 use eggbench_runner::{
@@ -61,6 +64,7 @@ pub const HISTOGRAM_SIGFIG: u8 = 3;
 /// Per-request timeout in seconds. The runner safety deadline still bounds
 /// the whole invocation; this keeps one hung request from consuming it.
 pub const REQUEST_TIMEOUT_SECS: u64 = 30;
+const MAX_RESPONSE_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 /// Stable error-category labels. `Eggfetch` error strings never become
 /// category identities.
@@ -79,6 +83,364 @@ pub struct EggfetchWorkload {
     client: eggfetch_core::Client,
     #[cfg(feature = "eggstack-path")]
     path_dialer: Option<Arc<super::path::EggstackPathDialer>>,
+}
+
+#[derive(Clone)]
+struct HttpCorpusShared {
+    pooled_client: eggfetch_core::Client,
+    origin: String,
+    cases: Arc<Vec<HttpSecurityCaseV1>>,
+    default_headers: Arc<Vec<(String, String)>>,
+    bodies: Arc<Vec<Option<Vec<u8>>>>,
+    schedule: Arc<Vec<usize>>,
+    next: Arc<AtomicUsize>,
+    in_flight: Arc<AtomicUsize>,
+    max_in_flight: Arc<AtomicUsize>,
+    connection_policy: HttpConnectionPolicy,
+    cancel: CancellationToken,
+    deadline: Instant,
+}
+
+struct HttpCorpusOutcome {
+    case_id: String,
+    status: Option<u16>,
+    latency: Option<Duration>,
+    bytes: u64,
+    transport_error: Option<&'static str>,
+    expected_match: Option<bool>,
+}
+
+fn http_origin(binding: &str) -> Result<String, FailureCategory> {
+    let scheme_end = binding.find("://").ok_or(FailureCategory::WorkloadFailed)?;
+    let authority_start = scheme_end + 3;
+    let authority_end = binding[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(binding.len(), |offset| authority_start + offset);
+    let authority = &binding[authority_start..authority_end];
+    if authority.is_empty() || authority.contains('@') || authority.contains('#') {
+        return Err(FailureCategory::WorkloadFailed);
+    }
+    Ok(format!("{}://{authority}", &binding[..scheme_end]))
+}
+
+fn digest_json<T: serde::Serialize>(value: &T) -> Result<String, FailureCategory> {
+    use sha2::Digest as _;
+    let encoded = serde_json::to_vec(value).map_err(|_| FailureCategory::WorkloadFailed)?;
+    Ok(format!("{:x}", sha2::Sha256::digest(encoded)))
+}
+
+fn deterministic_shuffle(values: &mut [usize], state: &mut u64) {
+    for index in (1..values.len()).rev() {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        let other = (*state as usize) % (index + 1);
+        values.swap(index, other);
+    }
+}
+
+async fn run_http_corpus_schedule(
+    pooled_client: &eggfetch_core::Client,
+    origin: &str,
+    cases: &[HttpSecurityCaseV1],
+    default_headers: &[(String, String)],
+    bodies: Vec<Option<Vec<u8>>>,
+    schedule: Vec<usize>,
+    concurrency: usize,
+    connection_policy: HttpConnectionPolicy,
+    cancel: &CancellationToken,
+    timeout: Duration,
+) -> (Vec<HttpCorpusOutcome>, usize) {
+    let shared = HttpCorpusShared {
+        pooled_client: pooled_client.clone(),
+        origin: origin.to_owned(),
+        cases: Arc::new(cases.to_vec()),
+        default_headers: Arc::new(default_headers.to_vec()),
+        bodies: Arc::new(bodies),
+        schedule: Arc::new(schedule),
+        next: Arc::new(AtomicUsize::new(0)),
+        in_flight: Arc::new(AtomicUsize::new(0)),
+        max_in_flight: Arc::new(AtomicUsize::new(0)),
+        connection_policy,
+        cancel: cancel.clone(),
+        deadline: Instant::now() + timeout,
+    };
+    let mut tasks = JoinSet::new();
+    for _ in 0..concurrency.max(1) {
+        let worker_state = shared.clone();
+        tasks.spawn(async move {
+            let mut results = Vec::new();
+            loop {
+                if worker_state.cancel.is_cancelled() || Instant::now() >= worker_state.deadline {
+                    break;
+                }
+                let ordinal = worker_state.next.fetch_add(1, Ordering::SeqCst);
+                let Some(&case_index) = worker_state.schedule.get(ordinal) else {
+                    break;
+                };
+                let active = worker_state.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                worker_state
+                    .max_in_flight
+                    .fetch_max(active, Ordering::SeqCst);
+                results.push(issue_http_corpus_case(&worker_state, case_index).await);
+                worker_state.in_flight.fetch_sub(1, Ordering::SeqCst);
+            }
+            results
+        });
+    }
+    let mut outcomes = Vec::new();
+    while let Some(joined) = tasks.join_next().await {
+        if let Ok(results) = joined {
+            outcomes.extend(results);
+        }
+    }
+    (outcomes, shared.max_in_flight.load(Ordering::SeqCst))
+}
+
+async fn issue_http_corpus_case(shared: &HttpCorpusShared, case_index: usize) -> HttpCorpusOutcome {
+    let case = &shared.cases[case_index];
+    let failed = |error| HttpCorpusOutcome {
+        case_id: case.id.clone(),
+        status: None,
+        latency: None,
+        bytes: 0,
+        transport_error: Some(error),
+        expected_match: None,
+    };
+    let method = match eggfetch_core::Method::from_bytes(case.request.method.as_bytes()) {
+        Ok(method) => method,
+        Err(_) => return failed(CATEGORY_TRANSPORT),
+    };
+    let url = format!("{}{}", shared.origin, case.request.path_and_query);
+    let client = match shared.connection_policy {
+        HttpConnectionPolicy::Pooled => shared.pooled_client.clone(),
+        HttpConnectionPolicy::FreshPerRequest => eggfetch_core::Client::new(),
+    };
+    let timeout = shared.deadline.saturating_duration_since(Instant::now());
+    if timeout.is_zero() {
+        return failed(CATEGORY_TIMEOUT);
+    }
+    let mut builder = match client.request(method, &url) {
+        Ok(builder) => builder.timeout(eggfetch_core::Timeout {
+            pool: Some(timeout),
+            connect: Some(timeout),
+            write: Some(timeout),
+            read: Some(timeout),
+            total: Some(timeout),
+        }),
+        Err(_) => return failed(CATEGORY_TRANSPORT),
+    }
+    .max_decoded_body_size(MAX_RESPONSE_BODY_BYTES);
+    for (name, value) in shared.default_headers.iter() {
+        if !case
+            .request
+            .headers
+            .iter()
+            .any(|(case_name, _)| case_name.eq_ignore_ascii_case(name))
+        {
+            builder = builder.header(name, value);
+        }
+    }
+    for (name, value) in &case.request.headers {
+        builder = builder.header(name, value);
+    }
+    let body = shared.bodies[case_index].clone();
+    if let Some(body) = body {
+        builder = builder.bytes(body);
+    }
+    let started = Instant::now();
+    let response = tokio::select! {
+        () = shared.cancel.cancelled() => return failed(CATEGORY_CANCELLED),
+        response = builder.send_detailed() => response,
+    };
+    let mut response = match response {
+        Ok(response) => response,
+        Err(failure) => {
+            return failed(if is_timeout_failure(&failure) {
+                CATEGORY_TIMEOUT
+            } else {
+                CATEGORY_TRANSPORT
+            });
+        }
+    };
+    let status = response.status().as_u16();
+    let bytes = tokio::select! {
+        () = shared.cancel.cancelled() => return HttpCorpusOutcome { case_id: case.id.clone(), status: Some(status), latency: None, bytes: 0, transport_error: Some(CATEGORY_CANCELLED), expected_match: None },
+        body = response.bytes() => match body {
+            Ok(body) => body.len() as u64,
+            Err(error) => return HttpCorpusOutcome { case_id: case.id.clone(), status: Some(status), latency: None, bytes: 0, transport_error: Some(if is_timeout_error(&error) { CATEGORY_TIMEOUT } else { CATEGORY_BODY_READ }), expected_match: None },
+        },
+    };
+    HttpCorpusOutcome {
+        case_id: case.id.clone(),
+        status: Some(status),
+        latency: Some(started.elapsed()),
+        bytes,
+        transport_error: None,
+        expected_match: Some(case.expectation.matches(status)),
+    }
+}
+
+fn build_http_corpus_output(
+    cases: &[HttpSecurityCaseV1],
+    default_headers: &[(String, String)],
+    outcomes: &[HttpCorpusOutcome],
+    planned_count: u64,
+    elapsed: Duration,
+    max_in_flight: usize,
+    connection_policy: HttpConnectionPolicy,
+    seed: u64,
+    corpus_sha256: &str,
+    planned_schedule_sha256: &str,
+    realized_schedule_sha256: &str,
+) -> WorkloadOutput {
+    use sha2::Digest as _;
+    let mut histogram = hdrhistogram::Histogram::<u64>::new_with_bounds(
+        HISTOGRAM_LOW_US,
+        HISTOGRAM_HIGH_US,
+        HISTOGRAM_SIGFIG,
+    )
+    .expect("histogram bounds valid");
+    let mut statuses = BTreeMap::<u16, u64>::new();
+    let mut dispatches = BTreeMap::<String, u64>::new();
+    let mut errors = BTreeMap::<&'static str, u64>::new();
+    let mut completed = 0_u64;
+    let mut mismatches = 0_u64;
+    let mut bytes = 0_u64;
+    for outcome in outcomes {
+        *dispatches.entry(outcome.case_id.clone()).or_default() += 1;
+        if let Some(status) = outcome.status {
+            *statuses.entry(status).or_default() += 1;
+        }
+        if let Some(error) = outcome.transport_error {
+            *errors.entry(error).or_default() += 1;
+        }
+        if outcome.expected_match == Some(false) {
+            mismatches += 1;
+        }
+        if let Some(latency) = outcome.latency {
+            completed += 1;
+            bytes += outcome.bytes;
+            let us = u64::try_from(latency.as_micros())
+                .unwrap_or(u64::MAX)
+                .clamp(HISTOGRAM_LOW_US, HISTOGRAM_HIGH_US);
+            let _ = histogram.record(us);
+        }
+    }
+    let attempted = outcomes.len() as u64;
+    let denominator = count_f64(planned_count.max(1));
+    let mut metrics = vec![
+        raw(
+            "throughput",
+            "rps",
+            count_f64(completed) / elapsed.as_secs_f64().max(f64::MIN_POSITIVE),
+            Aggregation::Rate,
+            "eggfetch.responses_received",
+            &[],
+        ),
+        raw(
+            "transport_error_rate",
+            "ratio",
+            count_f64(errors.values().sum()) / denominator,
+            Aggregation::Ratio,
+            "eggfetch.transport_errors",
+            &[],
+        ),
+        raw(
+            "expected_outcome_mismatch_rate",
+            "ratio",
+            count_f64(mismatches) / denominator,
+            Aggregation::Ratio,
+            "eggfetch.expected_outcome_mismatches",
+            &[],
+        ),
+        raw(
+            "expected_outcome_mismatches",
+            "count",
+            count_f64(mismatches),
+            Aggregation::Sum,
+            "eggfetch.expected_outcome_mismatches",
+            &[],
+        ),
+        raw(
+            "bytes_received",
+            "bytes",
+            count_f64(bytes),
+            Aggregation::Sum,
+            "eggfetch.bytes_received",
+            &[],
+        ),
+    ];
+    if !histogram.is_empty() {
+        push_latency_metrics(&mut metrics, &histogram);
+    }
+    let method = serde_json::json!({
+        "driver": EGGFETCH_HTTP_DRIVER_NAME,
+        "eggfetch_core_version": EGGFETCH_CORE_VERSION,
+        "method_evidence_schema": 2,
+        "workload": "http_corpus",
+        "corpus_sha256": corpus_sha256,
+        "planned_schedule_sha256": planned_schedule_sha256,
+        "realized_schedule_sha256": realized_schedule_sha256,
+        "seed": seed,
+        "connection_policy": connection_policy,
+        "physical_connection_contract": match connection_policy { HttpConnectionPolicy::Pooled => "one client pool per invocation", HttpConnectionPolicy::FreshPerRequest => "new client per request; each request uses a fresh physical connection" },
+        "default_headers": default_headers,
+        "planned_requests": planned_count,
+        "attempted_requests": attempted,
+        "completed_responses": completed,
+        "transport_errors": errors,
+        "expected_outcome_mismatches": mismatches,
+        "case_dispatch_counts": dispatches,
+        "status_counts": statuses,
+        "maximum_observed_in_flight": max_in_flight,
+        "elapsed_ms": elapsed.as_millis(),
+        "latency_sample_policy": "dispatch to full response-body consumption",
+        "request_payloads_retained": false,
+    });
+    let artifact = serde_json::to_vec_pretty(&method).expect("bounded method evidence serializes");
+    let mut artifacts = vec![WorkloadArtifact {
+        name: "eggfetch-method.json".to_owned(),
+        media_type: "application/json".to_owned(),
+        bytes: artifact,
+    }];
+    if !histogram.is_empty() {
+        artifacts.push(WorkloadArtifact {
+            name: LATENCY_HISTOGRAM_ARTIFACT.to_owned(),
+            media_type: "application/x-hdrhistogram-v2".to_owned(),
+            bytes: serialize_histogram(&histogram),
+        });
+    }
+    let _case_ids_digest = format!(
+        "{:x}",
+        sha2::Sha256::digest(
+            cases
+                .iter()
+                .map(|case| case.id.as_str())
+                .collect::<Vec<_>>()
+                .join("\0")
+        )
+    );
+    WorkloadOutput {
+        artifacts,
+        metrics,
+        histograms: if histogram.is_empty() {
+            Vec::new()
+        } else {
+            vec![RawHistogramInput {
+                metric: HISTOGRAM_METRIC.to_owned(),
+                artifact_name: LATENCY_HISTOGRAM_ARTIFACT.to_owned(),
+                format: HISTOGRAM_FORMAT.to_owned(),
+                unit: HISTOGRAM_UNIT.to_owned(),
+                method: Some("HTTP corpus dispatch-to-full-body microseconds".to_owned()),
+            }]
+        },
+        error_counts: errors
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+        measurement_elapsed: Some(elapsed),
+    }
 }
 
 impl EggfetchWorkload {
@@ -195,6 +557,9 @@ impl EggfetchWorkload {
         &mut self,
         context: InvocationContext,
     ) -> Result<WorkloadOutput, FailureCategory> {
+        if matches!(context.workload, Workload::HttpCorpus { .. }) {
+            return self.execute_http_corpus(context).await;
+        }
         let (target, plan) = run_plan(&context.workload)?;
         let url = binding_url(&context, target)?;
         #[cfg(feature = "eggstack-path")]
@@ -238,6 +603,109 @@ impl EggfetchWorkload {
             elapsed,
             max_in_flight,
             network_path.as_ref(),
+        ))
+    }
+
+    async fn execute_http_corpus(
+        &mut self,
+        context: InvocationContext,
+    ) -> Result<WorkloadOutput, FailureCategory> {
+        let Workload::HttpCorpus {
+            target,
+            corpus_ref,
+            corpus_sha256,
+            schedule,
+            concurrency,
+            connection_policy,
+            default_headers,
+        } = &context.workload
+        else {
+            return Err(FailureCategory::WorkloadFailed);
+        };
+        let binding = binding_url(&context, target.as_str())?;
+        let _confined = crate::external::confine_target_url(&binding)
+            .map_err(|_| FailureCategory::WorkloadFailed)?;
+        let origin = http_origin(&binding)?;
+        let workspace = std::env::current_dir().map_err(|_| FailureCategory::WorkloadFailed)?;
+        let (corpus, body_root) = load_http_security_corpus(&workspace, corpus_ref, corpus_sha256)
+            .map_err(|_| FailureCategory::WorkloadFailed)?;
+        let bodies = corpus
+            .cases
+            .iter()
+            .map(|case| match &case.request.body {
+                HttpCaseBodyV1::None => Ok(None),
+                HttpCaseBodyV1::InlineUtf8(value) => Ok(Some(value.as_bytes().to_vec())),
+                HttpCaseBodyV1::File(path) => std::fs::read(body_root.join(path))
+                    .map(Some)
+                    .map_err(|_| FailureCategory::WorkloadFailed),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut selected = Vec::new();
+        for entry in schedule {
+            let Some((index, case)) = corpus
+                .cases
+                .iter()
+                .enumerate()
+                .find(|(_, case)| case.id == entry.case_id)
+            else {
+                return Err(FailureCategory::WorkloadFailed);
+            };
+            if default_headers.iter().any(|(name, value)| {
+                case.request.headers.iter().any(|(case_name, case_value)| {
+                    case_name.eq_ignore_ascii_case(name) && case_value != value
+                })
+            }) {
+                return Err(FailureCategory::WorkloadFailed);
+            }
+            let count =
+                usize::try_from(entry.count.get()).map_err(|_| FailureCategory::WorkloadFailed)?;
+            selected
+                .try_reserve(count)
+                .map_err(|_| FailureCategory::WorkloadFailed)?;
+            selected.extend(std::iter::repeat_n(index, count));
+        }
+        let seed = context
+            .schedule_seed
+            .ok_or(FailureCategory::WorkloadFailed)?;
+        let planned_count = selected.len() as u64;
+        let planned_schedule_sha256 = digest_json(schedule)?;
+        let mut schedule_rng = seed ^ 0x9e37_79b9_7f4a_7c15;
+        deterministic_shuffle(&mut selected, &mut schedule_rng);
+        let mut order_hasher = sha2::Sha256::new();
+        use sha2::Digest as _;
+        for &index in &selected {
+            order_hasher.update(corpus.cases[index].id.as_bytes());
+            order_hasher.update([0]);
+        }
+        let realized_schedule_sha256 = format!("{:x}", order_hasher.finalize());
+        let started = Instant::now();
+        let (outcomes, max_in_flight) = run_http_corpus_schedule(
+            &self.client,
+            &origin,
+            &corpus.cases,
+            default_headers,
+            bodies,
+            selected,
+            concurrency.get() as usize,
+            *connection_policy,
+            &context.cancellation,
+            context.timeout,
+        )
+        .await;
+        let elapsed = started.elapsed();
+        context.measurement.finish(elapsed);
+        Ok(build_http_corpus_output(
+            &corpus.cases,
+            default_headers,
+            &outcomes,
+            planned_count,
+            elapsed,
+            max_in_flight,
+            *connection_policy,
+            seed,
+            corpus_sha256,
+            &planned_schedule_sha256,
+            &realized_schedule_sha256,
         ))
     }
 }
@@ -310,6 +778,7 @@ fn run_plan(workload: &Workload) -> Result<(&str, RunPlan), FailureCategory> {
         Workload::OpenLoop { .. } | Workload::SemanticReplay { .. } => {
             Err(FailureCategory::WorkloadFailed)
         }
+        Workload::HttpCorpus { .. } => Err(FailureCategory::WorkloadFailed),
     }
 }
 
@@ -826,4 +1295,221 @@ fn method_evidence(
             .insert("network_path".to_owned(), network_path.clone());
     }
     evidence
+}
+
+#[cfg(test)]
+mod http_corpus_load_tests {
+    use super::*;
+    use eggbench_core::{HttpCaseRequestV1, HttpObservableExpectationV1};
+    use std::sync::atomic::AtomicUsize;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn local_origin(
+        status: u16,
+    ) -> (
+        String,
+        Arc<AtomicUsize>,
+        Arc<tokio::sync::Mutex<Vec<(String, Vec<u8>)>>>,
+        CancellationToken,
+    ) {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind test origin");
+        let address = listener.local_addr().expect("origin address");
+        let connections = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let cancel = CancellationToken::new();
+        let server_cancel = cancel.clone();
+        let server_connections = Arc::clone(&connections);
+        let server_requests = Arc::clone(&requests);
+        tokio::spawn(async move {
+            loop {
+                let accepted = tokio::select! {
+                    () = server_cancel.cancelled() => break,
+                    accepted = listener.accept() => accepted,
+                };
+                let Ok((mut stream, _)) = accepted else { break };
+                server_connections.fetch_add(1, Ordering::SeqCst);
+                let records = Arc::clone(&server_requests);
+                tokio::spawn(async move {
+                    loop {
+                        let mut request = Vec::new();
+                        let mut byte = [0_u8; 1];
+                        while !request.ends_with(b"\r\n\r\n") {
+                            if stream.read_exact(&mut byte).await.is_err() {
+                                return;
+                            }
+                            request.push(byte[0]);
+                            if request.len() > 32 * 1024 {
+                                return;
+                            }
+                        }
+                        let head = String::from_utf8_lossy(&request);
+                        let first = head.lines().next().unwrap_or_default().to_owned();
+                        let content_length = head
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        let mut body = vec![0_u8; content_length];
+                        if stream.read_exact(&mut body).await.is_err() {
+                            return;
+                        }
+                        records.lock().await.push((first, body));
+                        let response = format!(
+                            "HTTP/1.1 {status} Test\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok"
+                        );
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (format!("http://{address}"), connections, requests, cancel)
+    }
+
+    fn post_case(expected: u16) -> HttpSecurityCaseV1 {
+        HttpSecurityCaseV1 {
+            id: "post_json".to_owned(),
+            category: None,
+            request: HttpCaseRequestV1 {
+                method: "POST".to_owned(),
+                path_and_query: "/submit?q=1".to_owned(),
+                headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+                body: HttpCaseBodyV1::InlineUtf8("{\"ok\":true}".to_owned()),
+            },
+            expectation: HttpObservableExpectationV1::Exact {
+                status_exact: expected,
+            },
+        }
+    }
+
+    async fn run_case(
+        policy: HttpConnectionPolicy,
+        response_status: u16,
+        expected: u16,
+    ) -> (
+        Vec<HttpCorpusOutcome>,
+        usize,
+        Arc<AtomicUsize>,
+        Arc<tokio::sync::Mutex<Vec<(String, Vec<u8>)>>>,
+        CancellationToken,
+    ) {
+        let (origin, connections, requests, cancel) = local_origin(response_status).await;
+        let case = post_case(expected);
+        let outcomes = run_http_corpus_schedule(
+            &eggfetch_core::Client::new(),
+            &origin,
+            std::slice::from_ref(&case),
+            &[],
+            vec![Some(b"{\"ok\":true}".to_vec())],
+            vec![0, 0],
+            1,
+            policy,
+            &CancellationToken::new(),
+            Duration::from_secs(3),
+        )
+        .await;
+        (outcomes.0, outcomes.1, connections, requests, cancel)
+    }
+
+    #[tokio::test]
+    async fn pooled_post_preserves_body_and_expected_403_is_not_transport_error() {
+        let (outcomes, max_in_flight, connections, requests, cancel) =
+            run_case(HttpConnectionPolicy::Pooled, 403, 403).await;
+        assert_eq!(outcomes.len(), 2);
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| outcome.transport_error.is_none())
+        );
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| outcome.expected_match == Some(true))
+        );
+        assert_eq!(max_in_flight, 1);
+        assert_eq!(connections.load(Ordering::SeqCst), 1);
+        let records = requests.lock().await;
+        assert_eq!(records.len(), 2);
+        assert!(
+            records
+                .iter()
+                .all(|(line, _)| line == "POST /submit?q=1 HTTP/1.1")
+        );
+        assert!(records.iter().all(|(_, body)| body == b"{\"ok\":true}"));
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn fresh_per_request_uses_distinct_connections_and_mismatch_is_separate() {
+        let (outcomes, _, connections, requests, cancel) =
+            run_case(HttpConnectionPolicy::FreshPerRequest, 200, 403).await;
+        assert_eq!(outcomes.len(), 2);
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| outcome.transport_error.is_none())
+        );
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| outcome.expected_match == Some(false))
+        );
+        assert_eq!(connections.load(Ordering::SeqCst), 2);
+        assert_eq!(requests.lock().await.len(), 2);
+        let output = build_http_corpus_output(
+            &[post_case(403)],
+            &[],
+            &outcomes,
+            2,
+            Duration::from_millis(2),
+            1,
+            HttpConnectionPolicy::FreshPerRequest,
+            7,
+            &"ab".repeat(32),
+            &"cd".repeat(32),
+            &"ef".repeat(32),
+        );
+        let transport = output
+            .metrics
+            .iter()
+            .find(|metric| metric.name == "transport_error_rate")
+            .unwrap();
+        let mismatch = output
+            .metrics
+            .iter()
+            .find(|metric| metric.name == "expected_outcome_mismatch_rate")
+            .unwrap();
+        assert_eq!(transport.value, 0.0);
+        assert_eq!(mismatch.value, 1.0);
+        let evidence = output
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.name == METHOD_ARTIFACT)
+            .unwrap();
+        assert!(!String::from_utf8_lossy(&evidence.bytes).contains("{\\\"ok\\\":true}"));
+        cancel.cancel();
+    }
+
+    #[test]
+    fn deterministic_shuffle_is_stable_and_trial_seed_sensitive() {
+        let original = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let mut same_a = original.clone();
+        let mut same_b = original.clone();
+        let mut seed_a = 41;
+        let mut seed_b = 41;
+        deterministic_shuffle(&mut same_a, &mut seed_a);
+        deterministic_shuffle(&mut same_b, &mut seed_b);
+        assert_eq!(same_a, same_b);
+        let mut other_trial = original;
+        let mut other_seed = 42;
+        deterministic_shuffle(&mut other_trial, &mut other_seed);
+        assert_ne!(same_a, other_trial);
+    }
 }

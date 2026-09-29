@@ -32,6 +32,7 @@ sha2 = "0.10"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tempfile = "3"
 eggfetch-core = { version = "0.2", optional = true, default-features = false, features = [
   "standard-http1",
   "advanced-routing",
@@ -51,7 +52,6 @@ eggchaos-core = { version = "=0.1.0", optional = true }
 eggress-embed = { version = "=1.0.10", default-features = false, features = [
   "common",
 ] }
-tempfile = "3"
 tokio = { workspace = true, features = ["net"] }
 
 [target.'cfg(unix)'.dependencies]
