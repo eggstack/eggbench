@@ -1,6 +1,6 @@
 # Security Qualification M003c — Subject Telemetry and SynVoid Metrics Ingestion
 
-Status: ready for generic collector implementation; terminal SynVoid live proof remains blocked on the owner telemetry-contract handoff (upstream plan is READY, not closed).
+Status: generic collector implemented at `2742e0e`; terminal SynVoid qualification remains blocked on the owner telemetry-contract handoff (upstream plan is READY, not closed).
 
 Research baselines:
 

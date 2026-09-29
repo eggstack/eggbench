@@ -1,6 +1,6 @@
 # Security Qualification M003d — Eggsec Load Profiles, Live Qualification, and M003 Closure
 
-Status: authored; blocked on M003a-M003c and final Security Qualification M002 C002 closure.
+Status: Eggsec load adapter slice implemented at `739f382` (status record: `plans/closure/security-qualification/003d-status.md`); overall plan remains blocked on M003c terminal qualification and Security Qualification M002 C002 closure.
 
 Research baselines:
 
