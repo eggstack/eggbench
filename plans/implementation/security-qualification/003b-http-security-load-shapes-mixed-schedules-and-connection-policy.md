@@ -1,6 +1,6 @@
 # Security Qualification M003b — HTTP Security Load Shapes, Mixed Schedules, and Connection Policy
 
-Status: ready for implementation; M003a closed at `plans/closure/security-qualification/003a-status.md`.
+Status: closed at `plans/closure/security-qualification/003b-status.md`.
 
 Research baseline: `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`.
 

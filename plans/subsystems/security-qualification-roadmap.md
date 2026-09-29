@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 blocked on real-SynVoid live execution and frozen-policy live-host repeatability; SynVoid owner asset contract closed at `30e68af8`; M003a closed, M003b ready, M003c-d blocked on their listed prerequisites)
+Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 blocked on real-SynVoid live execution and frozen-policy live-host repeatability; SynVoid owner asset contract closed at `30e68af8`; M003a-b closed, M003c generic implementation ready but terminal live proof blocked on owner telemetry contract, M003d blocked on M003c and C002)
 
 Long-term references:
 
@@ -398,10 +398,10 @@ Ordered implementation decomposition:
    **CLOSED** at `plans/closure/security-qualification/003a-status.md`. Adds profile-v2 per-scenario driver binding, generalized non-secret static runtime bindings, and typed dependency binding resolution into command argv/env with auditable evidence.
 2. **M003b — HTTP security load shapes, mixed schedules, and connection policy**  
    `plans/implementation/security-qualification/003b-http-security-load-shapes-mixed-schedules-and-connection-policy.md`  
-   **READY** after M003a closure. Reuse immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, and pooled/fresh connection methods; extend oha only for the required independent body/churn subset.
+   **CLOSED** at `plans/closure/security-qualification/003b-status.md`. Reuses immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, pooled/fresh connection methods, and the independent oha single-case body/churn subset.
 3. **M003c — subject telemetry and SynVoid metrics ingestion**  
    `plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md`  
-   Authored; blocked on M003b and the SynVoid owner telemetry contract (upstream plan is READY but not closed). Add a generic bounded Prometheus collector and keep `host_*` Gregg semantics separate from `subject_*` target metrics.
+   Generic implementation is ready now that M003b is closed. Terminal live qualification remains blocked on the SynVoid owner telemetry contract (upstream plan is still READY, not closed). Add a generic bounded Prometheus collector and keep `host_*` Gregg semantics separate from `subject_*` target metrics.
 4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
    `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
    Authored; blocked on M003a-c and terminal M002 C002 closure. Prove body/mixed/churn/telemetry patterns with real SynVoid plus a strict-scope Eggsec load path and close M003.
@@ -450,4 +450,4 @@ those semantics.
 
 SynVoid owner-side asset contract is closed at implementation `ae045481` / current closeout head `30e68af8`, so it is no longer an active C002 blocker. Eggbench C001 is **STOPPED with verification** at `b98973f` (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition `STOPPED with verification`) — hosted CI run `36451730637` recorded `synvoid_m002a` 7/7 green and the live-host repeatability failure surfaced on `synvoid_m002b::perf_same_source_pair_never_fails` is owned by C002. C002 still owns terminal M002 closure through repeatability, exact-head verification, and real `live-synvoid-linux` Stage B/C execution.
 
-M003 research/decomposition is now registered. M003a is dependency-ready; M003b-d are authored with explicit gates. The new SynVoid M003 telemetry handoff is a parallel owner dependency for M003c/d, not a reopening of the M002 asset contract.
+M003 research/decomposition is now registered. M003a-b are closed. M003c generic collector work is ready, while its terminal live proof and M003d remain gated on the open SynVoid M003 telemetry handoff; M003d also requires terminal M002 C002 closure. The telemetry handoff is a parallel owner dependency, not a reopening of the M002 asset contract.
