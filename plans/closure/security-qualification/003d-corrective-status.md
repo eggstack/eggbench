@@ -156,6 +156,21 @@ NOT-EXECUTED entries are the optional oha/h2load oracles and the Gregg host
 probe absent from the hosted runner, which C002 records as permitted optional
 absence.
 
+### 5.3 Confirmation on the pushed head
+
+The closure records are committed as a documentation-only descendant
+`1462f8d20f1624820fbf3b097b2a7e20dd0c809f` whose source tree is byte-identical
+to `4703333` (`git diff 4703333 1462f8d` touches `plans/` only). Plan §8
+explicitly permits this for revalidation, and the same head was re-qualified:
+
+| Run | Head | Result |
+|---|---|---|
+| `36644371477` (CI) | `1462f8d` | GREEN: `linux-stable`, `linux-msrv`, `macos-stable`, `windows-stable` all success |
+| `36644371444` (Live external-tool qualification) | `1462f8d` | GREEN: `live-tools-linux`, `live-eggsec-linux`, `live-m004b-linux`, `live-synvoid-linux` all success |
+
+The current `main` head therefore carries both the corrective implementation
+and its closure records on green hosted evidence.
+
 ## 6. Downstream effect
 
 - M002 corrective C002 is no longer gated on this repair. Its exact-head

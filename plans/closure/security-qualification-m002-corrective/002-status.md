@@ -250,6 +250,16 @@ No C002-owned defect appeared in either run. C002's frozen v1 trial/metric/gate
 thresholds were not re-tuned or weakened; the repair was M003d-owned and
 minimal.
 
+### 10.3 Confirmation on the pushed head
+
+The corrective's closure records were committed afterwards as a
+documentation-only descendant `1462f8d20f1624820fbf3b097b2a7e20dd0c809f`
+(identical source tree: `git diff 4703333 1462f8d` touches `plans/` only),
+which was re-qualified as CI run `36644371477` (all four lanes green) and live
+run `36644371444` (all four live jobs green, `live-synvoid-linux` included).
+C002 evidence therefore stands on the current `main` head as well as on the
+proof-bearing implementation head.
+
 ## 11. Terminal reconciliation (§13 criterion 14)
 
 1. `plans/closure/security-qualification/002a-status.md` and
