@@ -2,8 +2,11 @@
 
 Status: **CLOSING** — implementation landed; real SynVoid proof green
 locally and end-to-end in the live harness; exact-head hosted
-qualification (four-lane normal CI + `live-synvoid-linux` with real
-stages) pending the next push. No M002 closure claimed yet.
+qualification partially reported on implementation SHA `9d9d8b9`:
+`live-synvoid-linux` with real stages is GREEN (run `36607614200`),
+while four-lane normal CI is RED (run `36607614262`) on failures
+attributed to the out-of-scope M003d Eggsec commit, not to C002 (§10).
+No M002 closure claimed yet.
 
 Plan:
 
@@ -188,10 +191,30 @@ threshold, or schema weakened. `cargo fmt --check`, `cargo check`,
 
 ## 10. Remaining for terminal closure (§13 criteria 1, 11–14)
 
-1. Push the implementation SHA; record the exact-head four-lane normal
-   CI run (criterion 11) — the macOS `synvoid_m002b` synthetic lane is
-   the known risk and must be read, not assumed;
-2. record the exact-head live workflow incl. `live-synvoid-linux` with
-   real stages executed (criteria 12–13);
+1. ~~Push the implementation SHA~~ done (`9d9d8b9`); the exact-head
+   four-lane normal CI run (criterion 11) reported RED —
+   run `36607614262` (`push`, head `9d9d8b9`): `linux-msrv` green;
+   `linux-stable` + `macos-stable` fail on
+   `workload_registry::tests::production_runtime_reports_no_driver`
+   (`eggbench-cli` lib descriptor-count assertion); `windows-stable`
+   fails on clippy `-D warnings` (`unused_mut` at
+   `crates/eggbench-drivers/src/external/eggsec_load.rs:259`).
+   Attribution: both failures come from the M003d Eggsec commit
+   `739f382` (last writer of `workload_registry.rs` and of
+   `crates/eggbench-drivers/src/`; CI was green at `2742e0e` and red
+   at `739f382`/`18b1c1c` before C002). C002's commit contains zero
+   files under `crates/*/src`, so neither failure is C002's. Still,
+   criterion 11 requires green — it is now owned by the M003d repair,
+   not by further C002 work (C002 §10 forbids production changes).
+   Note the macOS lane failed before reaching the `synvoid_m002b`
+   synthetic test, so the known same-source risk lane produced no new
+   signal either way;
+2. exact-head live workflow (criteria 12–13): GREEN —
+   run `36607614200` (`push`, head `9d9d8b9`), all four live jobs
+   success; `live-synvoid-linux` executed every real stage
+   (pass=25 stopped=0 notexec=5; the 5 NOT-EXECUTED are the optional
+   oha/h2load oracles absent from the runner plus Gregg D5);
 3. reconcile roadmap/registry from conditional to closed (criterion 14)
-   only after 1–2 are green.
+   only after criterion 11 turns green on a later SHA — that
+   reconciliation must then re-verify C002's evidence still holds
+   exact-head, not assume it.
