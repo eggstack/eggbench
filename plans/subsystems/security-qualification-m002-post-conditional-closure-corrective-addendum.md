@@ -1,6 +1,6 @@
 # Security Qualification M002 Post-Conditional-Closure Corrective Addendum
 
-Status: active (C001 STOPPED with verification at `b98973f` per plan §10; SynVoid asset contract CLOSED upstream 2026-09-28; C002 closing with real proof green locally + in-harness, exact-head hosted qualification pending; the m002b live-host repeatability issue surfaced by C001 is owned by C002)
+Status: active (C001 STOPPED with verification at `b98973f` per plan §10; SynVoid asset contract CLOSED upstream 2026-09-28; C002 closing with real + hosted-live proof green; exact-head four-lane closure currently blocked by M003d-owned source regressions and assigned to the READY `003d-corrective-eggsec-load-ci-portability-and-unblock.md`)
 
 Baseline: `660ab472ebf214e1378da777b1f06412decc008a`
 
@@ -65,11 +65,16 @@ This corrective closes two outstanding proof gaps:
    tests) with local + in-harness proof green — Stage B 15/15 positive,
    negative Fail, origin-log and teardown proofs; Stage C-real smoke
    Pass, same-source Pass/Inconclusive never Fail, oha/h2load green;
-   full harness 29/0/1. Terminal close awaits exact-head four-lane
-   normal CI plus the live workflow with real stages on the
-   implementation SHA (the macOS synthetic same-source lane is the
-   known risk; C001's STOPPED disposition is reconciled, not rewritten,
-   in the C002 status §8).
+   full harness 29/0/1. Hosted live run `36607614200` is also green with
+   real stages executed. Exact-head four-lane run `36607614262` is red
+   on two M003d-owned source regressions (stale production
+   workload/descriptor count and Windows cfg-only `unused_mut`), not on
+   C002 code. The repair authority is
+   `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
+   After that repair, C002 requires green exact-head four-lane + live
+   revalidation before terminal reconciliation. C001's STOPPED disposition
+   remains historical and is explicitly adjudicated by C002 §8 rather than
+   rewritten.
 
 ## Invariants
 
@@ -89,8 +94,11 @@ This corrective closes two outstanding proof gaps:
 M002 becomes fully closed only when all of the following hold on a
 proof-bearing Eggbench SHA:
 
-- C001 macOS corrective closed;
-- SynVoid owner-side asset contract closed with a proof-bearing source SHA;
+- C001's historical `STOPPED with verification` disposition is preserved and
+  its runner-side fix remains verified; C002 explicitly adjudicates the
+  live-host condition surfaced by C001 rather than falsely rewriting C001 as
+  closed;
+- SynVoid owner-side asset contract is closed with a proof-bearing source SHA;
 - real SynVoid positive correctness proof passes;
 - deterministic negative correctness proof fails as expected;
 - real benign performance/oracle scenarios execute;
@@ -98,5 +106,10 @@ proof-bearing Eggbench SHA:
 - exact-head live qualification including real SynVoid is green;
 - the roadmap/registry are reconciled from conditional to closed.
 
-M003 research may proceed in parallel, but M003 implementation should not use
-"fully qualified M002" as a premise until this corrective closes.
+Current closure order: first land the M003d CI portability corrective, then
+re-run exact-head four-lane + live qualification and close C002 if those gates
+remain green.
+
+M003c terminal telemetry qualification may proceed in parallel because its
+SynVoid v2 owner dependency is now closed. Full M003d/M003 closure must not use
+"fully qualified M002" as a premise until C002 actually closes.
