@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 blocked on live-host repeatability + real live execution; SynVoid owner asset contract closed at `30e68af8`; M003a ready and M003b-d authored)
+Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 blocked on real-SynVoid live execution and frozen-policy live-host repeatability; SynVoid owner asset contract closed at `30e68af8`; M003a closed, M003b ready, M003c-d blocked on their listed prerequisites)
 
 Long-term references:
 
@@ -395,13 +395,13 @@ Ordered implementation decomposition:
 
 1. **M003a — qualification method binding and runtime binding resolution**  
    `plans/implementation/security-qualification/003a-qualification-method-binding-and-runtime-binding-resolution.md`  
-   **READY.** Add profile-v2 per-scenario driver binding, generalized non-secret static runtime bindings, and typed dependency binding resolution into command argv/env with auditable evidence.
+   **CLOSED** at `plans/closure/security-qualification/003a-status.md`. Adds profile-v2 per-scenario driver binding, generalized non-secret static runtime bindings, and typed dependency binding resolution into command argv/env with auditable evidence.
 2. **M003b — HTTP security load shapes, mixed schedules, and connection policy**  
    `plans/implementation/security-qualification/003b-http-security-load-shapes-mixed-schedules-and-connection-policy.md`  
-   Authored; blocked on M003a. Reuse immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, and pooled/fresh connection methods; extend oha only for the required independent body/churn subset.
+   **READY** after M003a closure. Reuse immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, and pooled/fresh connection methods; extend oha only for the required independent body/churn subset.
 3. **M003c — subject telemetry and SynVoid metrics ingestion**  
    `plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md`  
-   Authored; blocked on M003b and the SynVoid owner telemetry contract. Add a generic bounded Prometheus collector and keep `host_*` Gregg semantics separate from `subject_*` target metrics.
+   Authored; blocked on M003b and the SynVoid owner telemetry contract (upstream plan is READY but not closed). Add a generic bounded Prometheus collector and keep `host_*` Gregg semantics separate from `subject_*` target metrics.
 4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
    `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
    Authored; blocked on M003a-c and terminal M002 C002 closure. Prove body/mixed/churn/telemetry patterns with real SynVoid plus a strict-scope Eggsec load path and close M003.

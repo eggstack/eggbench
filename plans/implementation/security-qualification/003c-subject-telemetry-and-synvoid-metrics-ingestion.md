@@ -1,6 +1,6 @@
 # Security Qualification M003c — Subject Telemetry and SynVoid Metrics Ingestion
 
-Status: authored; blocked on M003b plus the SynVoid owner telemetry-contract handoff.
+Status: authored; blocked on M003b closure and the SynVoid owner telemetry-contract handoff (upstream plan is READY, not closed).
 
 Research baselines:
 

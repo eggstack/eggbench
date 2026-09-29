@@ -1,6 +1,6 @@
 # Security Qualification M003a — Qualification Method Binding and Runtime Binding Resolution
 
-Status: ready for implementation.
+Status: closed; implementation and four-lane hosted qualification complete.
 
 Research baseline: `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`.
 
