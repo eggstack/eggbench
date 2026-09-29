@@ -10,6 +10,7 @@ mod common;
 pub mod eggprobe;
 pub mod eggreplay;
 pub mod eggsec;
+pub mod eggsec_load;
 mod error;
 mod h2load;
 mod iperf3;
@@ -42,6 +43,9 @@ pub use eggsec::{
     eggsec_supported_test_type_names, generate_scope_manifest, parse_preflight_stdout,
     parse_waf_stdout, preflight_eggsec, run_guarded_preflight, security_timing_label,
     waf_argv_tail,
+};
+pub use eggsec_load::{
+    EGGSEC_LOAD_DRIVER_NAME, EGGSEC_LOAD_PARSER_ID, EggsecLoadWorkload, eggsec_load_descriptor,
 };
 pub use error::{DriverError, ErrorCategory};
 pub use h2load::{

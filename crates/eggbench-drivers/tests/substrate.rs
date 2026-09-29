@@ -233,6 +233,7 @@ fn production_catalog_registers_oracles_unconditionally() {
     expected.extend([
         "eggprobe".to_owned(),
         "eggreplay-semantic".to_owned(),
+        "eggsec-load".to_owned(),
         "eggsec-waf".to_owned(),
         "h2load".to_owned(),
         "iperf3".to_owned(),

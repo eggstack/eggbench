@@ -18,6 +18,8 @@ A requested `network_path` requires all of the following before resolution succe
 
 The external-process oracles (`oha`, `h2load`, `iperf3`) do not advertise `NetworkPath`, so selecting one for a path plan fails before startup. A path requires a transport-owning workload and is incompatible with `Subject::External`. It is also incompatible with the paired design: both arms remain live while one run-scoped client/pool can reuse physical connections. These combinations fail with stable preflight categories rather than weakening pool or trial semantics.
 
+`eggsec-load` is an explicit security-owner workload for one repeated case from a digest-pinned `http_corpus` schedule. It is never a default and rejects multi-case schedules. Before load traffic it generates a private strict-scope file and requires Eggsec's guarded `load-test` preflight to approve the exact bound target. Eggsec status outcomes contribute to `expected_outcome_mismatch_rate`; categorized transport failures contribute separately to `error_rate`. Its evidence records that Eggsec's load path uses Eggfetch, so it is not an independent transport oracle. Missing Eggsec fails resolution; there is no native workload fallback.
+
 ## ResolvedPlan compatibility
 
 New resolutions use **ResolvedPlan schema v3**. It retains the source plan version, selected workload/service/route/fault descriptors, exact upstream versions, normalized intent, seed, warnings, and optional resolved network-path provenance. ResolvedPlan v1 and v2 remain accepted on read for legacy bundles and are not rewritten. Unknown fields and unknown capability variants require an explicit compatibility decision; concrete adapter and upstream versions remain in every resolved snapshot.

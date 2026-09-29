@@ -10,10 +10,13 @@
 use super::error::{DriverError, ErrorCategory};
 use super::version::ToolVersion;
 use super::{
-    EGGPROBE_DRIVER_NAME, EGGREPLAY_DRIVER_NAME, EGGSEC_DRIVER_NAME, H2LOAD_DRIVER_NAME,
-    IPERF3_DRIVER_NAME, OHA_DRIVER_NAME,
+    EGGPROBE_DRIVER_NAME, EGGREPLAY_DRIVER_NAME, EGGSEC_DRIVER_NAME, EGGSEC_LOAD_DRIVER_NAME,
+    H2LOAD_DRIVER_NAME, IPERF3_DRIVER_NAME, OHA_DRIVER_NAME,
 };
-use super::{EggProbeExecutor, EggReplayWorkload, H2loadWorkload, Iperf3Workload, OhaWorkload};
+use super::{
+    EggProbeExecutor, EggReplayWorkload, EggsecLoadWorkload, H2loadWorkload, Iperf3Workload,
+    OhaWorkload,
+};
 use eggbench_core::Name;
 use tokio_util::sync::CancellationToken;
 
@@ -22,7 +25,11 @@ use tokio_util::sync::CancellationToken;
 pub fn is_external_workload(name: &Name) -> bool {
     matches!(
         name.as_str(),
-        OHA_DRIVER_NAME | H2LOAD_DRIVER_NAME | IPERF3_DRIVER_NAME | EGGREPLAY_DRIVER_NAME
+        OHA_DRIVER_NAME
+            | H2LOAD_DRIVER_NAME
+            | IPERF3_DRIVER_NAME
+            | EGGREPLAY_DRIVER_NAME
+            | EGGSEC_LOAD_DRIVER_NAME
     )
 }
 
@@ -39,6 +46,7 @@ pub fn external_binary_present(name: &Name) -> Option<bool> {
         EGGREPLAY_DRIVER_NAME => Some(EggReplayWorkload::resolve().is_ok()),
         EGGPROBE_DRIVER_NAME => Some(EggProbeExecutor::resolve().is_ok()),
         EGGSEC_DRIVER_NAME => Some(super::EggsecWafExecutor::resolve().is_ok()),
+        EGGSEC_LOAD_DRIVER_NAME => Some(EggsecLoadWorkload::resolve().is_ok()),
         _ => None,
     }
 }
@@ -58,6 +66,7 @@ pub fn executable_path_for(name: &Name) -> Option<String> {
         EGGREPLAY_DRIVER_NAME => EggReplayWorkload::resolve().ok(),
         EGGPROBE_DRIVER_NAME => EggProbeExecutor::resolve().ok(),
         EGGSEC_DRIVER_NAME => super::EggsecWafExecutor::resolve().ok(),
+        EGGSEC_LOAD_DRIVER_NAME => EggsecLoadWorkload::resolve().ok(),
         _ => None,
     }?;
     Some(resolved.canonical_path.to_string_lossy().into_owned())
@@ -73,6 +82,10 @@ pub async fn probe_external_workload(
     cancel: &CancellationToken,
 ) -> Result<ToolVersion, DriverError> {
     match name.as_str() {
+        EGGSEC_LOAD_DRIVER_NAME => {
+            let executable = EggsecLoadWorkload::resolve()?;
+            EggsecLoadWorkload::probe(&executable, cancel).await
+        }
         OHA_DRIVER_NAME => {
             let executable = OhaWorkload::resolve()?;
             let probed = OhaWorkload::probe(&executable, cancel).await?;

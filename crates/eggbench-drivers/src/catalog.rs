@@ -63,6 +63,7 @@ impl DriverCatalog {
             crate::external::eggreplay_descriptor(),
             crate::external::eggprobe_descriptor(),
             crate::external::eggsec_descriptor(),
+            crate::external::eggsec_load_descriptor(),
         ]);
         Self { descriptors }
     }
@@ -145,6 +146,7 @@ mod tests {
             "eggprobe".to_owned(),
             "eggreplay-semantic".to_owned(),
             "eggsec-waf".to_owned(),
+            "eggsec-load".to_owned(),
             "h2load".to_owned(),
             "iperf3".to_owned(),
             "oha".to_owned(),

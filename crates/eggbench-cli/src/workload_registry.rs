@@ -420,6 +420,13 @@ pub fn production_workload_executor(
             executable,
         )));
     }
+    if driver.as_str() == eggbench_drivers::EGGSEC_LOAD_DRIVER_NAME {
+        let executable =
+            eggbench_drivers::EggsecLoadWorkload::resolve().map_err(|error| error.to_string())?;
+        return Ok(Box::new(
+            eggbench_drivers::EggsecLoadWorkload::from_resolved(executable),
+        ));
+    }
     if driver.as_str() == eggbench_drivers::EGGREPLAY_DRIVER_NAME {
         let Some(resolved) = resolved else {
             return Err("eggreplay-semantic executor requires a resolved plan".to_owned());
@@ -848,7 +855,13 @@ mod tests {
         // The external oracles plus EggReplay register unconditionally; only
         // the native Eggfetch driver is feature-gated (and remains the unique
         // default).
-        let mut expected = vec!["eggreplay-semantic", "h2load", "iperf3", "oha"];
+        let mut expected = vec![
+            "eggsec-load",
+            "eggreplay-semantic",
+            "h2load",
+            "iperf3",
+            "oha",
+        ];
         #[cfg(feature = "eggstack-http")]
         expected.push("eggfetch-http");
         let inventory = registry.inventory();
