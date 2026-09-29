@@ -1,8 +1,9 @@
-# Security Qualification M002 Corrective C002 — Execution Status (BLOCKED)
+# Security Qualification M002 Corrective C002 — Execution Status (CLOSING)
 
-Status: **BLOCKED** — execution attempted at Eggbench `b52e2a5`; all three
-hard prerequisites fail; no production semantic change made; no closure
-claimed.
+Status: **CLOSING** — implementation landed; real SynVoid proof green
+locally and end-to-end in the live harness; exact-head hosted
+qualification (four-lane normal CI + `live-synvoid-linux` with real
+stages) pending the next push. No M002 closure claimed yet.
 
 Plan:
 
@@ -12,120 +13,185 @@ Corrective authority:
 
 - `plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md`
 
+Supersedes: the earlier BLOCKED revision of this record (prerequisites
+1–3 have since closed on the SynVoid side; see section 3).
+
 ## 1. Disposition
 
-**BLOCKED, per plan §14 and planning-process §4 (hard dependencies).**
-C002 was executed as far as the repository boundary permits:
+**CLOSING, per registry vocabulary (implementation landed, closure
+evidence being gathered).** C002 executed end-to-end:
 
-- §2 re-audit recorded (section 2);
-- Stage B gate verified to fail closed with NOT-EXECUTED (section 3);
-- synthetic contract tests verified green locally (section 4);
-- same-source repeatability verified green on this Linux host (section 5).
+- §2 re-audit recorded with real values (section 2);
+- owner export consumed mechanically, never reinterpreted (section 4);
+- Stage B real correctness proof green: positive Pass 15/15, negative
+  mutation Fails closed, blocked requests provably never reach the
+  origin, teardown leaves nothing behind (section 5);
+- Stage C real performance path green: smoke Pass, same-source
+  repeatability Pass/Inconclusive never Fail, oha + h2load oracles
+  execute (section 6);
+- live harness Stage B/C-real wired proof-bearing; full harness run
+  29 PASS / 0 STOPPED locally (section 7);
+- fast deterministic import-layer tests added (`synvoid_m002c`, 3/3);
+- no production semantic change (section 9).
 
-Real SynVoid proof (§4 Stage B, §5 Stage C on the real subject, §8
-proof-bearing `live-synvoid-linux`, §9 exact-head qualification, §11
-reconciliation, §12 terminal closure) is not executable until the
-prerequisites close. This record claims no M002 closure.
+Remaining for terminal closure (§13 criteria 1, 11–14): exact-head
+hosted runs on the implementation SHA plus the C001-disposition
+reconciliation recorded in section 8.
 
 ## 2. Re-audit at handoff (§2)
 
 | Item | Value |
 |---|---|
-| Eggbench HEAD | `b52e2a5399754cd3da3e4818ae0038b9f0c8b4df` (`b52e2a5`, `main`, tree clean) |
+| Eggbench implementation HEAD | (this commit; tree clean; see §9 for the file list) |
 | C001 implementation SHA | `b98973f` (`fix(qualification): restore macOS hosted portability via tcp-loopback readiness probe`) |
-| C001 closure | `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition **STOPPED with verification** (not closed) |
-| SynVoid asset-contract closure SHA | ABSENT — `plans/eggbench_security_qualification_asset_contract.md` does not exist in the observed SynVoid checkout |
-| SynVoid source SHA (observed local checkout `/home/sugarwookie/projects/synvoid`) | `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1` (matches harness `SYNVOID_PIN` default) |
-| SynVoid package version | `1.1.0` (`synvoid/Cargo.toml:3`) |
-| SynVoid `Cargo.lock` SHA-256 (observed) | `2b1daf913a3f3fff…` (full digest in local checkout; NOT a proof-bearing contract pin — recorded only as observation) |
-| Materializer / export policy identifier | ABSENT — no closed contract names one |
-| Exported corpus/config/provenance schema versions | No owner export exists. Expected import boundary remains frozen at `qualification/synvoid/v1/upstream-manifest.md` (policy `synvoid-qualification-assets.v1`, corpus schema 1, plan schema 8, profile schema v1). The checked-in `materialized/provenance.json` is explicitly synthetic (`policy_version: 0-synthetic`, `materializer: eggbench-m002a-synthetic-fixture/0`, zeroed `cargo_lock_sha256`). |
-| Minimal SynVoid binary SHA-256 | NOT AVAILABLE — no canonical minimal build is named by a closed contract; none was built during this execution (building SynVoid is outside the Eggbench boundary and no contract defines the canonical feature profile to hash) |
-
-Planning baselines (`49b4624b…` observed 2026-09-26, `7f1b7945…` routine
-scope) were used only to locate the checkout, not as live proof.
+| C001 closure | `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition **STOPPED with verification** (runner-side scope verified green on hosted run `36451730637`; live-host gap owned by C002 — see section 8) |
+| SynVoid asset-contract closure | **CLOSED** 2026-09-28: `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md` at `origin/main`; implementation `ae045481752b8f750d6e6079b185c526a09c91d5`; closeout `architecture/eggbench_security_qualification_asset_contract_closeout.md` with live reverse-proxy proof 15/15 + 2/2 perf paths |
+| SynVoid source SHA (consumed) | `ae045481752b8f750d6e6079b185c526a09c91d5` (harness `SYNVOID_PIN`) |
+| SynVoid package version | `1.1.0` |
+| SynVoid `Cargo.lock` SHA-256 (at consumed SHA) | `426c6124dc450b9e54b16d3698f36911047f56f1f1f9fe0564e064ff57a06451` (matches closeout prefix `426c6124…`) |
+| Materializer / export policy identifier | `synvoid-eggbench-qualification-materializer@1.0.0` / `synvoid.eggbench-qualification.v1` (provenance-asserted by the harness) |
+| Exported corpus/config/provenance schema versions | `eggbench.security_qualification.corpus.v1` / `eggbench.security_qualification.config.v1` / `eggbench.security_qualification.provenance.v1`; 15 cases, 12 exclusions; `detect_status` 403, `pass_status` 200 |
+| Minimal SynVoid binary SHA-256 | release `--locked --no-default-features` (harness CI-context build): `23f3df64e27d46e80f88ffa9815e549df9649007e0299b60dd083e8ccdf3ea8a`; local debug build: `af2f4791ede976b2529a0d6915523fae3e61569682f7ce3718da5b2bf18a160a` (profiles differ by env; both recorded) |
 
 ## 3. Hard-prerequisite check (§9 items 1–3, §13 criteria 1–2)
 
 | Prerequisite | Result |
 |---|---|
-| 1. C001 closed (`plans/closure/security-qualification-m002-corrective/001-status.md`) | FAIL — disposition is STOPPED with verification; `synvoid_m002a` verified green on hosted run `36451730637` but `synvoid_m002b::perf_same_source_pair_never_fails` exposes Apple Silicon live-host repeatability owned by C002 |
-| 2. SynVoid owner-side plan closed (`dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`) | FAIL — file absent at the pinned SHA `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1` (verified `ls` exit 2 on the local checkout at that exact SHA) |
-| 3. SynVoid closeout with proof-bearing SHA + live reverse-proxy semantic proof | FAIL — no closeout exists to record one |
+| 1. C001 closed | EXCEPTION — disposition is STOPPED with verification, not closed (see section 8 for the recorded rationale; no silent rewrite) |
+| 2. SynVoid owner-side plan closed | PASS — closed 2026-09-28, implementation `ae045481…`, closeout with live proof |
+| 3. SynVoid closeout with proof-bearing SHA + live reverse-proxy semantic proof | PASS — 15/15 corpus + 2/2 perf paths on pinned minimal binary |
 
-Per plan §10, no Eggbench production semantic change was made to
-compensate: Eggbench must not parse SynVoid internal fixture format,
-derive Detect/Pass mapping itself, or normalize excluded cases into a
-weaker form.
+Per plan §10, no Eggbench production semantic change compensates for
+anything: Eggbench does not parse SynVoid internal fixture format (it
+consumes the owner-normalized export), does not derive Detect/Pass
+mapping (per-case `expected_status` must equal the owner-declared wire
+status), and does not normalize excluded cases into weaker forms.
 
-## 4. Stage B gate verification (§8)
+## 4. Asset import boundary (§3)
 
-The harness gate at
-`scripts/qualification/synvoid-m002/run-live-qualification.sh:227-233`
-checks for the contract file at the pinned revision and reports
-NOT-EXECUTED when absent. Verified against the local checkout at the
-exact pinned SHA: contract absent → Stage B is NOT-EXECUTED by
-construction. The `live-synvoid-linux` job therefore remains green-in-form
-without claiming live qualification — the truthful pre-C002 posture.
-Per §8, it MUST be flipped to fail on NOT-EXECUTED only when the real
-sequence lands; that flip was deliberately NOT made here (it would turn
-CI permanently red with no contract to satisfy it).
+Consumed only the owner export. Deltas from the frozen
+`qualification/synvoid/v1/upstream-manifest.md` expectation, all
+owner-driven and harness-contained:
 
-## 5. Synthetic verification evidence (§7, §13 criterion 10)
+- `policy_id` is `synvoid.eggbench-qualification.v1` (not the pre-close
+  guess `synvoid-qualification-assets.v1`); manifest doc updated; the
+  harness pins and asserts equality on both corpus and provenance;
+- owner `CorpusCase{method, path, query_string, headers, body, expected_status}`
+  is translated mechanically to Eggbench `HttpSecurityCaseV1` by
+  `scripts/qualification/synvoid-m002/translate-owner-corpus.py`
+  (pinned policy; `expected_status` ∈ {owner 403, owner 200};
+  detect → `status_any_of[403]`, pass → `status_exact 200`;
+  raw SP → `%20` per the owner transport rule; file bodies fail closed);
+- `provenance.json` carries per-fixture paths + SHA-256, verbatim
+  exclusions (12), config/corpus/site digests, ports, mapping, and
+  materializer version; it carries no `cargo_lock_sha256` aggregate —
+  recorded here instead (section 2) via `git show <pin>:Cargo.lock`;
+- the five owner pass paths plus `/qualbench/small` + `/qualbench/stream`
+  are served by the harness `controlled-origin.py` (200 + deterministic
+  bodies, 501 elsewhere, per-request log): the single-route
+  `eggserve-origin` adapter cannot serve five distinct pass paths, so
+  the harness origin is used for the real proof only (README D2
+  records this); routine synthetic runs keep the real adapter;
+- no Eggbench request header is injected: `HttpCorpusExecutor` sends
+  per-case headers only and eggfetch sets no default UA, so the owner
+  bot-stage constraint (neutral/non-bot UA) holds without any driver
+  change — verified by the 15/15 live agreement itself.
 
-All on `--locked`, Eggbench HEAD `b52e2a5`, tree clean:
+## 5. Harness Stage B — real correctness proof (§4)
 
-| Command | Result |
-|---|---|
-| `cargo fmt --all -- --check` | clean |
-| `git diff --check` | clean |
-| `cargo test -p eggbench-cli --test synvoid_m002a --all-features --locked` | 7 / 7 passed in ~20 s (correctness family incl. `slow_synvoid_startup_still_passes`) |
-| `cargo test -p eggbench-runner --test lifecycle --all-features --locked tcp_loopback` | 2 / 2 passed (probe waits-for-port + rejects non-loopback) |
-| `cargo test -p eggbench-cli --test synvoid_m002b --all-features --locked perf_same_source_pair_never_fails` | 1 / 1 passed in ~107 s on this Linux host (aggregate Pass, never Fail) |
+Local + in-harness evidence (release Eggbench binary; real minimal
+binary; fresh free ports per run):
 
-The last row is the C002 §5 baseline datum on this host: the frozen v1
-policy (7 measured trials, 200/800/2000 requests at c1/c8/c32) holds
-Pass locally while macOS-14 hosted run `36451730637` trips the same-source
-`statistical_relative` gate. That divergence is the live-host
-repeatability gap C002 §5/§14 owns. No threshold, policy, or gate was
-widened during this execution (README §8 evidence and plan §14 forbid
-silent weakening; a policy revision with evidence belongs to M003 if the
-real-subject proof requires it).
+- owner export materialized (15 cases), `check` + `--configtest` green;
+- provenance pins asserted (policy, SHA, 1.1.0, 403/200, 15/12);
+- `qualify validate` + positive `qualify run`: **RC 0, aggregate Pass**;
+- per-case evidence (`security/synvoid-waf.json`): **15/15 Pass**
+  (5 × 200 reach origin; 10 × 403 blocked);
+- origin-log proof (`assert-origin-log.py`): 5 pass paths served 200,
+  10 detect targets absent — blocked requests never reached the origin;
+- negative proof (one expectation mutated to 404 + identity recomputed):
+  **RC 6, aggregate Fail** — a security-expectation mismatch is never
+  reclassified as workload/process failure;
+- teardown proof: both ports free, no `synvoid --foreground` or
+  `controlled-origin.py` child survives.
 
-## 6. Acceptance criteria (§13)
+## 6. Harness Stage C — real performance path (§5)
 
-| # | Criterion | Status |
-|---|---|---|
-| 1 | C001 closed | FAIL (STOPPED with verification) |
-| 2 | SynVoid asset contract closed | FAIL (absent) |
-| 3 | Real owner export consumed without reinterpretation | NOT-EXECUTED (no export) |
-| 4 | Real minimal binary built + config-tested | NOT-EXECUTED |
-| 5 | Real Pass/Detect correctness green | NOT-EXECUTED |
-| 6 | Negative mutation yields Fail on real subject | NOT-EXECUTED |
-| 7 | Real benign native performance path executes | NOT-EXECUTED |
-| 8 | Real independent-oracle path executes | NOT-EXECUTED |
-| 9 | Same-source repeatability, no false Fail (real subject) | NOT-EXECUTED (synthetic same-source holds Pass on this Linux host; macOS synthetic gap recorded as C002-owned) |
-| 10 | Synthetic cross-platform contract tests green | PASS locally (m002a 7/7, probe 2/2); hosted macOS m002a 7/7 green per run `36451730637`; hosted macOS m002b 5/6 (perf gap) |
-| 11 | Exact-head four-lane normal CI green | FAIL (macOS m002b perf lane red on `36451730637`) |
-| 12 | Exact-head live workflow green | NOT-PROOF-BEARING (`live-synvoid-linux` green-in-form with Stage B NOT-EXECUTED) |
-| 13 | `live-synvoid-linux` executed real stages | FAIL (NOT-EXECUTED by design until contract lands) |
-| 14 | Closure/roadmap/registry reconciliation committed | NOT APPLICABLE (nothing to close) |
+Same work dir / export / ports as Stage B:
 
-## 7. Stop statement (§14)
+- real smoke profile (correctness + small/large c1 proxy + absolute
+  gates): **Pass 3/3**;
+- 8 explicit same-source baseline bundles materialized;
+- real perf profile (correctness + small/large × c1/c8/c32 + 2
+  direct-origin controls, frozen v1 trial/metric/gate policy):
+  **RC 7, aggregate inconclusive** — 7 Pass + 2 inconclusive
+  (large-c8/c32), zero Fail across 9 scenarios: the §5 same-source
+  repeatability proof (Pass/Inconclusive, never Fail) on the real
+  subject on this Linux host;
+- oha base/candidate/compare procedure: green;
+- h2load run procedure: green.
 
-Stop with upstream corrective required — the closed SynVoid export
-violates nothing (it does not exist), the real subject cannot run under
-any lifecycle (nothing to run), and no Eggbench production defect was
-exposed (nothing in §10's defect list triggered because no real execution
-was possible). No C003 is authored here: there is no Eggbench production
-defect to correct, only absent upstream assets. The unblock sequence is:
+## 7. Live-harness wiring (§8) and full-run evidence
 
-1. SynVoid closes `plans/eggbench_security_qualification_asset_contract.md` with proof-bearing SHA + semantic proof;
-2. C001's STOPPED disposition resolves (live-host repeatability gap addressed under C002 §5/§14 against the real subject);
-3. C002 re-executes §§3–9 against the closed export.
+`scripts/qualification/synvoid-m002/run-live-qualification.sh` Stage B
+stub replaced with the proof-bearing Stage B + Stage C-real sequence
+(§8 flip applied: clone/checkout/contract/build/export/check/provenance
+failures are STOPPED, never NOT-EXECUTED; NOT-EXECUTED remains only for
+absent optional tools). New harness files (all harness-only, §10):
 
-## 8. Production change record (§10)
+- `translate-owner-corpus.py`, `controlled-origin.py`,
+  `build-real-waf-workspace.py`, `assert-origin-log.py`,
+  `generate-real-scenarios.py`.
 
-None. Zero files under `crates/`, `qualification/`, or `scripts/`
-modified. This execution touched planning artifacts only (this status
-record + registry/addendum pointers).
+Full local harness run: **pass=29 stopped=0 notexec=1** (the single
+NOT-EXECUTED is the optional Gregg-daemon probe, D5). `SYNVOID_PIN`
+default is now `ae045481…`; `POLICY_ID` pins
+`synvoid.eggbench-qualification.v1`.
+
+## 8. C001-disposition reconciliation (§13 criterion 1)
+
+Criterion 1 (`C001 is closed`) cannot be marked PASS without rewriting
+history: C001's record stands at STOPPED with verification per its §10.
+The exception is recorded here explicitly instead:
+
+- C001's narrow runner-side scope (managed-command readiness race) is
+  verified green: macOS hosted run `36451730637` shows `synvoid_m002a`
+  7/7 including the new routine regression;
+- the surfacing failure (`synvoid_m002b::perf_same_source_pair_never_fails`
+  on Apple Silicon) is the live-host repeatability condition the test
+  source and the corrective architecture both assign to C002;
+- C002 discharges it on the real subject (§6: same-source
+  Pass/Inconclusive, never Fail, frozen policy, no threshold widened)
+  locally; the hosted four-lane verdict on the implementation SHA
+  (criterion 11) is the remaining signal and is awaited, not assumed.
+
+## 9. Production change record (§10)
+
+Harness, test, and documentation artifacts only:
+
+- `scripts/qualification/synvoid-m002/`: 5 new helper scripts (all `+x`),
+  `run-live-qualification.sh` Stage B/C-real wiring + pin updates;
+- `crates/eggbench-cli/tests/synvoid_m002c_real_import.rs`: 3 fast
+  deterministic import-layer tests (translation rules, fail-closed
+  rejections, origin-log proof rule);
+- `qualification/synvoid/v1/upstream-manifest.md` + `README.md`:
+  contract-closure facts, real-proof origin notes (D2 resolved as
+  documented).
+
+Zero files under `crates/*/src`, zero scenario/profile/corpus fixture
+changes, zero threshold/policy/gate changes. No M002 correctness rule,
+threshold, or schema weakened. `cargo fmt --check`, `cargo check`,
+`cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo +1.89.0 check`, and `git diff --check` are clean; `synvoid_m002a`
+7/7, `lifecycle` 30/30 (with the CI sentinel env), `binary_exit_codes`
+10/10, `synvoid_m002c` 3/3.
+
+## 10. Remaining for terminal closure (§13 criteria 1, 11–14)
+
+1. Push the implementation SHA; record the exact-head four-lane normal
+   CI run (criterion 11) — the macOS `synvoid_m002b` synthetic lane is
+   the known risk and must be read, not assumed;
+2. record the exact-head live workflow incl. `live-synvoid-linux` with
+   real stages executed (criteria 12–13);
+3. reconcile roadmap/registry from conditional to closed (criterion 14)
+   only after 1–2 are green.

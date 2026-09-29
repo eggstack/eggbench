@@ -71,10 +71,24 @@ live harness copy this workspace and patch free ports before running.
   routes). The live harness wires the real SynVoid to a fixed-port
   deterministic origin. Generic binding interpolation is a Security
   Qualification M003 candidate.
-- **D2 (upstream export).** No SynVoid-owned export exists yet; the
-  corpus/provenance here are Eggbench-authored synthetic fixtures with an
-  explicit non-SynVoid owner. Live Pass/Detect proof against the real
-  export is the remaining closure condition.
+- **D2 (upstream export).** The SynVoid-owned export is closed
+  (policy `synvoid.eggbench-qualification.v1`, 15 cases / 12 exclusions,
+  implementation `ae045481752b8f750d6e6079b185c526a09c91d5`); the
+  corpus/provenance checked in here remain Eggbench-authored synthetic
+  fixtures with an explicit non-SynVoid owner for deterministic routine
+  CI. Live Pass/Detect proof against the real export runs in the
+  `live-synvoid-linux` harness
+  (`scripts/qualification/synvoid-m002/run-live-qualification.sh` Stage B
+  plus Stage C-real), which translates the owner corpus mechanically
+  (`translate-owner-corpus.py`: pinned policy, owner-declared Detect/Pass
+  statuses, SP wire-encoding per the owner transport rule) and serves the
+  controlled origin from the harness (`controlled-origin.py`: the five
+  owner pass paths plus `/qualbench/small` + `/qualbench/stream`, 200 +
+  deterministic bodies, 501 elsewhere, per-request log for the
+  blocked-request proof). The single-route `eggserve-origin` adapter
+  cannot serve the five distinct owner pass paths, so the harness origin
+  is used for the real proof only; routine synthetic runs keep the real
+  adapter as origin.
 - **D3 (block status).** Detect expectations assume HTTP 403 (SynVoid
   `WafDecision::Block(403)`). The site-level `action = "block"` mapping
   was not conclusively located in SynVoid source; live verification must

@@ -1,6 +1,6 @@
 # Security Qualification M002 Post-Conditional-Closure Corrective Addendum
 
-Status: active (C001 STOPPED with verification at `b98973f` per plan §10; C002 still blocked on closed SynVoid asset contract + real `live-synvoid-linux` execution; the m002b live-host repeatability issue surfaced by C001 is owned by C002)
+Status: active (C001 STOPPED with verification at `b98973f` per plan §10; SynVoid asset contract CLOSED upstream 2026-09-28; C002 closing with real proof green locally + in-harness, exact-head hosted qualification pending; the m002b live-host repeatability issue surfaced by C001 is owned by C002)
 
 Baseline: `660ab472ebf214e1378da777b1f06412decc008a`
 
@@ -23,10 +23,11 @@ Trigger evidence:
 - live workflow `36262614991`: green, including
   `live-synvoid-linux`, but the closure record truthfully reports the
   real-SynVoid Stage B as NOT-EXECUTED because the owner-side asset contract
-  remains open;
+  was open at that time;
 - SynVoid owner-side contract:
-  `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`,
-  now ready for implementation.
+  `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
+  — **CLOSED** 2026-09-28 (implementation `ae045481`, closeout head
+  `30e68af8`); C002 consumes it.
 
 ## Purpose
 
@@ -56,12 +57,19 @@ This corrective closes two outstanding proof gaps:
    "M002 closure condition" and that belongs to C002.
 2. **C002 — real SynVoid qualification and final M002 closure**
    `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
-   — blocked on C001 exact-head hosted re-verification, on the live-host
-   repeatability gap C001 exposed, and on SynVoid asset-contract closure.
-   Execution attempted at `b52e2a5` and recorded BLOCKED in
-   `plans/closure/security-qualification-m002-corrective/002-status.md`
-   (all three hard prerequisites fail; synthetic m002a 7/7 + same-source
-   perf Pass locally; Stage B verified NOT-EXECUTED; no production change).
+   → status `plans/closure/security-qualification-m002-corrective/002-status.md`
+   — **closing**: SynVoid asset contract closed upstream 2026-09-28
+   (implementation `ae045481`, policy `synvoid.eggbench-qualification.v1`);
+   the real-live implementation landed (harness-only import layer +
+   `live-synvoid-linux` Stage B/C-real wiring, `synvoid_m002c` contract
+   tests) with local + in-harness proof green — Stage B 15/15 positive,
+   negative Fail, origin-log and teardown proofs; Stage C-real smoke
+   Pass, same-source Pass/Inconclusive never Fail, oha/h2load green;
+   full harness 29/0/1. Terminal close awaits exact-head four-lane
+   normal CI plus the live workflow with real stages on the
+   implementation SHA (the macOS synthetic same-source lane is the
+   known risk; C001's STOPPED disposition is reconciled, not rewritten,
+   in the C002 status §8).
 
 ## Invariants
 

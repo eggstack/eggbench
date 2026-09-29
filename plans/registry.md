@@ -46,8 +46,8 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 routine scope conditionally closed; C002 still open; M003a-b closed, M003c generic collector implemented, M003d Eggsec load slice implemented | SynVoid M002 asset contract is now closed upstream (`ae045481` / closeout head `30e68af8`); C002 still owns live-host repeatability + exact-head/four-lane + real `live-synvoid-linux` closure; M003c terminal qualification depends on the new SynVoid M003 telemetry handoff |
-| Security qualification M002 post-conditional-closure corrective | active | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f`; C002 blocked on remaining Eggbench proof work | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED); SynVoid owner asset contract has closed upstream, so C002 now requires exact-head/four-lane verification, the live-host repeatability fix/adjudication, real owner-exported `live-synvoid-linux` stages, and terminal reconciliation |
+| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 routine scope conditionally closed; C002 closing (real proof green locally + in-harness; exact-head CI pending); M003a-b closed, M003c generic collector implemented, M003d Eggsec load slice implemented | SynVoid M002 asset contract is now closed upstream (`ae045481` / closeout head `30e68af8`); C002 real proof landed (Stage B 15/15 + negative Fail + origin-log/teardown proofs; Stage C-real same-source Pass/Inconclusive never Fail; oha/h2load green; full harness 29/0/1); terminal close needs exact-head/four-lane + real `live-synvoid-linux` on the implementation SHA; M003c terminal qualification depends on the new SynVoid M003 telemetry handoff |
+| Security qualification M002 post-conditional-closure corrective | active | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f`; C002 closing (real proof green; exact-head CI pending) | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED); C002 status: plans/closure/security-qualification-m002-corrective/002-status.md (CLOSING); terminal close needs exact-head/four-lane verification, the live-host repeatability adjudication against CI evidence, and the roadmap/registry reconciliation |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -71,9 +71,12 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 No implementation plan in this security qualification sequence is currently unblocked: M003a-b are closed, M003c awaits owner telemetry-contract closure, and M003d awaits M003c terminal proof plus M002 C002.
 
 M002 corrective C001 remains **STOPPED with verification** at `b98973f`.
-C002 remains open for the separate live-host repeatability and real-live
-qualification proof; the former SynVoid asset-contract blocker is now
-satisfied upstream.
+C002 is **closing**: the real-live implementation landed with local +
+in-harness proof (Stage B 15/15 + negative Fail + origin-log/teardown;
+Stage C-real same-source Pass/Inconclusive never Fail; oha/h2load green;
+full harness 29/0/1); the former SynVoid asset-contract blocker is
+satisfied upstream and exact-head hosted qualification is pending the
+next push.
 
 Cross-repo work may proceed in parallel: SynVoid's new
 `plans/eggbench_security_qualification_m003_telemetry_contract.md` is READY
@@ -94,7 +97,7 @@ Historical post-M003 live-tool C001 stopped with evidence and successor C002 is 
 
 | Subsystem | Milestone | Status | Plan | Blocker |
 |---|---|---|---|---|
-| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | blocked (historical execution attempt; one prerequisite has since closed) | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 STOPPED with verification (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, SHA `b98973f`); C002 execution at `b52e2a5` recorded BLOCKED because the owner contract was absent at pinned SynVoid `7f1b7945`. That upstream prerequisite is now satisfied at `ae045481` / `30e68af8`. Remaining blockers: exact-head/four-lane verification, live-host repeatability fix/adjudication, real owner-exported `live-synvoid-linux` Stage B/C execution, and final closure evidence. |
+| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | closing (implementation landed; exact-head hosted qualification pending) | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 STOPPED with verification (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, SHA `b98973f`; rationale in `plans/closure/security-qualification-m002-corrective/002-status.md` §8). Real proof green locally + in-harness (status `plans/closure/security-qualification-m002-corrective/002-status.md`, CLOSING). Remaining: exact-head four-lane normal CI (macOS synthetic lane is the known risk), exact-head live workflow with real `live-synvoid-linux` stages executed, and terminal reconciliation. |
 | Security qualification | M003c subject telemetry + SynVoid metrics ingestion | blocked (generic implementation landed at `2742e0e`) | plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md | Terminal qualification requires closed SynVoid owner telemetry contract plus real SynVoid live telemetry evidence. |
 | Security qualification | M003d Eggsec load profiles + live qualification + M003 closure | blocked; independent Eggsec load adapter slice implemented | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | M003c terminal qualification, terminal M002 C002 closure, and real SynVoid live evidence. |
 
@@ -267,10 +270,12 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-One cross-repo handoff is the active gating dependency:
+The former cross-repo gating handoff is closed:
 
 - SynVoid owner-side qualification asset contract:
   `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
+  — **CLOSED** 2026-09-28 (implementation `ae045481`, closeout head
+  `30e68af8`).
 
 Eggbench C001 is **STOPPED with verification** (implementation
 `b98973f`; closure `plans/closure/security-qualification-m002-corrective/001-status.md`).
@@ -280,8 +285,10 @@ The C001 runner-side fix is verified green by hosted CI run
 post-fix is the live-host repeatability M002 closure condition, owned
 by C002.
 
-Once SynVoid's owner-side contract is closed, Eggbench C002 is the only
-remaining handoff:
+Eggbench C002 is **closing** (status
+`plans/closure/security-qualification-m002-corrective/002-status.md`):
+the real-live implementation landed with local + in-harness proof and
+awaits exact-head hosted qualification on the implementation SHA:
 
 `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
 

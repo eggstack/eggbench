@@ -2,11 +2,17 @@
 
 M002a consumes the closed SynVoid-owned qualification asset contract at
 `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`,
-not a reconstruction inside Eggbench. That upstream plan is **open** at the
-time of writing, so this document freezes the import boundary M002a will
-verify once the upstream closes. The routine-test fixture at
-`materialized/provenance.json` matches this schema and is explicitly
-synthetic.
+not a reconstruction inside Eggbench. That upstream plan is **CLOSED**
+(2026-09-28; implementation `ae045481752b8f750d6e6079b185c526a09c91d5`;
+closeout
+`architecture/eggbench_security_qualification_asset_contract_closeout.md`;
+package `1.1.0`; policy `synvoid.eggbench-qualification.v1`; 15 exported
+cases / 12 exclusions; materializer
+`synvoid-eggbench-qualification-materializer@1.0.0`; live reverse-proxy
+proof 15/15 + 2/2 perf paths on the pinned minimal binary). The
+routine-test fixture at `materialized/provenance.json` matches the older
+expected schema and is explicitly synthetic; the live harness verifies
+the real owner provenance against the pins below.
 
 ## Expected materialized layout (plan section 3)
 
@@ -23,7 +29,7 @@ synvoid-qualification/
 
 | Field | Meaning |
 |---|---|
-| `policy_id` | Upstream policy identifier (expected `synvoid-qualification-assets.v1`) |
+| `policy_id` | Upstream policy identifier (pinned `synvoid.eggbench-qualification.v1`) |
 | `policy_version` | Upstream materializer policy version |
 | `materializer` | Materializer name/version that generated the export |
 | `source_sha` | Exact SynVoid source SHA the export was derived from |
