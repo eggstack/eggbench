@@ -1444,6 +1444,7 @@ fn workload_target(workload: &Workload) -> &Name {
         | Workload::HttpCorpus { target, .. } => target,
     }
 }
+#[allow(clippy::too_many_lines)] // Keeps all workload-specific structural bounds beside their schema variants.
 fn validate_workload(w: &Workload) -> Result<(), PlanError> {
     match w {
         Workload::ClosedLoop {
