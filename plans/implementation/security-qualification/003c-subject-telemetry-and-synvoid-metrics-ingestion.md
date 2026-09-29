@@ -69,9 +69,15 @@ Current SynVoid worker payloads already contain the desired target metrics:
 - offload submissions/timeouts/rejections/fallbacks;
 - CPU-worker RSS/task-duration information.
 
-SynVoid also contains a Prometheus exporter that binds loopback, but the M002 qualification config explicitly disables metrics and the required worker-heartbeat fields are not currently a frozen owner-qualified Prometheus surface.
+At original M003c implementation time, SynVoid's M002 qualification config
+disabled metrics and the required worker-heartbeat fields were not yet a frozen
+owner-qualified Prometheus surface. That historical gap is now closed by
+`synvoid.eggbench-telemetry.v2`: the owner publishes the bounded loopback
+surface and deterministic Eggbench-compatible mapping described above.
 
-Therefore Eggbench needs a generic Prometheus collector, while SynVoid owns publication/naming/stability of its own metrics.
+Eggbench continues to own only the generic collector/trial semantics; SynVoid
+owns publication, naming, units, source aggregation, and stability of its
+metrics.
 
 ## 3. Generic Prometheus telemetry source
 
