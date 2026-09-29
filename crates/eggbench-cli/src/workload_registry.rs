@@ -556,6 +556,12 @@ fn build_telemetry_collector(
             return Ok(Some(build_gregg_collector(resolved, request)?));
         }
     }
+    #[cfg(feature = "prometheus-http")]
+    {
+        if request.source.as_str() == eggbench_drivers::prometheus_http::PROMETHEUS_HTTP_SOURCE {
+            return Ok(Some(build_prometheus_http_collector(resolved, request)?));
+        }
+    }
     if request.required {
         return Err(format!(
             "no production collector for required telemetry source {}",
@@ -563,6 +569,132 @@ fn build_telemetry_collector(
         ));
     }
     Ok(None)
+}
+
+/// Build generic Prometheus ingestion from a named source configuration,
+/// a target's declared runtime binding, and a workspace-pinned map.
+#[cfg(feature = "prometheus-http")]
+fn build_prometheus_http_collector(
+    resolved: &eggbench_core::ResolvedPlan,
+    request: &eggbench_core::TelemetryRequest,
+) -> Result<Box<dyn eggbench_runner::TelemetryCollector>, String> {
+    use eggbench_core::{Lifecycle, ServiceKind};
+    use eggbench_drivers::prometheus_http::{PrometheusHttpCollector, RequestedPrometheusMetric};
+    use std::time::Duration;
+
+    let sources = resolved.topology.iter().filter(|service| {
+        service.lifecycle == Lifecycle::External
+            && matches!(&service.kind, ServiceKind::Named { service_type } if service_type.as_str() == eggbench_drivers::prometheus_http::PROMETHEUS_HTTP_SOURCE)
+    }).collect::<Vec<_>>();
+    let source = match sources.as_slice() {
+        [source] => *source,
+        [] => {
+            return Err(
+                "prometheus-http telemetry requires one external named prometheus-http source"
+                    .to_owned(),
+            );
+        }
+        _ => {
+            return Err(
+                "prometheus-http telemetry permits exactly one source configuration".to_owned(),
+            );
+        }
+    };
+    let config = &source.config;
+    let target_name = config
+        .get("target_service")
+        .ok_or_else(|| "prometheus-http source lacks target_service".to_owned())?;
+    let binding_key = config
+        .get("binding_key")
+        .ok_or_else(|| "prometheus-http source lacks binding_key".to_owned())?;
+    let target = resolved
+        .topology
+        .iter()
+        .find(|service| service.name.as_str() == target_name)
+        .ok_or_else(|| "prometheus-http target service is undeclared".to_owned())?;
+    let endpoint = if binding_key == "http_url" {
+        target.http_url.as_deref()
+    } else {
+        target.static_bindings.get(binding_key).map(String::as_str)
+    }
+    .ok_or_else(|| "prometheus-http target binding is absent".to_owned())?;
+    let mapping_ref = config
+        .get("mapping_ref")
+        .ok_or_else(|| "prometheus-http source lacks mapping_ref".to_owned())?;
+    let expected_sha256 = config
+        .get("mapping_sha256")
+        .ok_or_else(|| "prometheus-http source lacks mapping_sha256".to_owned())?;
+    let workspace =
+        std::env::current_dir().map_err(|_| "cannot resolve telemetry workspace".to_owned())?;
+    let (mapping, mapping_sha256) =
+        load_prometheus_mapping(&workspace, mapping_ref, expected_sha256)?;
+    let requested = request
+        .fields
+        .iter()
+        .map(|field| {
+            let metric = resolved
+                .metrics
+                .iter()
+                .find(|metric| metric.name == *field)
+                .ok_or_else(|| {
+                    format!(
+                        "prometheus-http field {} has no metric declaration",
+                        field.as_str()
+                    )
+                })?;
+            Ok(RequestedPrometheusMetric {
+                name: field.as_str().to_owned(),
+                unit: metric.unit.as_str().to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let interval_ms = config
+        .get("poll_interval_ms")
+        .ok_or_else(|| "prometheus-http source lacks poll_interval_ms".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| "prometheus-http poll_interval_ms is invalid".to_owned())?;
+    let collector = PrometheusHttpCollector::new(
+        endpoint,
+        mapping,
+        mapping_sha256,
+        target_name.clone(),
+        binding_key.clone(),
+        mapping_ref.clone(),
+        requested,
+        Duration::from_millis(interval_ms),
+    )
+    .map_err(|reason| format!("prometheus-http collector: {reason}"))?;
+    Ok(Box::new(collector))
+}
+
+#[cfg(feature = "prometheus-http")]
+fn load_prometheus_mapping(
+    workspace: &std::path::Path,
+    mapping_ref: &str,
+    expected_sha256: &str,
+) -> Result<
+    (
+        eggbench_drivers::prometheus_http::PrometheusMappingV1,
+        String,
+    ),
+    String,
+> {
+    use eggbench_drivers::prometheus_http::{MAX_MAPPING_BYTES, parse_mapping};
+
+    let identity = eggbench_core::content_tree_identity(workspace, mapping_ref)
+        .map_err(|_| "prometheus-http mapping path is unsafe or missing".to_owned())?;
+    if !identity
+        .aggregate_sha256
+        .eq_ignore_ascii_case(expected_sha256)
+        || usize::try_from(identity.total_bytes).unwrap_or(usize::MAX) > MAX_MAPPING_BYTES
+    {
+        return Err("prometheus-http mapping digest mismatch or size bound exceeded".to_owned());
+    }
+    let mapping_bytes = std::fs::read(workspace.join(mapping_ref))
+        .map_err(|_| "prometheus-http mapping cannot be read".to_owned())?;
+    let mapping = parse_mapping(&mapping_bytes)
+        .map_err(|reason| format!("prometheus-http mapping rejected: {reason}"))?;
+    Ok((mapping, identity.aggregate_sha256))
 }
 
 /// Build the Gregg collector: single external named `gregg` service plus
@@ -668,6 +800,48 @@ pub fn gregg_endpoint_config_error(plan: &eggbench_core::ExperimentPlan) -> Opti
 mod tests {
     use super::*;
 
+    #[cfg(feature = "prometheus-http")]
+    #[test]
+    fn prometheus_mapping_requires_pinned_digest_and_rejects_symlink_escape() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mapping = serde_json::json!({
+            "schema_version": 1,
+            "source": "prometheus",
+            "fields": [{
+                "output_name": "subject_cpu_percent",
+                "prometheus_name": "subject_cpu_percent",
+                "kind": "gauge",
+                "unit": "percent",
+                "aggregation": "max",
+                "required": true
+            }]
+        });
+        let bytes = serde_json::to_vec(&mapping).unwrap();
+        std::fs::write(workspace.path().join("mapping.json"), &bytes).unwrap();
+        let identity =
+            eggbench_core::content_tree_identity(workspace.path(), "mapping.json").unwrap();
+        assert!(
+            load_prometheus_mapping(workspace.path(), "mapping.json", &identity.aggregate_sha256)
+                .is_ok()
+        );
+        assert!(
+            load_prometheus_mapping(workspace.path(), "mapping.json", &"00".repeat(32)).is_err()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(
+                workspace.path().join("mapping.json"),
+                workspace.path().join("alias.json"),
+            )
+            .unwrap();
+            assert!(
+                load_prometheus_mapping(workspace.path(), "alias.json", &identity.aggregate_sha256)
+                    .is_err()
+            );
+        }
+    }
+
     #[test]
     fn production_registry_contains_no_fake_driver() {
         let registry = WorkloadRegistry::production();
@@ -732,7 +906,8 @@ mod tests {
         let expected_descriptors: usize = 6
             + 3 * usize::from(cfg!(feature = "eggstack-http"))
             + 2 * usize::from(cfg!(feature = "eggstack-path"))
-            + usize::from(cfg!(feature = "gregg"));
+            + usize::from(cfg!(feature = "gregg"))
+            + usize::from(cfg!(feature = "prometheus-http"));
         assert!(runtime.has_workload_driver());
         assert_eq!(runtime.inventory().len(), expected_workload);
         assert_eq!(runtime.driver_descriptors().len(), expected_descriptors);

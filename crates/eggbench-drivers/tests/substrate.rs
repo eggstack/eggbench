@@ -248,6 +248,8 @@ fn production_catalog_registers_oracles_unconditionally() {
     expected.extend(["eggress-route".to_owned(), "eggchaos-stream".to_owned()]);
     #[cfg(feature = "gregg")]
     expected.push("gregg".to_owned());
+    #[cfg(feature = "prometheus-http")]
+    expected.push("prometheus-http".to_owned());
     expected.sort_unstable();
     let names: Vec<String> = catalog
         .descriptors()

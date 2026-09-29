@@ -575,12 +575,35 @@ pub fn resolve_plan(
                 .get(&DriverCategory::Telemetry)
                 .cloned()
                 .unwrap_or_default();
-            let descriptor = select_driver(
-                DriverCategory::Telemetry,
-                &required_telemetry,
-                &registry,
-                options,
-            )?;
+            let unique_source = plan
+                .telemetry
+                .iter()
+                .map(|request| request.source.clone())
+                .collect::<BTreeSet<_>>();
+            let descriptor = if !options.selections.contains_key(&DriverCategory::Telemetry)
+                && unique_source.len() == 1
+            {
+                match unique_source
+                    .first()
+                    .and_then(|source| registry.get(source).copied())
+                    .filter(|driver| driver.category == DriverCategory::Telemetry)
+                {
+                    Some(driver) => driver,
+                    None => select_driver(
+                        DriverCategory::Telemetry,
+                        &required_telemetry,
+                        &registry,
+                        options,
+                    )?,
+                }
+            } else {
+                select_driver(
+                    DriverCategory::Telemetry,
+                    &required_telemetry,
+                    &registry,
+                    options,
+                )?
+            };
             validate_driver(descriptor, &required_telemetry, options)?;
             let path = descriptor
                 .external_process
@@ -590,6 +613,12 @@ pub fn resolve_plan(
                 return Err(ResolveError::MissingExecutablePath(descriptor.name.clone()));
             }
             for telemetry in &plan.telemetry {
+                // The generic Prometheus collector derives fields from a
+                // workspace-pinned mapping loaded by the CLI. Its descriptor
+                // cannot enumerate owner-defined output metric names.
+                if telemetry.source.as_str() == "prometheus-http" {
+                    continue;
+                }
                 let missing: Vec<_> = telemetry
                     .fields
                     .iter()
@@ -1177,6 +1206,28 @@ mod tests {
                 category: DriverCategory::Telemetry
             })
         ));
+    }
+
+    #[test]
+    fn prometheus_mapping_source_selects_its_dynamic_descriptor() {
+        let mut p = plan();
+        p.telemetry.push(crate::TelemetryRequest {
+            source: name("prometheus-http"),
+            fields: vec![name("subject_cpu_percent")],
+            required: true,
+        });
+        let mut workload = driver("load", DriverCategory::Workload);
+        workload.default = true;
+        let mut descriptor = driver("prometheus-http", DriverCategory::Telemetry);
+        descriptor.default = true;
+        let resolved = resolve_plan(&p, &[workload, descriptor], &options()).unwrap();
+        assert_eq!(
+            resolved.drivers[&DriverCategory::Telemetry]
+                .descriptor
+                .name
+                .as_str(),
+            "prometheus-http"
+        );
     }
 
     #[test]

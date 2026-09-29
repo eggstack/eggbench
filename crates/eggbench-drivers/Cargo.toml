@@ -15,6 +15,7 @@ eggstack-http = [
   "dep:hdrhistogram",
 ]
 gregg = ["dep:eggfetch-core", "dep:gregg-protocol"]
+prometheus-http = ["dep:eggfetch-core"]
 eggstack-path = [
   "eggstack-http",
   "dep:eggress-outbound",

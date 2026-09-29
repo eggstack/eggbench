@@ -67,3 +67,7 @@ A v5 `diagnostics` request requires one `DiagnosticProbe` capability per request
 The adapter lowers each request into a deterministic schema-0.3 plan (route Direct, one repetition, no retries, no assertions) from the target's bound `http_url`. DNS for literal-IP hostnames is deterministically not applicable; TLS requires an explicit `https_url` binding and is never inferred from the port. Exit 1 with a valid report is a negative diagnostic outcome, never a process failure. Run evidence is `diagnostics.json` (schema v1) plus bounded per-execution raw `ProbeReport` artifacts under `diagnostics/<pre|post>/<id>.json`. Probe timings stay diagnostic evidence and never become trial metrics.
 
 See [Eggstack HTTP](eggstack-http.md), [experiment plans](experiment-plan.md), [evidence bundles](evidence-bundle.md), and [comparison](comparison.md).
+
+## Subject telemetry capability
+
+The optional `prometheus-http` feature registers a non-process telemetry source named `prometheus-http`. Resolution selects it by its telemetry request name; before service startup, the CLI verifies the workspace mapping digest and validates requested fields against that mapping. The bounded text parser accepts scalar samples with optional exact label selectors; it does not retain labels or raw scrapes. Endpoint authority must be private and comes from a declared target service binding. See [Security Qualification](security-qualification.md#generic-prometheus-subject-telemetry) for mapping and bounds.

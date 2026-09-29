@@ -18,6 +18,8 @@ pub mod eggstack;
 pub mod external;
 #[cfg(feature = "gregg")]
 pub mod gregg;
+#[cfg(feature = "prometheus-http")]
+pub mod prometheus_http;
 
 pub use catalog::{DriverCatalog, production_catalog};
 #[cfg(feature = "eggstack-path")]

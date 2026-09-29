@@ -54,6 +54,8 @@ impl DriverCatalog {
         descriptors.extend(crate::eggstack::path::path_descriptors());
         #[cfg(feature = "gregg")]
         descriptors.push(crate::gregg::gregg_telemetry_descriptor());
+        #[cfg(feature = "prometheus-http")]
+        descriptors.push(crate::prometheus_http::prometheus_http_descriptor());
         descriptors.extend([
             crate::external::oha_descriptor(),
             crate::external::h2load_descriptor(),
@@ -157,6 +159,8 @@ mod tests {
         expected.extend(["eggress-route".to_owned(), "eggchaos-stream".to_owned()]);
         #[cfg(feature = "gregg")]
         expected.extend(["gregg".to_owned()]);
+        #[cfg(feature = "prometheus-http")]
+        expected.extend(["prometheus-http".to_owned()]);
         let mut names: Vec<String> = catalog
             .descriptors()
             .iter()

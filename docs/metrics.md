@@ -98,6 +98,8 @@ metric — from one producer or across producers — still normalize as
 invalid rather than selecting silently. See
 [Gregg telemetry](gregg-telemetry.md).
 
+Security qualification keeps Gregg host metrics in the `host_*` namespace and target-owned telemetry in `subject_*`. The optional generic Prometheus collector maps owner-exported scalar samples to `subject_*`, calculates gauge aggregates and monotonic counter deltas within the measured trial, and omits optional missing samples rather than inserting zero. Host and subject metrics remain separately attributed; do not infer subject CPU or memory by subtracting host-level values. See [Security Qualification](security-qualification.md#generic-prometheus-subject-telemetry).
+
 ## Artifact layout
 
 Each measured trial stages `trials/NNN/metrics.json` with

@@ -30,4 +30,29 @@ Service plans may declare an `http_url` on schema version 7 or later. Plan schem
 
 Schema v10 adds `http_corpus` as a finite closed-loop security-load shape. It reuses the same pinned corpus format, requires an explicit seed, limits schedules to one million requests and concurrency to 256, and requires a primary absolute-zero `expected_outcome_mismatch_rate` gate. Method/path/headers/body and expected statuses stay owner-authored. Transport errors and status mismatches are emitted as separate metrics; a correct expected block is a completed response. The runtime binding contributes only the origin authority. See [experiment-plan schema v10](experiment-plan.md#schema-v10-http_corpus) for fields, comparison identity, and the native/oha connection behavior.
 
+## Generic Prometheus subject telemetry
+
+Build with `--features prometheus-http` to enable the `prometheus-http` telemetry source. A plan declares one external named source service with `service_type: "prometheus-http"` and string config values `target_service`, `binding_key`, `mapping_ref`, `mapping_sha256`, and `poll_interval_ms`. The named target publishes the URL through `static_bindings` (or `http_url` when `binding_key` is `http_url`). This keeps the scrape authority tied to a declared service binding. Poll intervals are bounded from 100 ms through 60 seconds.
+
+The workspace mapping is immutable and its content-tree SHA-256 must match before startup. Example mapping:
+
+```json
+{
+  "schema_version": 1,
+  "source": "prometheus",
+  "fields": [{
+    "output_name": "subject_event_loop_lag_ms",
+    "prometheus_name": "synvoid_event_loop_lag_ms",
+    "kind": "gauge",
+    "unit": "ms",
+    "aggregation": "max",
+    "required": true
+  }]
+}
+```
+
+Mappings support `gauge` with explicit `mean`, `max`, or `min`, and `counter` with nonnegative trial delta. Optional exact label selectors are bounded to 16 labels and 256 bytes per value; wildcard matching and ambiguous duplicate samples are rejected. The collector accepts scalar Prometheus text samples only, caps a scrape at 1 MiB and 10,000 lines, and retains normalized observations plus bounded provenance rather than raw scrapes. Subject output names must use the `subject_` prefix; Gregg host metrics remain `host_*`. Required mapped fields missing at preflight or during a trial, and counter resets, fail closed.
+
+Prometheus endpoints must use HTTP and loopback/private literal IPs or `.localhost` names resolving only to loopback. The collector snapshots counters at trial start, polls only during the runner-owned trial window, takes a final snapshot, and drains or aborts its poll task within the stop bound. Mapping digest and binding source are recorded with each trial. SynVoid metric names and mappings remain owned by the upstream SynVoid telemetry contract; the generic collector contains no SynVoid field vocabulary.
+
 The identity implementation is shared with EggReplay fixture hashing. Existing fixture records retain the same canonical path, length, and SHA-256 input sequence.
