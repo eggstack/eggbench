@@ -1,6 +1,6 @@
 # Security Qualification M003c — Status
 
-Disposition: generic collector implementation landed; plan remains blocked and open. This is not terminal M003c closure.
+Disposition: **CLOSING** — generic collector implementation landed and the former SynVoid owner-contract blocker is closed under `synvoid.eggbench-telemetry.v2`. This is not terminal M003c closure; Eggbench-owned live/current-head evidence remains.
 
 Implementation commit: `2742e0e` (`feat(security): add generic Prometheus subject telemetry`).
 
@@ -21,8 +21,52 @@ Implementation commit: `2742e0e` (`feat(security): add generic Prometheus subjec
 - `cargo test -p eggbench-cli --all-features --locked`: passed (88 tests across eight suites, including the existing `synvoid_m002b` integration suite).
 - No hosted four-lane run or live SynVoid M003 qualification has been performed for this commit.
 
+## Reconciliation update — 2026-09-29
+
+The prior upstream-blocked finding is superseded.
+
+SynVoid closed the corrected owner handoff:
+
+- owner contract: `synvoid.eggbench-telemetry.v2`;
+- proof-bearing implementation:
+  `739e7ba6f02c5e3f83fe9ff5321b09213182b193`;
+- current closeout head observed:
+  `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`;
+- terminal authority:
+  `architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`;
+- mapping SHA-256:
+  `622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99`.
+
+The SynVoid closeout exercised Eggbench's real parser/validator and
+`PrometheusHttpCollector` against the exact v2 mapping and a live minimal
+SynVoid endpoint. This satisfies the upstream interface dependency. It does not
+replace Eggbench's consumer-side terminal evidence.
+
 ## Remaining closure gates
 
-The upstream SynVoid telemetry contract at `dbowm91/synvoid:plans/eggbench_security_qualification_m003_telemetry_contract.md` was rechecked at blob `e60ebfef4953542a581788341dba632cb5af927f` and remains `READY`, not closed. Therefore the owner mapping, exporter semantics, and real SynVoid target telemetry cannot yet be qualified. M003c also still requires a real live SynVoid run demonstrating the mapped metrics under the M003b pressure/body scenarios, confirmation that the polling task drains, and the required live/four-lane evidence.
+M003c now requires:
 
-The generic collector implementation can be used with hermetic fixtures, but that alone does not satisfy this plan's terminal acceptance criteria. M003d remains blocked for overall closure by this M003c terminal proof and M002 C002. Its independent Eggsec load adapter subsection is eligible to proceed meanwhile.
+1. materialize the closed SynVoid v2 assets on an exact pinned revision;
+2. run a real minimal SynVoid subject through Eggbench's normal runner;
+3. execute the M003b pooled/pressure/body scenario set with subject telemetry
+   active during measured windows;
+4. prove required gauge observation and required counter delta through the
+   normal collector path;
+5. prove missing/name/TYPE drift fails closed and optional absence is not
+   fabricated;
+6. prove polling/task drain on trial/runner teardown;
+7. retain exact mapping/contract/binary/scenario/collector identities;
+8. close on a source revision whose normal hosted CI is green.
+
+Current Eggbench HEAD is not yet suitable for terminal hosted closure because
+M003d commit `739f382` introduced a stale production-runtime count assertion
+and a Windows-only `unused_mut` warning. Those defects are isolated under:
+
+`plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
+
+M003c live qualification may proceed in parallel with that corrective, but
+terminal closure should record green repo-wide hosted evidence after the
+corrective lands.
+
+M003d remains gated for overall M003 closure by terminal M003c proof and M002
+C002 closure.
