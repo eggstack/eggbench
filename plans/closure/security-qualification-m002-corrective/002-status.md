@@ -1,12 +1,11 @@
-# Security Qualification M002 Corrective C002 — Execution Status (CLOSING)
+# Security Qualification M002 Corrective C002 — Execution Status (CLOSED)
 
-Status: **CLOSING** — implementation landed; real SynVoid proof green
-locally and end-to-end in the live harness; exact-head hosted
-qualification partially reported on implementation SHA `9d9d8b9`:
-`live-synvoid-linux` with real stages is GREEN (run `36607614200`),
-while four-lane normal CI is RED (run `36607614262`) on failures
-attributed to the out-of-scope M003d Eggsec commit, not to C002 (§10).
-No M002 closure claimed yet.
+Status: **closed** — implementation landed; real SynVoid proof is green
+locally and end-to-end in the live harness; exact-head hosted qualification is
+green on the M003d-corrective source SHA `4703333`: four-lane normal CI run
+`36640125422` and live qualification run `36640125453`, with
+`live-synvoid-linux` executing the real SynVoid stages
+(pass=25 stopped=0 notexec=5). M002 closure is reconciled in section 11.
 
 Plan:
 
@@ -21,8 +20,7 @@ Supersedes: the earlier BLOCKED revision of this record (prerequisites
 
 ## 1. Disposition
 
-**CLOSING, per registry vocabulary (implementation landed, closure
-evidence being gathered).** C002 executed end-to-end:
+**CLOSED, per registry vocabulary.** C002 executed end-to-end:
 
 - §2 re-audit recorded with real values (section 2);
 - owner export consumed mechanically, never reinterpreted (section 4);
@@ -37,9 +35,9 @@ evidence being gathered).** C002 executed end-to-end:
 - fast deterministic import-layer tests added (`synvoid_m002c`, 3/3);
 - no production semantic change (section 9).
 
-Remaining for terminal closure (§13 criteria 1, 11–14): exact-head
-hosted runs on the implementation SHA plus the C001-disposition
-reconciliation recorded in section 8.
+Remaining for terminal closure (§13 criteria 1, 11–14) was the exact-head
+hosted pair plus the C001-disposition reconciliation recorded in section 8.
+Both are discharged in section 10 and the terminal adjudication is section 11.
 
 ## 2. Re-audit at handoff (§2)
 
@@ -164,9 +162,11 @@ The exception is recorded here explicitly instead:
   on Apple Silicon) is the live-host repeatability condition the test
   source and the corrective architecture both assign to C002;
 - C002 discharges it on the real subject (§6: same-source
-  Pass/Inconclusive, never Fail, frozen policy, no threshold widened)
-  locally; the hosted four-lane verdict on the implementation SHA
-  (criterion 11) is the remaining signal and is awaited, not assumed.
+  Pass/Inconclusive, never Fail, frozen policy, no threshold widened);
+  the hosted four-lane verdict is now in hand: the macOS lane is green in run
+  `36640125422`, which ran the `synvoid_m002b` synthetic same-source test
+  without a false Fail. C001's STOPPED disposition is preserved, not
+  rewritten.
 
 ## 9. Production change record (§10)
 
@@ -189,7 +189,9 @@ threshold, or schema weakened. `cargo fmt --check`, `cargo check`,
 7/7, `lifecycle` 30/30 (with the CI sentinel env), `binary_exit_codes`
 10/10, `synvoid_m002c` 3/3.
 
-## 10. Remaining for terminal closure (§13 criteria 1, 11–14)
+## 10. Exact-head hosted qualification (§13 criteria 11–14)
+
+### 10.1 Superseded attempt on the C002 source
 
 1. ~~Push the implementation SHA~~ done (`9d9d8b9`); the exact-head
    four-lane normal CI run (criterion 11) reported RED —
@@ -203,22 +205,68 @@ threshold, or schema weakened. `cargo fmt --check`, `cargo check`,
    `739f382` (last writer of `workload_registry.rs` and of
    `crates/eggbench-drivers/src/`; CI was green at `2742e0e` and red
    at `739f382`/`18b1c1c` before C002). C002's commit contains zero
-   files under `crates/*/src`, so neither failure is C002's. Still,
-   criterion 11 requires green — it is now owned by the M003d repair,
-   not by further C002 work (C002 §10 forbids production changes).
-   The registered repair authority is
+   files under `crates/*/src`, so neither failure is C002's. Criterion
+   11 was therefore owned by the M003d repair, not by further C002 work
+   (C002 §10 forbids production changes). The registered repair
+   authority was
    `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
    Note the macOS lane failed before reaching the `synvoid_m002b`
    synthetic test, so the known same-source risk lane produced no new
    signal either way;
-2. exact-head live workflow (criteria 12–13): GREEN —
+2. exact-head live workflow on the C002 source (criteria 12–13): GREEN —
    run `36607614200` (`push`, head `9d9d8b9`), all four live jobs
    success; `live-synvoid-linux` executed every real stage
    (pass=25 stopped=0 notexec=5; the 5 NOT-EXECUTED are the optional
-   oha/h2load oracles absent from the runner plus Gregg D5);
-3. after the M003d corrective lands, require green four-lane normal CI on
-   the corrective source and re-run/revalidate the live qualification on the
-   same exact source (or a documentation-only descendant) so C002 evidence is
-   exact-head rather than inherited by assumption;
-4. reconcile roadmap/registry from conditional to closed (criterion 14) only
-   after those current-head hosted gates are green.
+   oha/h2load oracles absent from the runner plus Gregg D5).
+
+### 10.2 Discharging runs on the corrective source
+
+The M003d corrective landed at `470333370e14c6a2ac31047f3f6836ce756f9a2a`
+(`fix(security): repair Eggsec-load registration accounting and CI
+portability`; corrective closure
+`plans/closure/security-qualification/003d-corrective-status.md`). C002
+required its evidence on that repairing source rather than inheriting the
+earlier verdict.
+
+| Gate | Run | Result |
+|---|---|---|
+| four-lane normal CI (criterion 11) | `36640125422` (`push`, head `4703333`) | GREEN: `linux-stable`, `linux-msrv`, `macos-stable`, `windows-stable` all success |
+| live qualification (criteria 12–13) | `36640125453` (`push`, head `4703333`) | GREEN: `live-tools-linux`, `live-eggsec-linux`, `live-m004b-linux`, `live-synvoid-linux` all success |
+| real SynVoid stage execution (criterion 13) | `36640125453` / `live-synvoid-linux` | pass=25 stopped=0 notexec=5; Stage B real correctness, origin-log, negative Fail, teardown, and Stage C real smoke/same-source stages all executed |
+
+Notable per-lane consequences:
+
+- `linux-stable` and `macos-stable` now pass
+  `workload_registry::tests::production_runtime_reports_no_driver`, the
+  assertion that previously carried the stale M003d count;
+- `windows-stable` passes all-feature Clippy with `-D warnings`, the
+  `unused_mut` finding being resolved by cfg-specific scope builder helpers
+  rather than a lint suppression;
+- the `macos-stable` lane ran the `synvoid_m002b` same-source synthetic test
+  to completion with no false Fail, which is the live-host repeatability
+  condition C001 surfaced and C002 owned.
+
+No C002-owned defect appeared in either run. C002's frozen v1 trial/metric/gate
+thresholds were not re-tuned or weakened; the repair was M003d-owned and
+minimal.
+
+## 11. Terminal reconciliation (§13 criterion 14)
+
+1. `plans/closure/security-qualification/002a-status.md` and
+   `002b-status.md` keep their historical conditional evidence. A clearly
+   labeled successor addendum records terminal C002 closure; neither record is
+   rewritten.
+2. `plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md`
+   moves to closed with C002 closed and C001 preserved as STOPPED with
+   verification.
+3. `plans/subsystems/security-qualification-roadmap.md` moves M002 from
+   conditionally closed to closed/hosted-qualified.
+4. `plans/registry.md` reconciles the M002 corrective row, the dependency-ready
+   table, the blocked-plans table, and the next-handoff section.
+5. M003 research/planning remains next. M003 implementation may now rely on
+   fully qualified M002; M003c and M003d are unblocked from the M002 gate.
+
+Criterion 1 remains the recorded EXCEPTION of §8: C001 is not rewritten as
+closed, its narrow runner-side fix is verified by hosted run `36451730637`,
+and the live-host condition it surfaced is discharged here by C002's real
+same-source proof plus the green `macos-stable` lane in `36640125422`.

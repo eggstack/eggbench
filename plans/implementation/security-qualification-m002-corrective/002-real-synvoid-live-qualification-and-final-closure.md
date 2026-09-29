@@ -1,6 +1,9 @@
 # Security Qualification M002 Corrective C002 — Real SynVoid Qualification and Final M002 Closure
 
-Status: authored; blocked on C001 closure and SynVoid asset-contract closure
+Status: closed; closure record
+`plans/closure/security-qualification-m002-corrective/002-status.md`, qualified
+on exact-head hosted runs `36640125422` (four-lane) and `36640125453` (live,
+real SynVoid stages executed) against repairing source `4703333`.
 
 Corrective authority:
 

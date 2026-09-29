@@ -96,3 +96,25 @@ interpolation (D1), Gregg-gated resource policy (D5).
 - M003 becomes ready for research/planning with the deferred items carried
   explicitly; no M002 scope is silently dropped.
 - External Oracles M003 netem remains a separate later boundary, unaffected.
+
+## Addendum — 2026-09-29 (successor reference; historical record unchanged)
+
+The conditional evidence above is preserved exactly as recorded. Terminal M002
+performance/repeatability proof is now supplied by the M002 post-conditional-
+closure corrective:
+
+- corrective closure: `plans/closure/security-qualification-m002-corrective/002-status.md`
+  — **closed**;
+- real Stage C on the real SynVoid subject: smoke Pass, 8 materialized
+  baselines, same-source pair Pass/Inconclusive with zero Fail under the frozen
+  v1 trial/metric/gate policy, oha and h2load oracle procedures green;
+- exact-head hosted evidence on the repairing source `4703333`: normal CI run
+  `36640125422` (all four lanes green, including the `macos-stable` lane that
+  runs the `synvoid_m002b` same-source synthetic test) and live run
+  `36640125453`;
+- the deferred items listed above remain deferred to M003 and are unchanged:
+  mixed malicious traffic under load, arbitrary request-body attack load,
+  explicit connection-churn controls, and SynVoid Prometheus ingestion.
+  Connection-churn controls and subject telemetry were subsequently delivered
+  under M003b and M003c; mixed malicious load and attack-body load remain
+  outside the closed M002 scope.

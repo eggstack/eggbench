@@ -1,6 +1,6 @@
 # Security Qualification M003d — Eggsec Load Profiles, Live Qualification, and M003 Closure
 
-Status: Eggsec load adapter slice implemented at `739f382` (status record: `plans/closure/security-qualification/003d-status.md`); **corrective required before further terminal work** because exact-head four-lane CI exposed adapter integration defects. The narrow corrective is READY at `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`. Overall M003d closure remains gated on M003c terminal qualification and Security Qualification M002 C002 closure.
+Status: Eggsec load adapter slice implemented at `739f382` (status record: `plans/closure/security-qualification/003d-status.md`); the narrow CI/portability corrective is **closed** at `4703333` (closure record `plans/closure/security-qualification/003d-corrective-status.md`, exact-head hosted runs `36640125422` four-lane and `36640125453` live). Overall M003d closure remains gated on M003c terminal qualification only; M002 C002 is closed.
 
 Research baselines:
 
@@ -48,22 +48,28 @@ On exact-head normal CI run `36607614262`:
 - Windows stable failed strict Clippy because Unix-only permission mutation
   leaves `DirBuilder`/`OpenOptions` unnecessarily mutable on Windows.
 
-The adapter's strict-scope/load semantics are not being redesigned. Repair
-these integration/portability defects under
-`003d-corrective-eggsec-load-ci-portability-and-unblock.md`, obtain green
-four-lane + exact-head live evidence, and only then continue terminal M003d
-profile work.
+The adapter's strict-scope/load semantics are not being redesigned. These
+integration/portability defects were repaired under
+`003d-corrective-eggsec-load-ci-portability-and-unblock.md`, which closed at
+`4703333` with green exact-head four-lane (`36640125422`) and live
+(`36640125453`) evidence. Terminal M003d profile work may continue.
 
-The same corrective is now the direct unblocker for M002 C002's remaining
-four-lane closure criterion.
+That corrective is also what released M002 C002's remaining four-lane closure
+criterion; C002 is now closed.
 
 ## 2. M002 gate
 
 M003 terminal closure is not allowed until the post-M002 corrective C002 closes.
+C002 is closed: the SynVoid owner asset contract that was absent when C002 was
+first attempted is closed upstream, and C002's real `live-synvoid-linux`
+execution is green on hosted run `36607614200`; its exact-head four-lane
+blocker was the M003d adapter defect set assigned to the corrective above, and
+C002 revalidated on the repairing source `4703333` with four-lane run
+`36640125422` and live run `36640125453` before performing terminal
+roadmap/registry reconciliation. This M002 gate is satisfied.
 
-The SynVoid owner asset contract that was absent when C002 was first attempted is closed upstream. C002's real `live-synvoid-linux` execution is now green on hosted run `36607614200`; its remaining terminal blocker is exact-head four-lane normal CI, currently red because of the M003d adapter defects assigned to the corrective above. After the corrective lands, C002 must revalidate exact-head hosted evidence and perform terminal roadmap/registry reconciliation.
-
-M003a-c substrate may land independently, but this plan must not claim M003 completion while M002 remains conditionally closed.
+M003a-c substrate may land independently, but this plan must not claim M003
+completion while M003c terminal qualification is outstanding.
 
 ## 3. Eggsec load driver
 
@@ -293,14 +299,15 @@ Stop and re-plan if:
 
 Immediate handoff order:
 
-1. execute `003d-corrective-eggsec-load-ci-portability-and-unblock.md`;
-2. use the resulting green exact-head four-lane/live evidence to close M002
-   C002 if no new C002-owned defect appears;
-3. close M003c on the now-available SynVoid v2 owner contract and real
+1. close M003c on the available SynVoid v2 owner contract and real
    Eggbench current-head telemetry trials;
-4. resume this plan's profile/baseline/live/negative-demonstration work;
-5. write the terminal M003 closure only after all acceptance criteria remain
+2. resume this plan's profile/baseline/live/negative-demonstration work;
+3. write the terminal M003 closure only after all acceptance criteria remain
    satisfied on green hosted evidence.
+
+The CI/portability corrective and the M002 C002 closure it enabled are
+complete (`003d-corrective-eggsec-load-ci-portability-and-unblock.md` closed at
+`4703333`; C002 closed on runs `36640125422` / `36640125453`).
 
 M003a-b are already closed. SynVoid telemetry v2 is already closed and is no
 longer an upstream blocker.

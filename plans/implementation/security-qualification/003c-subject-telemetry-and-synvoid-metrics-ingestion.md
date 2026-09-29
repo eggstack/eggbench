@@ -303,10 +303,11 @@ Terminal closure remains Eggbench-owned and requires:
 4. a closure record that pins the exact Eggbench/SynVoid revisions and
    mapping/contract/binary identities.
 
-The M003d CI portability corrective
-(`003d-corrective-eggsec-load-ci-portability-and-unblock.md`) may execute in
-parallel and should land before relying on repo-wide hosted CI, because current
-HEAD is red for unrelated M003d registration/Windows-lint defects.
+The M003d CI portability corrective is closed at `4703333`
+(`plans/closure/security-qualification/003d-corrective-status.md`), so
+repo-wide hosted CI is green again: four-lane run `36640125422` and live run
+`36640125453` on that source. M003c may cite that evidence, or a later green
+descendant, for its hosted-closure criterion.
 
-M003d terminal profile/live closure remains gated on this M003c terminal proof
-and M002 C002 closure.
+M003d terminal profile/live closure remains gated on this M003c terminal proof.
+M002 C002 is closed.

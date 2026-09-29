@@ -2,7 +2,11 @@
 
 Status: conditionally closed by plans/closure/security-qualification/002a-status.md
 (implementation `b74f861`; routine scope green; live reverse-proxy proof and
-the SynVoid upstream asset contract remain named conditions)
+the SynVoid upstream asset contract remain named conditions). Both named
+conditions are now discharged by the M002 post-conditional-closure corrective
+C002, which is closed at
+plans/closure/security-qualification-m002-corrective/002-status.md; M002 is
+closed and hosted-qualified.
 
 Repository baseline: `c77a755ba33f103526f44d574afb9dd2676228e3`
 

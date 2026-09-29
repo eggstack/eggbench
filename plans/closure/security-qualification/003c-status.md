@@ -1,6 +1,6 @@
 # Security Qualification M003c — Status
 
-Disposition: **CLOSING** — generic collector implementation landed and the former SynVoid owner-contract blocker is closed under `synvoid.eggbench-telemetry.v2`. This is not terminal M003c closure; Eggbench-owned live/current-head evidence remains.
+Disposition: **CLOSING** — generic collector implementation landed and the former SynVoid owner-contract blocker is closed under `synvoid.eggbench-telemetry.v2`. The green-hosted-source closure precondition is satisfied by runs `36640125422` / `36640125453` on `4703333`. This is not terminal M003c closure; Eggbench-owned live/current-head evidence remains.
 
 Implementation commit: `2742e0e` (`feat(security): add generic Prometheus subject telemetry`).
 
@@ -58,15 +58,16 @@ M003c now requires:
 7. retain exact mapping/contract/binary/scenario/collector identities;
 8. close on a source revision whose normal hosted CI is green.
 
-Current Eggbench HEAD is not yet suitable for terminal hosted closure because
-M003d commit `739f382` introduced a stale production-runtime count assertion
-and a Windows-only `unused_mut` warning. Those defects are isolated under:
+Gate 8's precondition is now satisfied. The M003d CI portability corrective
+closed at `4703333` (`plans/closure/security-qualification/003d-corrective-status.md`),
+and the exact-head hosted evidence on that source is green: four-lane normal CI
+run `36640125422` and live qualification run `36640125453`. M003c terminal
+closure must cite that evidence or a later green descendant; gates 1–7 remain
+M003c's own work.
 
-`plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
+M002 corrective C002 is also closed, so M003c no longer carries an M002
+dependency.
 
-M003c live qualification may proceed in parallel with that corrective, but
-terminal closure should record green repo-wide hosted evidence after the
-corrective lands.
-
-M003d remains gated for overall M003 closure by terminal M003c proof and M002
-C002 closure.
+M003d remains gated for overall M003 closure by terminal M003c proof. Its
+remaining profile, baseline, live, negative-demonstration, and closure work is
+otherwise unblocked.

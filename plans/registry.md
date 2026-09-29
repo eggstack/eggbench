@@ -46,8 +46,8 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 routine scope conditionally closed; C002 closing (real/live proof green; four-lane closure blocked by M003d corrective); M003a-b closed; M003c CLOSING on real SynVoid v2 qualification; M003d Eggsec-load slice corrective READY | SynVoid M002 asset contract and M003 telemetry v2 contract are closed upstream; immediate repo-wide unblock is `003d-corrective-eggsec-load-ci-portability-and-unblock.md`; M003c live proof may proceed in parallel; terminal M003d still waits on M003c + C002 |
-| Security qualification M002 post-conditional-closure corrective | active | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f`; C002 closing (real/live proof green; current-head four-lane blocked by M003d source regression) | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED); C002 status: plans/closure/security-qualification-m002-corrective/002-status.md (CLOSING); repair authority: plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md; close only after green exact-head four-lane + live revalidation and reconciliation |
+| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 closed/hosted-qualified (C002 closed, exact-head runs `36640125422` + `36640125453` on `4703333`); M003a-b closed; M003c CLOSING on real SynVoid v2 qualification; M003d Eggsec-load slice implemented, its CI portability corrective closed at `4703333` | SynVoid M002 asset contract and M003 telemetry v2 contract are closed upstream; M002 C002 is closed; the only remaining M003 gate is terminal M003c, which now has a green hosted source to close on |
+| Security qualification M002 post-conditional-closure corrective | closed | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f` (historical); C002 closed | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED with verification); C002 closure: plans/closure/security-qualification-m002-corrective/002-status.md (closed on runs `36640125422` / `36640125453`); M003d CI corrective: plans/closure/security-qualification/003d-corrective-status.md (closed at `4703333`) |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
 ## Historical subsystem closures
@@ -59,7 +59,9 @@ Canonical direction remains in:
 | Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
 | Local runner/lifecycle M002 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/002-status.md; C001 evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md |
 | Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
-| Security qualification M002 post-conditional-closure corrective C001 | STOPPED with verification — runner-side fix verified; m002b perf issue remains as separate live-host repeatability owned by C002 | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/001-status.md (implementation `b98973f`, STOPPED) |
+| Security qualification M002 post-conditional-closure corrective C001 | STOPPED with verification — runner-side fix verified; m002b perf issue was discharged by C002 as the live-host repeatability condition | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/001-status.md (implementation `b98973f`, STOPPED) |
+| Security qualification M002 post-conditional-closure corrective C002 | closed — real SynVoid proof, exact-head hosted four-lane + live qualified | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/002-status.md (implementation `9d9d8b9`; four-lane `36640125422`, live `36640125453` on `4703333`) |
+| Security qualification M003d Eggsec-load CI portability corrective | closed | plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md | plans/closure/security-qualification/003d-corrective-status.md (implementation `4703333`; four-lane `36640125422`, live `36640125453`) |
 | Local runner/lifecycle M003 | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md; corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
 | Measurement/comparison M001 | closed (qualified) | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md; qualification corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
 | Measurement/comparison M002 | closed | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/002-status.md |
@@ -70,16 +72,21 @@ Historical closure records remain evidence of what was accepted at the time. Cor
 
 | Subsystem | Milestone | Status | Plan | Immediate handoff |
 |---|---|---|---|---|
-| Security qualification | M003d Eggsec-load CI portability corrective | **ready** | plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md | Fix stale production workload/descriptor accounting and Windows cfg-only `unused_mut`; require green four-lane CI and exact-head live revalidation. This is the direct unblocker for M002 C002. |
-| Security qualification | M003c subject telemetry + SynVoid metrics ingestion | **closing / unblocked for terminal qualification** | plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md | Consume closed `synvoid.eggbench-telemetry.v2`, run real current-head M003b pressure/body telemetry trials, prove drain/fail-closed behavior, then close only with green hosted evidence. May proceed in parallel with the M003d corrective. |
+| Security qualification | M003c subject telemetry + SynVoid metrics ingestion | **closing / unblocked for terminal qualification** | plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md | Consume closed `synvoid.eggbench-telemetry.v2`, run real current-head M003b pressure/body telemetry trials, prove drain/fail-closed behavior, then close only with green hosted evidence. The green-hosted-source precondition is satisfied by runs `36640125422` / `36640125453` on `4703333`. |
 
-M002 corrective C001 remains **STOPPED with verification** at `b98973f`.
-C002 is **closing**: its real SynVoid correctness/performance/live evidence is
-green, including hosted live run `36607614200`. Its exact-head four-lane run
-`36607614262` is red only on M003d-owned source regressions. No further C002
-production work is authorized; after the M003d corrective, re-run exact-head
-four-lane + live qualification and perform terminal C002 reconciliation if
-green.
+M002 corrective C001 remains **STOPPED with verification** at `b98973f`, preserved
+as historical evidence. C002 is **closed** at
+`plans/closure/security-qualification-m002-corrective/002-status.md`: real
+SynVoid correctness/performance/live evidence is green, and its terminal
+hosted pair was re-gathered on the M003d-corrective source `4703333` — four-lane
+run `36640125422` (all lanes green) and live run `36640125453`
+(`live-synvoid-linux` pass=25 stopped=0 notexec=5 with real stages executed).
+No C002 production work was authorized or performed.
+
+The M003d Eggsec-load CI portability corrective is **closed** at
+`plans/closure/security-qualification/003d-corrective-status.md`
+(implementation `4703333`), which also restores the repository-wide
+qualification gate that C002 had been waiting on.
 
 Cross-repo prerequisites are now satisfied:
 
@@ -98,15 +105,14 @@ No older corrective handoff remains open.
 
 | Subsystem | Milestone | Status | Plan | Closure | Remaining condition |
 |---|---|---|---|---|---|
-| Security qualification | M002a SynVoid controlled correctness profile | conditionally closed | plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md | plans/closure/security-qualification/002a-status.md | superseded for final proof by post-M002 corrective C001/C002 |
-| Security qualification | M002b SynVoid performance/resource suite + M002 closure | conditionally closed | plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md | plans/closure/security-qualification/002b-status.md | superseded for final proof by post-M002 corrective C001/C002 |
+| Security qualification | M002a SynVoid controlled correctness profile | conditionally closed (routine synthetic scope; terminal proof supplied by the closed C002) | plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md | plans/closure/security-qualification/002a-status.md | none; the named condition is discharged by plans/closure/security-qualification-m002-corrective/002-status.md |
+| Security qualification | M002b SynVoid performance/resource suite + M002 closure | conditionally closed (routine synthetic scope; terminal proof supplied by the closed C002) | plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md | plans/closure/security-qualification/002b-status.md | none; the named condition is discharged by plans/closure/security-qualification-m002-corrective/002-status.md |
 
 ## Authored but dependency-blocked implementation plans
 
 | Subsystem | Milestone | Status | Plan | Blocker |
 |---|---|---|---|---|
-| Security qualification M002 corrective | C002 real SynVoid qualification + final M002 closure | closing (implementation + hosted live proof green; exact-head repo CI blocked by M003d regression) | plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md | C001 remains STOPPED with verification; hosted live run `36607614200` is green, while four-lane run `36607614262` is red on M003d-owned count/Windows-lint defects. Wait for `003d-corrective-eggsec-load-ci-portability-and-unblock.md`, then require green exact-head four-lane + live revalidation and reconcile. |
-| Security qualification | M003d Eggsec load profiles + live qualification + M003 closure | blocked for terminal profile/closure work; Eggsec-load slice implemented, CI corrective separately READY | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | First close the READY M003d CI corrective; terminal M003d then requires M003c terminal qualification + terminal M002 C002 closure. SynVoid v2 is no longer a blocker. |
+| Security qualification | M003d Eggsec load profiles + live qualification + M003 closure | blocked for terminal profile/closure work; Eggsec-load slice implemented and its CI portability corrective closed at `4703333` | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | Terminal M003c qualification is the only remaining gate. M002 C002 is closed and SynVoid v2 is no longer a blocker. |
 
 External Oracles M003 netem remains separate.
 
@@ -180,9 +186,9 @@ External Oracles M003 netem remains a separate later system-level impairment bou
 
 Security qualification retains separate correctness and performance gate families. Faster execution never overrides a security-correctness failure.
 
-Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed. M002 routine scope landed at `b74f861` and remains historically conditionally closed. The post-M002 corrective controls terminal qualification: **C001 is STOPPED with verification at `b98973f`** and restored the runner-side macOS readiness defect; C002 owns the independent live-host repeatability failure on `synvoid_m002b::perf_same_source_pair_never_fails`, exact-head/four-lane verification, real owner-exported `live-synvoid-linux` execution, and final closure. The SynVoid M002 asset contract is now CLOSED upstream (`ae045481` / `30e68af8`) and is no longer a blocker. Eggbench must not translate SynVoid Detect/Pass semantics itself.
+Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed. M002 is closed and hosted-qualified: the routine scope landed at `b74f861` and remains historically conditionally closed, and the post-M002 corrective supplies the terminal proof — **C001 is STOPPED with verification at `b98973f`** (preserved as historical) and **C002 is closed** with real owner-exported SynVoid correctness/performance/live execution plus exact-head hosted runs `36640125422` and `36640125453` on the M003d-corrective source `4703333`. The SynVoid M002 asset contract is CLOSED upstream (`ae045481` / `30e68af8`). Eggbench does not translate SynVoid Detect/Pass semantics itself.
 
-Security Qualification M003 has now been researched and decomposed. M003a is dependency-ready; M003b-d are registered with ordered blockers. SynVoid owns a separate READY M003 telemetry-export handoff; Eggsec requires no upstream change for the initial load-profile adapter.
+Security Qualification M003 has now been researched and decomposed. M003a-b are closed; M003c is closing on its own live evidence and M003d is blocked only on it. SynVoid's M003 telemetry-export handoff is CLOSED QUALIFIED under `synvoid.eggbench-telemetry.v2`; Eggsec required no upstream change for the load-profile adapter.
 
 ### Gate H — Distributed execution
 
@@ -277,29 +283,41 @@ Before marking a plan ready, verify:
 
 ## Next handoff
 
-The former cross-repo gating handoff is closed:
+Both cross-repo gating handoffs are closed:
 
 - SynVoid owner-side qualification asset contract:
   `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
   — **CLOSED** 2026-09-28 (implementation `ae045481`, closeout head
-  `30e68af8`).
+  `30e68af8`);
+- SynVoid owner-side M003 telemetry contract
+  `synvoid.eggbench-telemetry.v2` — **CLOSED QUALIFIED** at corrective
+  implementation `739e7ba6`, closeout head `0dc1f7fb`.
 
 Eggbench C001 is **STOPPED with verification** (implementation
 `b98973f`; closure `plans/closure/security-qualification-m002-corrective/001-status.md`).
 The C001 runner-side fix is verified green by hosted CI run
 `36451730637`: `synvoid_m002a` is 7/7 green. The independent
 `synvoid_m002b::perf_same_source_pair_never_fails` failure surfaced
-post-fix is the live-host repeatability M002 closure condition, owned
-by C002.
+post-fix is the live-host repeatability M002 closure condition; C002
+discharged it on the real subject and on the green `macos-stable` lane
+of run `36640125422`. C001's disposition stays historical and is not
+rewritten.
 
-Eggbench C002 is **closing** (status
+Eggbench C002 is **closed** (closure
 `plans/closure/security-qualification-m002-corrective/002-status.md`):
-the real-live implementation landed with local + in-harness proof and
-awaits exact-head hosted qualification on the implementation SHA:
+the real-live implementation consumed the owner export without
+reinterpreting SynVoid semantics, and its terminal hosted pair was
+re-gathered on the M003d-corrective source `4703333` — four-lane run
+`36640125422` (all lanes green) and live run `36640125453`
+(`live-synvoid-linux` pass=25 stopped=0 notexec=5, real stages executed
+rather than NOT-EXECUTED).
 
-`plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
+The M003d Eggsec-load CI portability corrective is **closed**
+(implementation `4703333`; closure
+`plans/closure/security-qualification/003d-corrective-status.md`).
 
-C002 is the terminal M002 proof gate. A green `live-synvoid-linux` job is not
-sufficient if required real SynVoid stages are NOT-EXECUTED. M003 research and
-planning may proceed meanwhile, but M003 implementation must not rely on M002
-being fully qualified until C002 closes.
+Next handoff: terminal M003c qualification on real current-head SynVoid v2
+telemetry evidence, closing on green hosted source (`36640125422` /
+`36640125453` on `4703333` or a later green descendant). M003d's remaining
+profile/baseline/live/negative-demonstration work follows M003c; M002 is
+fully qualified and is no longer a premise gate.

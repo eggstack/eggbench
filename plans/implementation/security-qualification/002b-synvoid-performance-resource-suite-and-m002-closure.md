@@ -2,7 +2,10 @@
 
 Status: conditionally closed by plans/closure/security-qualification/002b-status.md
 (implementation `b74f861`; umbrella M002 closure; shares M002a's live/upstream
-conditions)
+conditions). Both named conditions are now discharged by the M002
+post-conditional-closure corrective C002, which is closed at
+plans/closure/security-qualification-m002-corrective/002-status.md; M002 is
+closed and hosted-qualified.
 
 Repository baseline: `5b5104f734f2e2c252ebb605a1153da10ea96dea`
 

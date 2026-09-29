@@ -113,3 +113,23 @@ dir, delay sidecars).
 
 Compilation alone was never treated as evidence: every claim above names
 the test, receipt, or harness line that proves it.
+
+## Addendum — 2026-09-29 (successor reference; historical record unchanged)
+
+The conditional evidence above is preserved exactly as recorded. Terminal M002
+proof is now supplied by the M002 post-conditional-closure corrective:
+
+- corrective closure: `plans/closure/security-qualification-m002-corrective/002-status.md`
+  — **closed**;
+- exact-head hosted evidence on the repairing source `4703333`: normal CI run
+  `36640125422` (all four lanes green) and live run `36640125453`
+  (`live-synvoid-linux` pass=25 stopped=0 notexec=5 with the real owner-exported
+  Stage B/C stages executed);
+- the upstream asset contract named in "Unresolved findings" above is closed at
+  `dbowm91/synvoid@ae045481…` / closeout head `30e68af8…`, and the real
+  403/200 wire statuses and dot-segment normalization behavior were verified
+  against the real minimal SynVoid binary (15/15 positive, negative Fail,
+  origin-log proof, teardown proof) in the corrective record.
+
+M002a therefore contributes to a closed M002 through the corrective, not
+through a rewrite of this record.

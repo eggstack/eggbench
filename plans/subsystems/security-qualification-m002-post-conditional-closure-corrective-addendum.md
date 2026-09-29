@@ -1,6 +1,6 @@
 # Security Qualification M002 Post-Conditional-Closure Corrective Addendum
 
-Status: active (C001 STOPPED with verification at `b98973f` per plan §10; SynVoid asset contract CLOSED upstream 2026-09-28; C002 closing with real + hosted-live proof green; exact-head four-lane closure currently blocked by M003d-owned source regressions and assigned to the READY `003d-corrective-eggsec-load-ci-portability-and-unblock.md`)
+Status: closed (C001 STOPPED with verification at `b98973f` per plan §10, preserved as historical; SynVoid asset contract CLOSED upstream 2026-09-28; C002 closed on exact-head hosted four-lane run `36640125422` and live run `36640125453` after the M003d CI corrective landed at `4703333`)
 
 Baseline: `660ab472ebf214e1378da777b1f06412decc008a`
 
@@ -58,23 +58,24 @@ This corrective closes two outstanding proof gaps:
 2. **C002 — real SynVoid qualification and final M002 closure**
    `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
    → status `plans/closure/security-qualification-m002-corrective/002-status.md`
-   — **closing**: SynVoid asset contract closed upstream 2026-09-28
+   — **closed**. SynVoid asset contract closed upstream 2026-09-28
    (implementation `ae045481`, policy `synvoid.eggbench-qualification.v1`);
    the real-live implementation landed (harness-only import layer +
    `live-synvoid-linux` Stage B/C-real wiring, `synvoid_m002c` contract
    tests) with local + in-harness proof green — Stage B 15/15 positive,
    negative Fail, origin-log and teardown proofs; Stage C-real smoke
    Pass, same-source Pass/Inconclusive never Fail, oha/h2load green;
-   full harness 29/0/1. Hosted live run `36607614200` is also green with
-   real stages executed. Exact-head four-lane run `36607614262` is red
-   on two M003d-owned source regressions (stale production
-   workload/descriptor count and Windows cfg-only `unused_mut`), not on
-   C002 code. The repair authority is
-   `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
-   After that repair, C002 requires green exact-head four-lane + live
-   revalidation before terminal reconciliation. C001's STOPPED disposition
-   remains historical and is explicitly adjudicated by C002 §8 rather than
-   rewritten.
+   full harness 29/0/1. The M003d CI portability corrective
+   (`plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`,
+   closure `plans/closure/security-qualification/003d-corrective-status.md`)
+   landed at `4703333`, repairing the stale production
+   workload/descriptor count and the Windows cfg-only `unused_mut` that had made
+   exact-head four-lane run `36607614262` red. C002 then discharged its
+   closure gates on that repairing source: four-lane run `36640125422`
+   (all lanes green, including the `macos-stable` same-source lane) and live
+   run `36640125453` (`live-synvoid-linux` pass=25 stopped=0 notexec=5 with
+   real owner-exported stages executed). C001's STOPPED disposition remains
+   historical and is explicitly adjudicated by C002 §8 rather than rewritten.
 
 ## Invariants
 
@@ -91,8 +92,8 @@ This corrective closes two outstanding proof gaps:
 
 ## Final closure gate
 
-M002 becomes fully closed only when all of the following hold on a
-proof-bearing Eggbench SHA:
+M002 became fully closed on 2026-09-29 when all of the following held on
+proof-bearing Eggbench SHA `4703333`:
 
 - C001's historical `STOPPED with verification` disposition is preserved and
   its runner-side fix remains verified; C002 explicitly adjudicates the
@@ -102,14 +103,11 @@ proof-bearing Eggbench SHA:
 - real SynVoid positive correctness proof passes;
 - deterministic negative correctness proof fails as expected;
 - real benign performance/oracle scenarios execute;
-- exact-head normal four-lane CI is green;
-- exact-head live qualification including real SynVoid is green;
+- exact-head normal four-lane CI is green (run `36640125422`);
+- exact-head live qualification including real SynVoid is green (run
+  `36640125453`);
 - the roadmap/registry are reconciled from conditional to closed.
 
-Current closure order: first land the M003d CI portability corrective, then
-re-run exact-head four-lane + live qualification and close C002 if those gates
-remain green.
-
-M003c terminal telemetry qualification may proceed in parallel because its
-SynVoid v2 owner dependency is now closed. Full M003d/M003 closure must not use
-"fully qualified M002" as a premise until C002 actually closes.
+M003c terminal telemetry qualification and M003d profile work no longer carry
+an M002 dependency. Full M003d/M003 closure must still satisfy the original
+M003d acceptance gates; a fully qualified M002 no longer blocks them.

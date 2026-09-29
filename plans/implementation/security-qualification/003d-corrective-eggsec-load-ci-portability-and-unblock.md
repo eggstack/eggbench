@@ -1,6 +1,19 @@
 # Security Qualification M003d Corrective — Eggsec Load CI Portability and Qualification Unblock
 
-Status: **READY** (2026-09-29).
+Status: **closed**; implementation and hosted four-lane + live qualification
+complete.
+
+Implementation commit:
+`470333370e14c6a2ac31047f3f6836ce756f9a2a`
+(`fix(security): repair Eggsec-load registration accounting and CI
+portability`).
+
+Closure record:
+`plans/closure/security-qualification/003d-corrective-status.md`.
+
+Hosted evidence on the exact implementation head: normal CI run `36640125422`
+(four lanes green) and live qualification run `36640125453` (all four live jobs
+green, including `live-synvoid-linux` with real SynVoid stages executed).
 
 Source milestone:
 `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`.

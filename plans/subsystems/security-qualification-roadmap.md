@@ -1,6 +1,6 @@
 # Security Performance Qualification Roadmap
 
-Status: active (M001 closed; M002 conditionally closed; post-M002 corrective C001 STOPPED with verification at `b98973f` / C002 closing with real + hosted-live proof green and four-lane closure blocked by the READY M003d CI corrective; SynVoid M002 asset contract closed; M003a-b closed; M003c generic collector implemented at `2742e0e` and CLOSING now that `synvoid.eggbench-telemetry.v2` is CLOSED QUALIFIED; M003d Eggsec-load slice implemented at `739f382`, corrective required before terminal profile/live work)
+Status: active (M001 closed; M002 closed/hosted-qualified via the post-M002 corrective C002 (implementation `9d9d8b9`, exact-head hosted runs `36640125422` four-lane and `36640125453` live on the repairing source `4703333`); C001 remains STOPPED with verification at `b98973f` as historical evidence; SynVoid M002 asset contract closed; M003a-b closed; M003c generic collector implemented at `2742e0e` and CLOSING on real SynVoid v2 evidence; M003d Eggsec-load slice implemented at `739f382` with its CI portability corrective closed at `4703333`)
 
 Long-term references:
 
@@ -278,10 +278,14 @@ Ordered implementation decomposition:
 
 ### M002 — SynVoid reproducible qualification suite
 
-Status: conditionally closed by `plans/closure/security-qualification/002a-status.md`
+Status: closed and hosted-qualified. The routine scope is recorded
+conditionally in `plans/closure/security-qualification/002a-status.md`
 and umbrella `plans/closure/security-qualification/002b-status.md`
-(implementation `b74f861`; routine scope green). The previously missing
-SynVoid-owned qualification-asset contract is now **closed upstream**:
+(implementation `b74f861`), and terminal qualification is recorded by
+the post-M002 corrective C002 at
+`plans/closure/security-qualification-m002-corrective/002-status.md`.
+The previously missing SynVoid-owned qualification-asset contract is now
+**closed upstream**:
 `dbowm91/synvoid@30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`,
 implementation `ae045481752b8f750d6e6079b185c526a09c91d5`, with the
 proof-bearing closeout at
@@ -290,12 +294,13 @@ The owner contract supplies the 15-case live-proxy corpus, deterministic
 materializer, loopback minimal config, provenance, 15/15 live semantic proof,
 and 2/2 performance-path proof.
 
-The upstream asset dependency is therefore satisfied. Remaining M002 terminal
-conditions are Eggbench C002 work: exact-head/four-lane verification,
-resolution of the live-host same-source repeatability failure, real
-`live-synvoid-linux` Stage B/C execution against the owner export, and final
-evidence reconciliation. Eggbench still does not translate SynVoid
-Detect/Pass semantics itself.
+The upstream asset dependency and the Eggbench terminal evidence are therefore
+both satisfied. C002 consumed the owner export without reinterpreting SynVoid
+Detect/Pass semantics, executed the real Stage B correctness/negative/teardown
+proof and the real Stage C performance/oracle/same-source-repeatability path,
+and closed on exact-head hosted runs `36640125422` (four lanes green) and
+`36640125453` (`live-synvoid-linux` pass=25 stopped=0 notexec=5 with real
+stages executed) against repairing source `4703333`.
 
 Satisfied cross-repo prerequisite:
 
@@ -319,8 +324,9 @@ M002 v1 remains bounded/local. Current driver truth means the following earlier 
 
 ### M002 post-conditional-closure corrective
 
-The routine M002 implementation at `b74f861` remains conditionally closed.
-Two proof gaps are now registered under:
+The routine M002 implementation at `b74f861` remains recorded as
+conditionally closed; terminal qualification is owned by the corrective and is
+now closed. Two proof gaps were registered under:
 
 `plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md`
 
@@ -354,25 +360,27 @@ Corrective sequence:
    "M002 closure condition" and which belongs to C002.
 2. **C002 — real SynVoid qualification and final M002 closure**  
    `plans/implementation/security-qualification-m002-corrective/002-real-synvoid-live-qualification-and-final-closure.md`
-   → status `plans/closure/security-qualification-m002-corrective/002-status.md`
-   — **closing**: the closed owner export is consumed (policy
+   → closure `plans/closure/security-qualification-m002-corrective/002-status.md`
+   — **closed**: the closed owner export is consumed (policy
    `synvoid.eggbench-qualification.v1`, implementation `ae045481`);
    Stage B real proof is green (15/15 positive, negative Fail,
    origin-log and teardown proofs); Stage C-real is green (smoke Pass,
    same-source Pass/Inconclusive never Fail, oha/h2load green); the full
-   live harness runs 29/0/1 locally. Terminal close awaits exact-head
-   four-lane normal CI plus the live workflow with real
-   `live-synvoid-linux` stages on the implementation SHA (the macOS
-   synthetic same-source lane is the known risk).
+   live harness runs 29/0/1 locally. Terminal hosted evidence was
+   re-gathered on the repairing source `4703333` after the M003d CI
+   portability corrective: four-lane run `36640125422` (all lanes green,
+   including the `macos-stable` same-source lane) and live run
+   `36640125453` (`live-synvoid-linux` pass=25 stopped=0 notexec=5 with
+   real owner-exported stages executed).
 
-M002 becomes fully closed only after the four-lane hosted re-verification
-(including the live-host repeatability fix) is green and `live-synvoid-linux`
-executes real owner-exported SynVoid stages rather than passing with those
-stages NOT-EXECUTED.
+M002 is closed and hosted-qualified. `live-synvoid-linux` executed real
+owner-exported SynVoid stages rather than passing with those stages
+NOT-EXECUTED, and the C001-surfaced live-host same-source condition is
+discharged both on the real subject and on the green `macos-stable` lane.
 
-M003 planning is complete enough for implementation handoff. M003a may proceed
-as generic substrate work, and M003b/c may follow their dependency chain, but
-terminal M003 closure must not treat M002 as fully qualified until C002 closes.
+M003c terminal telemetry qualification and M003d profile work no longer carry
+an M002 dependency. Terminal M003 closure still must satisfy the original
+M003a-d acceptance gates.
 
 ### M003 — Reusable security performance patterns
 
@@ -411,10 +419,10 @@ Ordered implementation decomposition:
    **CLOSED** at `plans/closure/security-qualification/003b-status.md`. Reuses immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, pooled/fresh connection methods, and the independent oha single-case body/churn subset.
 3. **M003c — subject telemetry and SynVoid metrics ingestion**  
    `plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md`  
-   Generic bounded Prometheus collector implemented at `2742e0e`, with `host_*` Gregg semantics separate from `subject_*` target metrics. Terminal live qualification remains blocked on the SynVoid owner telemetry contract (upstream plan is still READY, not closed) and real owner-backed metric evidence.
+   Generic bounded Prometheus collector implemented at `2742e0e`, with `host_*` Gregg semantics separate from `subject_*` target metrics. The SynVoid owner telemetry contract is closed under `synvoid.eggbench-telemetry.v2`, so the upstream dependency is discharged. Terminal live qualification on real current-head SynVoid v2 evidence is outstanding; the green-hosted-source precondition is now satisfied by run `36640125422` on `4703333`.
 4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
    `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
-   Strict-scope Eggsec load adapter slice implemented (see `plans/closure/security-qualification/003d-status.md`); remaining profile, negative-control, baseline, live SynVoid, and closure work is blocked on terminal M003c and terminal M002 C002.
+   Strict-scope Eggsec load adapter slice implemented and its CI portability corrective closed at `4703333` (see `plans/closure/security-qualification/003d-corrective-status.md`); remaining profile, negative-control, baseline, live SynVoid, and closure work is blocked only on terminal M003c.
 
 Explicitly deferred from M003 v1:
 
@@ -446,7 +454,7 @@ Security Qualification M001 is closed by `plans/closure/security-qualification/0
 - M001b is closed and hosted-qualified.
 - M001c is closed and provides the reusable suite/receipt substrate.
 
-M002 is conditionally closed (routine scope green at implementation `b74f861`; closures `plans/closure/security-qualification/002a-status.md` and `plans/closure/security-qualification/002b-status.md`). Full closure is governed by the post-M002 corrective: C001 restored the runner-side macOS readiness defect; C002 now owns live-host repeatability, exact-head/four-lane verification, real owner-exported SynVoid live stages, and terminal reconciliation. The SynVoid owner-side asset contract prerequisite is closed upstream.
+M002 is closed and hosted-qualified. Routine scope landed at `b74f861` and is recorded conditionally in `plans/closure/security-qualification/002a-status.md` and `plans/closure/security-qualification/002b-status.md`; terminal qualification is the post-M002 corrective: C001 restored the runner-side macOS readiness defect and remains STOPPED with verification at `b98973f`; C002 discharged live-host repeatability, exact-head/four-lane verification, real owner-exported SynVoid live stages, and terminal reconciliation. The SynVoid owner-side asset contract prerequisite is closed upstream.
 
 Implementation-time SynVoid re-audit at
 `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1` (package 1.1.0) confirmed the
@@ -460,7 +468,7 @@ those semantics.
 
 SynVoid owner-side asset contract is closed at implementation `ae045481` / closeout head `30e68af8`, so it is no longer an active C002 blocker. Eggbench C001 is **STOPPED with verification** at `b98973f` (closure `plans/closure/security-qualification-m002-corrective/001-status.md`, disposition `STOPPED with verification`) — hosted CI run `36451730637` recorded `synvoid_m002a` 7/7 green and the live-host repeatability finding is owned by C002.
 
-C002 is **closing**. Its real/live work is no longer hypothetical: hosted live run `36607614200` is green with real SynVoid stages executed. Exact-head four-lane run `36607614262` is red only on M003d-owned source regressions: a stale production workload/descriptor count and Windows cfg-only `unused_mut` in the Eggsec-load adapter. The repair is registered at `plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`; C002 performs no production repair itself. After that corrective lands, exact-head four-lane + live evidence must be revalidated before terminal M002 reconciliation.
+C002 is **closed**. Its real/live work is no longer hypothetical: hosted live run `36607614200` was green on the C002 source, its exact-head four-lane run `36607614262` was red only on M003d-owned source regressions (a stale production workload/descriptor count and Windows cfg-only `unused_mut` in the Eggsec-load adapter), C002 performed no production repair itself, and the registered repair closed at `4703333`. C002 then re-gathered its gates on that repairing source: four-lane run `36640125422` (all lanes green) and live run `36640125453` (`live-synvoid-linux` real SynVoid stages executed, pass=25 stopped=0 notexec=5).
 
 M003 dependency reconciliation (2026-09-29):
 
@@ -476,20 +484,19 @@ M003 dependency reconciliation (2026-09-29):
   Eggbench still owns current-head M003b pressure/body trial, drain,
   fail-closed, hosted, and closure evidence.
 - M003c is therefore **CLOSING**, not blocked, and may run its terminal v2 live
-  qualification in parallel with the M003d CI repair.
-- M003d's Eggsec-load adapter slice landed at `739f382`, but the slice now
-  carries a READY corrective before further terminal work.
-- Full M003d profile/live/closure work remains gated on terminal M003c and
-  terminal M002 C002. SynVoid telemetry is no longer a blocker.
+   qualification now. Its green-hosted-source closure precondition is
+   satisfied by run `36640125422` on `4703333`.
+- M003d's Eggsec-load adapter slice landed at `739f382`; the CI portability
+  corrective it required closed at `4703333`
+  (`plans/closure/security-qualification/003d-corrective-status.md`).
+- Full M003d profile/live/closure work is now gated only on terminal M003c.
+  SynVoid telemetry and M002 C002 are no longer blockers.
 
 Required execution order is now:
 
-1. M003d CI portability corrective — restore green repo-wide hosted CI and
-   revalidate exact-head live C002 evidence;
-2. terminally reconcile M002 C002 if those gates stay green;
-3. close M003c on real current-head SynVoid v2 telemetry evidence (this may
-   gather evidence in parallel with step 1, but closure must cite green hosted
-   source);
-4. resume M003d profile/baseline/live/negative-demonstration work;
-5. write terminal M003 closure only after the original M003d acceptance gates
+1. close M003c on real current-head SynVoid v2 telemetry evidence, citing
+   green hosted source (runs `36640125422` / `36640125453` on `4703333` or a
+   later green descendant);
+2. resume M003d profile/baseline/live/negative-demonstration work;
+3. write terminal M003 closure only after the original M003d acceptance gates
    are satisfied.
