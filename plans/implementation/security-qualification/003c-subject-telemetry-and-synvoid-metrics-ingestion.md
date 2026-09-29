@@ -1,17 +1,39 @@
 # Security Qualification M003c — Subject Telemetry and SynVoid Metrics Ingestion
 
-Status: generic collector implemented at `2742e0e`; terminal SynVoid qualification remains blocked on the owner telemetry-contract handoff (upstream plan is READY, not closed).
+Status: **CLOSING — terminal SynVoid v2 qualification unblocked** (2026-09-29). Generic collector implementation landed at `2742e0e`; the former upstream owner-contract blocker is closed. Remaining work is Eggbench-owned current-head live/hosted qualification and closure evidence.
 
 Research baselines:
 
-- `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`
-- `dbowm91/synvoid@30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`
+- original collector baseline: `eggstack/eggbench@1eb1bfed4edbc6c4af4f193fa71dc82235ad927e`;
+- current Eggbench reconciliation baseline:
+  `a96407017716b8ca7d18da8237a135b1a49af8cc`;
+- original SynVoid research baseline:
+  `dbowm91/synvoid@30e68af8f6e79ce0fe07f0c1871f1d0caa6be6f2`;
+- closed SynVoid v2 owner implementation:
+  `dbowm91/synvoid@739e7ba6f02c5e3f83fe9ff5321b09213182b193`;
+- SynVoid current closeout head observed during reconciliation:
+  `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`.
 
 Prerequisites:
 
-- M003a closed;
-- M003b closed;
-- `dbowm91/synvoid:plans/eggbench_security_qualification_m003_telemetry_contract.md` closed for live SynVoid proof.
+- M003a closed — satisfied;
+- M003b closed — satisfied;
+- SynVoid M003 telemetry owner contract closed — satisfied under
+  `synvoid.eggbench-telemetry.v2`.
+
+SynVoid terminal authority:
+`architecture/eggbench_security_qualification_m003_telemetry_corrective_closeout.md`.
+The v1 owner contract is withdrawn/unqualified and must not be consumed.
+
+Closed owner mapping SHA-256:
+`622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99`.
+
+The SynVoid owner closeout already exercised Eggbench's real
+`PrometheusMappingV1` parser/validator and `PrometheusHttpCollector` against
+the exact v2 mapping and a live minimal SynVoid endpoint. That proves the
+cross-repo interface is compatible; it does **not** substitute for this plan's
+Eggbench-owned current-head M003b pressure/body trial evidence, polling/drain
+evidence, hosted CI, or terminal closure.
 
 ## 1. Objective
 
@@ -79,7 +101,7 @@ Use a bounded immutable mapping file with content identity, for example:
   "fields": [
     {
       "output_name": "subject_event_loop_lag_ms",
-      "prometheus_name": "synvoid_event_loop_lag_ms",
+      "prometheus_name": "synvoid_subject_event_loop_lag_ms",
       "kind": "gauge",
       "unit": "ms",
       "aggregation": "max"
@@ -133,21 +155,25 @@ Polling overhead must be measured on a local fixture; default cadence should be 
 
 ## 7. Normalized initial target metrics
 
-For the SynVoid M003 profile, normalize a bounded initial set such as:
+The closed SynVoid v2 mapping now freezes the initial normalized set:
 
 - `subject_event_loop_lag_ms` — max;
-- `subject_request_queue_p95_ms` — max or mean of exported p95 snapshots, with the chosen method frozen;
+- `subject_request_queue_p95_ms` — max;
 - `subject_active_connections` — max;
-- `subject_memory_bytes` — max;
-- `subject_cpu_percent` — mean;
-- `subject_body_buffering_bytes` — counter delta;
-- `subject_offload_submissions` — counter delta;
-- `subject_offload_timeouts` — counter delta;
-- `subject_offload_rejections` — counter delta;
-- `subject_offload_fallbacks` — counter delta;
-- `subject_cpu_worker_rss_bytes` — max when owner-exported.
+- `subject_worker_memory_bytes` — max;
+- `subject_worker_cpu_percent` — mean;
+- `subject_body_buffering_bytes_total` — counter delta, bytes;
+- `subject_offload_submissions_total` — counter delta, count;
+- `subject_offload_timeouts_total` — counter delta, count;
+- `subject_offload_rejections_total` — counter delta, count;
+- `subject_offload_fallbacks_total` — counter delta, count;
+- `subject_cpu_worker_rss_bytes` — max when owner-exported, optional;
+- `subject_worker_metric_resets_total` — counter delta, optional diagnostic.
 
-Exact SynVoid names come from the owner mapping contract, not from Eggbench code.
+The Prometheus source names remain owner-authored
+`synvoid_subject_*` names supplied by the digest-pinned mapping; Eggbench code
+must not hardcode them outside fixtures/tests that explicitly assert the owner
+contract.
 
 Keep Gregg host metrics separately named `host_*`.
 
@@ -184,19 +210,34 @@ Do not retain authentication tokens, arbitrary labels, request payloads, or high
 
 ## 10. SynVoid live proof
 
-Once the upstream SynVoid telemetry contract closes:
+The owner contract is now closed; execute this section rather than waiting on
+upstream work.
 
-- materialize the owner qualification assets with telemetry enabled;
-- start the real minimal SynVoid binary;
+Use the closed `synvoid.eggbench-telemetry.v2` materializer output and:
+
+- pin an exact proof-bearing SynVoid revision at or after
+  `739e7ba6f02c5e3f83fe9ff5321b09213182b193`;
+- materialize owner qualification assets with telemetry enabled and verify the
+  mapping digest is
+  `622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99`;
+- start the real minimal SynVoid binary with admin disabled;
 - verify the metrics endpoint is loopback only;
-- execute M003b pooled and pressure/body scenarios;
-- collect target telemetry during measured trials;
-- show at least one gauge changes plausibly under load;
-- show at least one monotonic counter delta path;
-- show missing/renamed required metric fails closed;
-- retain exact SynVoid SHA, telemetry-contract digest, binary digest, and Eggbench mapping digest.
+- execute M003b pooled and pressure/body scenarios through the normal Eggbench
+  runner, not an out-of-tree proof helper;
+- collect target telemetry during the exact measured trial windows;
+- show at least one required gauge changes plausibly under load;
+- show at least one required monotonic counter delta path;
+- confirm optional absence remains absent/warned rather than fabricated;
+- show missing/renamed required metric and TYPE drift fail closed;
+- prove the polling task drains and does not outlive trial/runner teardown;
+- retain exact Eggbench SHA, SynVoid SHA, owner-contract digest, mapping digest,
+  binary digest, scenario identity, and collector identity.
 
-Do not interpret this as universal production capacity evidence.
+The SynVoid-side 16-check interop proof is accepted as interface evidence and
+need not be duplicated byte-for-byte. This Eggbench proof must instead close
+the consumer-side trial/lifecycle/evidence requirements.
+
+Do not interpret the result as universal production capacity evidence.
 
 ## 11. Tests
 
@@ -244,6 +285,22 @@ Stop and re-plan if:
 
 ## 14. Handoff
 
-Blocked on M003b and the SynVoid telemetry owner contract for terminal live qualification.
+M003c is **unblocked and closing**. M003a-b and the SynVoid v2 owner contract
+are closed.
 
-The generic collector may be developed/tested against hermetic fixture endpoints before the SynVoid handoff closes, but M003c must not close on a fake endpoint alone.
+Terminal closure remains Eggbench-owned and requires:
+
+1. current-head real SynVoid v2 live telemetry through the M003b
+   pressure/body scenarios;
+2. polling/drain and fail-closed drift evidence;
+3. normal hosted CI green on the closure source;
+4. a closure record that pins the exact Eggbench/SynVoid revisions and
+   mapping/contract/binary identities.
+
+The M003d CI portability corrective
+(`003d-corrective-eggsec-load-ci-portability-and-unblock.md`) may execute in
+parallel and should land before relying on repo-wide hosted CI, because current
+HEAD is red for unrelated M003d registration/Windows-lint defects.
+
+M003d terminal profile/live closure remains gated on this M003c terminal proof
+and M002 C002 closure.
