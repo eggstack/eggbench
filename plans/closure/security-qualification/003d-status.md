@@ -1,6 +1,6 @@
 # Security Qualification M003d — Status
 
-Disposition: partial implementation landed; M003d remains blocked and open. This is not an M003d or M003 milestone closure.
+Disposition: **CORRECTIVE REQUIRED / PARTIAL IMPLEMENTATION**. The Eggsec-load slice landed at `739f382`, but exact-head hosted CI exposed two M003d-owned portability/integration defects. M003d remains open; this is not an M003d or M003 milestone closure.
 
 Implementation: `739f382` (`feat(security): add Eggsec strict-scope load workload`).
 
@@ -15,11 +15,57 @@ Implementation: `739f382` (`feat(security): add Eggsec strict-scope load workloa
 
 ## Verification
 
-- `cargo clippy -p eggbench-drivers -p eggbench-cli --all-targets --all-features --locked -- -D warnings`: passed.
-- `cargo test -p eggbench-drivers --all-features --locked`: passed (166 tests across nine suites).
-- `cargo test -p eggbench-cli --all-features --locked`: passed earlier in this turn (88 tests across eight suites); it predates the `eggsec-load` inventory addition. The CLI and driver targets compile with all features and strict clippy after the addition.
-- No Eggsec executable live load, full four-lane CI, or live SynVoid M003 qualification has been run for this slice.
+Initial local evidence:
+
+- `cargo clippy -p eggbench-drivers -p eggbench-cli --all-targets --all-features --locked -- -D warnings`: passed on the implementation host;
+- `cargo test -p eggbench-drivers --all-features --locked`: passed (166 tests across nine suites);
+- `cargo test -p eggbench-cli --all-features --locked`: passed before the final `eggsec-load` inventory addition and therefore was not sufficient proof of the finished slice.
+
+Stronger hosted evidence later found the portability defect:
+
+- exact-head normal CI run `36607614262`:
+  - `linux-msrv` green;
+  - `linux-stable` red on
+    `workload_registry::tests::production_runtime_reports_no_driver`;
+  - `macos-stable` red on the same stale workload/descriptor count;
+  - `windows-stable` red on `unused_mut` in
+    `crates/eggbench-drivers/src/external/eggsec_load.rs` where mutation is
+    Unix-only;
+- live qualification run `36607614200` was green for the then-current C002
+  real SynVoid stages, demonstrating that the current blocker is normal
+  cross-platform CI rather than the M002 live subject path.
+
+The initial local pass remains historical evidence but is not terminal
+cross-platform qualification.
+
+## Immediate corrective
+
+Ready plan:
+
+`plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md`.
+
+It is limited to:
+
+- correcting stale production workload/descriptor accounting after
+  `eggsec-load` registration;
+- preserving Unix `0700`/`0600` scope-file hardening without Windows
+  `unused_mut`;
+- restoring green four-lane CI;
+- revalidating exact-head live evidence so M002 C002 can close.
 
 ## Remaining M003d gates
 
-The plan still requires a checked-in SynVoid M003 profile family, repeatability-accepted baselines, correctness-only/performance-only/telemetry-only negative demonstrations, the bounded real SynVoid Linux stages, and terminal C002 closure/reconciliation. Those rely on a closed SynVoid M003 telemetry contract and completion of M002 C002's real subject and live-host repeatability evidence. The upstream telemetry plan remains `READY`, not closed, and the M002 C002 record still identifies C001's non-closed STOPPED disposition as a hard prerequisite. Therefore no future terminal M003 plan is unblocked by this adapter slice.
+After that corrective, the original plan still requires a checked-in SynVoid
+M003 profile family, repeatability-accepted baselines,
+correctness-only/performance-only/telemetry-only negative demonstrations, the
+bounded real SynVoid Linux stages, and terminal C002 closure/reconciliation.
+
+The prior upstream telemetry blocker is closed: SynVoid's
+`synvoid.eggbench-telemetry.v2` implementation is qualified at
+`739e7ba6f02c5e3f83fe9ff5321b09213182b193` with terminal closeout on
+current head `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`. Eggbench M003c
+is now closing on its consumer-side live/current-head proof.
+
+Terminal M003d remains gated on terminal M003c plus M002 C002. The narrow CI
+corrective itself is not gated by either and should execute first because it
+currently blocks C002's repo-wide closure criterion.
