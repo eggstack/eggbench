@@ -168,12 +168,30 @@ observation is diagnostic. The gated scenario is measured more often than the
 diagnostic ones so that a bootstrap interval can distinguish a real regression
 from host noise.
 
+### Hosted evidence on the pushed head
+
+Live qualification run `36897109527` (`live-m003-linux`, `aa302d5`) executed the
+whole M003 stage group against the real pinned SynVoid and Eggsec binaries on a
+dedicated hosted runner: `pass=28 stopped=1 notexec=1`. Every M003d stage passed
+there — `m003d-1` materialized 8 baseline bundles and validated the perf
+profile, `m003d-2` returned `pass` for the nine-trial gated scenario, `m003d-3`
+proved 30,994 logged requests with no owner-blocked case reaching the origin,
+`m003d-6` ran real `eggsec-load` under strict scope (`eggsec 0.1.0`, sha256
+`12a3843df00eb5dfa77850cc495dec2f6b4f22b67c31db9d0a3d9df1b916f253`), and
+`m003d-7`/`m003d-8`/`m003d-9` plus teardown all passed. The single stop was
+`m003c-13b`, the upstream telemetry gate; `m003d-4` was not executed because
+`oha` is absent from that runner. The pinned SynVoid binary's hosted digest was
+`sha256 07766ca02e129c9abe1c1b32e978e6de0cb710ed6e916b6cb5ae77bd615f8b1f`.
+
 ### Known limitation
 
 The unthrottled perf pair can return `Inconclusive` on a heavily contended
 shared host rather than `Pass`; the harness accepts 0 or 7 for that stage and
-requires the correctness family to pass. Hosted CI runs the same stage on a
-dedicated runner and is the authority for repeatability.
+requires the correctness family to pass. On the two-core hosted runner the M002a
+same-source pair returned `Invalid` (insufficient evidence is never softened to
+`Inconclusive`), which is the same load-induced failure class and reproduces on
+pristine `1b79f62`. Hosted runs on dedicated runners are the repeatability
+authority.
 
 ## Remaining condition
 
