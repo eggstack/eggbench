@@ -3973,7 +3973,7 @@ fn bootstrap_interval(
 /// log-differences with replacement, takes their mean, and transforms to
 /// degradation space. Quantile extraction is identical to policy v1.
 fn paired_bootstrap_interval(differences: &[f64], resamples: usize, seed: u64) -> (f64, f64) {
-    debug_assert!(!differences.is_empty());
+    debug_assert!(!differences.is_empty(), "no paired differences to resample");
     let mut rng = SplitMix64::new(seed);
     let mut effects = Vec::with_capacity(resamples);
     for _ in 0..resamples {
@@ -5839,8 +5839,8 @@ mod tests {
         assert_eq!(record.disposition, Some(GateDisposition::Fail));
         assert_eq!(record.candidate_included, vec![2, 4, 6, 8, 10, 12]);
         assert_eq!(record.baseline_included, vec![1, 3, 5, 7, 9, 11]);
-        assert!(record.candidate_excluded.is_empty());
-        assert!(record.baseline_excluded.is_empty());
+        assert!(record.candidate_excluded.is_empty(), "{record:?}");
+        assert!(record.baseline_excluded.is_empty(), "{record:?}");
         assert_eq!(
             record.statistical_method.as_deref(),
             Some(STATISTICAL_METHOD_V2)
@@ -5860,7 +5860,11 @@ mod tests {
         assert_eq!(paired.candidate_service.as_str(), "origin-b");
         assert_eq!(paired.metrics.len(), 1);
         assert_eq!(paired.metrics[0].pairs_complete, vec![1, 2, 3, 4, 5, 6]);
-        assert!(paired.metrics[0].pairs_excluded.is_empty());
+        assert!(
+            paired.metrics[0].pairs_excluded.is_empty(),
+            "{:?}",
+            paired.metrics[0]
+        );
         assert_eq!(paired.metrics[0].pair_effects.len(), 6);
         // Constant effects: identical half means, flat trend.
         assert_eq!(paired.metrics[0].drift.trend, DriftTrend::Flat);

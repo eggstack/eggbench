@@ -874,7 +874,11 @@ async fn worker(shared: Arc<Shared>) -> Vec<RequestOutcome> {
             break;
         }
         // Claim one request. `fetch_update` fails once the counter is
-        // exhausted, so exactly the planned count is issued.
+        // exhausted, so exactly the planned count is issued. Rust 1.99 renamed
+        // it `try_update`, but that spelling is stable only from 1.95 and this
+        // workspace's MSRV is 1.89, so the deprecated spelling is kept until
+        // the MSRV moves.
+        #[allow(deprecated)]
         let claimed = shared
             .remaining
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {

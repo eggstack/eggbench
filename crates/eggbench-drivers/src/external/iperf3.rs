@@ -367,7 +367,7 @@ fn parse_iperf3_report(outcome: &ExternalCommandOutcome) -> Result<Iperf3Report,
         .retransmits
         .map(|v| {
             finite_non_negative(v, "retransmits")
-                .map_err(&parse_failed)
+                .map_err(parse_failed)
                 .and_then(|v| {
                     if v > U64_MAX_AS_F64 {
                         Err(parse_failed("retransmits out of range".to_owned()))

@@ -20,5 +20,12 @@ unsafe_code = "forbid"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# `assert_is_empty` arrived in clippy 1.99 and fires on the repository's
+# idiomatic `assert!(x.is_empty())` assertions across roughly twenty existing
+# test files. Adopting it everywhere is a mechanical cleanup unrelated to any
+# milestone, and the lint has no security or contract value here: every such
+# assertion already reports a message. It stays off until that cleanup lands,
+# rather than being satisfied by allowing it file by file.
+assert_is_empty = "allow"

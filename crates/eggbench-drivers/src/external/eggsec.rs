@@ -887,7 +887,7 @@ pub fn parse_waf_stdout(
         .get("bypass_success_rate")
         .and_then(serde_json::Value::as_f64)
         .ok_or_else(|| reject("missing bypass_success_rate"))?;
-    if !rate.is_finite() || rate < 0.0 || rate > 100.0 {
+    if !rate.is_finite() || !(0.0..=100.0).contains(&rate) {
         return Err(reject("bypass_success_rate is nonfinite or out of range"));
     }
     let mut cases = Vec::with_capacity(findings.len());

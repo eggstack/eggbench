@@ -2141,7 +2141,7 @@ mod tests {
     fn empty_trial_failed_bundle_is_valid_and_multiple_trials_are_stable() {
         let temp = tempfile::tempdir().unwrap();
         let empty = finalized_bundle(&temp, "failed", false);
-        assert!(empty.manifest().trials.is_empty());
+        assert!(empty.manifest().trials.is_empty(), "{:?}", empty.manifest());
         empty.verify().unwrap();
         let multiple = finalized_bundle(&temp, "trials", true);
         assert_eq!(multiple.manifest().trials[0].id, TrialId::new(7).unwrap());

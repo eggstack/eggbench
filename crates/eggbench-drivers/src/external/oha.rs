@@ -534,18 +534,18 @@ fn parse_oha_report(outcome: &ExternalCommandOutcome) -> Result<OhaReport, Drive
     let json: OhaJson = serde_json::from_str(&text)
         .map_err(|error| parse_failed(format!("invalid oha JSON: {error}")))?;
     let success_rate =
-        finite_non_negative(json.summary.success_rate, "successRate").map_err(&parse_failed)?;
+        finite_non_negative(json.summary.success_rate, "successRate").map_err(parse_failed)?;
     if success_rate > 1.0 {
         return Err(parse_failed(format!(
             "successRate out of range: {success_rate}"
         )));
     }
     let requests_per_sec = finite_non_negative(json.summary.requests_per_sec, "requestsPerSec")
-        .map_err(&parse_failed)?;
+        .map_err(parse_failed)?;
     let to_ms = |value: f64, field: &str| {
         finite_non_negative(value, field)
             .map(|v| v * 1000.0)
-            .map_err(&parse_failed)
+            .map_err(parse_failed)
     };
     let fastest_ms = json
         .summary

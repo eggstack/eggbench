@@ -378,16 +378,16 @@ fn parse_h2load_report(outcome: &ExternalCommandOutcome) -> Result<H2loadReport,
             .ok_or_else(|| parse_failed(format!("missing `{prefix}` row")))
     };
     let (total, failed, errored, timed_out) =
-        parse_requests_row(row("requests: ")?).map_err(&parse_failed)?;
+        parse_requests_row(row("requests: ")?).map_err(parse_failed)?;
     let (request_min_ms, request_mean_ms) =
-        parse_timing_row(row("time for request:")?, "time for request").map_err(&parse_failed)?;
-    let req_per_sec_mean = parse_rate_row(row("req/s")?).map_err(&parse_failed)?;
+        parse_timing_row(row("time for request:")?, "time for request").map_err(parse_failed)?;
+    let req_per_sec_mean = parse_rate_row(row("req/s")?).map_err(parse_failed)?;
     let status_codes = stats
         .iter()
         .find(|line| line.starts_with("status codes: "))
         .map(|line| parse_status_row(line))
         .transpose()
-        .map_err(&parse_failed)?;
+        .map_err(parse_failed)?;
     Ok(H2loadReport {
         total,
         failed,
