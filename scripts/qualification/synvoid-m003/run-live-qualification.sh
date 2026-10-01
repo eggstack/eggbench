@@ -46,7 +46,12 @@ TELEMETRY_CONTRACT_ID="${TELEMETRY_CONTRACT_ID:-synvoid.eggbench-telemetry.v2}"
 MAPPING_SHA256="${MAPPING_SHA256:-622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99}"
 EGGSEC_PIN="${EGGSEC_PIN:-0509ac668adfd78e9899cd3428a807d0b3c9f27b}"
 POLL_INTERVAL_MS="${POLL_INTERVAL_MS:-200}"
-ORIGIN_DELAY_MS="${ORIGIN_DELAY_MS:-100}"
+# The throttle used by the performance-only regression must push throughput far
+# past the frozen allowance without consuming the per-trial measurement budget:
+# the gated scenario is measured nine times, so at 100ms a throttled trial took
+# ~10s against a 120s measurement timeout and a slower runner staged failed
+# trials, turning the comparison Invalid instead of Fail.
+ORIGIN_DELAY_MS="${ORIGIN_DELAY_MS:-20}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
@@ -587,15 +592,36 @@ fi
 # ---- m003d-8: performance-only regression (origin throttle) -------------
 rm -f origin-delay-ms
 echo "$ORIGIN_DELAY_MS" > origin-delay-ms
-"$EGGBENCH_BIN" qualify run perf.profile.json --output "$WORK/suite-performance-regression" --json >/dev/null 2>&1
+"$EGGBENCH_BIN" qualify run perf.profile.json --output "$WORK/suite-performance-regression" --json >"$WORK/perf-regression.json" 2>&1
 PERFORMANCE_RC=$?
 rm -f origin-delay-ms
+# A stopped stage must say which scenario ended up in what state, otherwise the
+# only evidence is an exit code that does not identify the cause.
+REGRESSION_DETAIL=$(python3 -c '
+import json
+import sys
+
+try:
+    document = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as error:
+    print(f"unreadable envelope: {error}")
+    raise SystemExit(0)
+states = " ".join(
+    "{0}={1}/{2}".format(
+        scenario["id"],
+        scenario.get("status"),
+        scenario.get("performance_verdict") or scenario.get("correctness_verdict") or "-",
+    )
+    for scenario in document.get("scenarios", [])
+)
+print("aggregate {}: {}".format(document.get("aggregate_verdict"), states))
+' "$WORK/perf-regression.json")
 if [ "$PERFORMANCE_RC" -eq 6 ] \
    && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); r=[s for s in d["scenarios"] if s["id"]=="synvoid-m003-correctness"]; sys.exit(0 if r and r[0].get("correctness_verdict")=="pass" else 1)' \
         "$WORK/suite-performance-regression/qualification-receipt.json"; then
   verdict PASS "m003d-8 performance-only regression fails the suite" "origin throttled; security outcomes stay correct"
 else
-  verdict STOPPED "m003d-8 performance-only regression fails the suite" "exit $PERFORMANCE_RC"
+  verdict STOPPED "m003d-8 performance-only regression fails the suite" "exit $PERFORMANCE_RC; $REGRESSION_DETAIL"
 fi
 
 # ---- m003d-9: telemetry-only regression is covered by m003c-16/17 ------
