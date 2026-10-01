@@ -1,6 +1,6 @@
 # Security Qualification M003c — Subject Telemetry and SynVoid Metrics Ingestion
 
-Status: **CLOSING — terminal SynVoid v2 qualification unblocked** (2026-09-29). Generic collector implementation landed at `2742e0e`; the former upstream owner-contract blocker is closed. Remaining work is Eggbench-owned current-head live/hosted qualification and closure evidence.
+Status: **CONDITIONALLY CLOSED — Eggbench-owned scope complete and live-verified** (2026-10-01; closure record `plans/closure/security-qualification/003c-status.md`). The generic collector landed at `2742e0e`; the probe-point seam, bounded drain, cadence-aware preflight retry, M003 workspace, and live harness are complete. Live evidence against the real pinned minimal SynVoid: `pass=29 stopped=1 notexec=0`. One gate remains open and is **upstream**: at the pinned owner revision the `synvoid.eggbench-telemetry.v2` inventory is exported without being populated, because the supervisor has no `UnifiedServerWorkerHeartbeat` dispatch arm, so the harness reports `m003c-13b` stopped instead of weakening the assertion.
 
 Research baselines:
 

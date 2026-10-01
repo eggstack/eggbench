@@ -1,0 +1,14 @@
+{
+  "/api/users": {
+    "status": 200,
+    "body_bytes": 32
+  },
+  "/qualbench/small": {
+    "status": 200,
+    "body_bytes": 1024
+  },
+  "/qualbench/stream": {
+    "status": 200,
+    "body_bytes": 65536
+  }
+}

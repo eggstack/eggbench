@@ -46,7 +46,7 @@ Canonical direction remains in:
 | Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
 | Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
 | External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 closed/hosted-qualified (C002 closed, exact-head runs `36640125422` + `36640125453` on `4703333`); M003a-b closed; M003c CLOSING on real SynVoid v2 qualification; M003d Eggsec-load slice implemented, its CI portability corrective closed at `4703333` | SynVoid M002 asset contract and M003 telemetry v2 contract are closed upstream; M002 C002 is closed; the only remaining M003 gate is terminal M003c, which now has a green hosted source to close on |
+| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 closed/hosted-qualified (C002 closed, exact-head runs `36640125422` + `36640125453` on `4703333`); M003a-b closed; M003a-b closed; M003c/M003d/M003 conditionally closed on Eggbench-owned scope (live harness `pass=29 stopped=1`) | SynVoid M002 asset contract and M003 telemetry v2 contract are closed upstream; M002 C002 is closed; the one remaining M003 gate is upstream: the pinned owner exports the v2 telemetry inventory without populating it |
 | Security qualification M002 post-conditional-closure corrective | closed | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f` (historical); C002 closed | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED with verification); C002 closure: plans/closure/security-qualification-m002-corrective/002-status.md (closed on runs `36640125422` / `36640125453`); M003d CI corrective: plans/closure/security-qualification/003d-corrective-status.md (closed at `4703333`) |
 | Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
 
@@ -68,11 +68,19 @@ Canonical direction remains in:
 
 Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
 
-## Dependency-ready implementation plans
+## M003 closure status
 
-| Subsystem | Milestone | Status | Plan | Immediate handoff |
-|---|---|---|---|---|
-| Security qualification | M003c subject telemetry + SynVoid metrics ingestion | **closing / unblocked for terminal qualification** | plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md | Consume closed `synvoid.eggbench-telemetry.v2`, run real current-head M003b pressure/body telemetry trials, prove drain/fail-closed behavior, then close only with green hosted evidence. The green-hosted-source precondition is satisfied by runs `36640125422` / `36640125453` on `4703333`. |
+M003c, M003d, and the M003 milestone are conditionally closed; see the table in
+"Conditionally closed implementation plans" below.
+
+### M003 live qualification evidence (local)
+
+`scripts/qualification/synvoid-m003/run-live-qualification.sh` against the real
+pinned SynVoid `739e7ba6f02c5e3f83fe9ff5321b09213182b193` and Eggsec
+`0509ac668adfd78e9899cd3428a807d0b3c9f27b`: `pass=29 stopped=1 notexec=0`. The
+single stop is the named upstream telemetry-population gate. Hosted evidence is
+collected by the `live-m003-linux` job added to
+`.github/workflows/live-tools.yml` on this branch.
 
 M002 corrective C001 remains **STOPPED with verification** at `b98973f`, preserved
 as historical evidence. C002 is **closed** at
@@ -105,14 +113,17 @@ No older corrective handoff remains open.
 
 | Subsystem | Milestone | Status | Plan | Closure | Remaining condition |
 |---|---|---|---|---|---|
+| Security qualification | M003c subject telemetry + SynVoid metrics ingestion | conditionally closed (Eggbench scope complete and live-verified) | plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md | plans/closure/security-qualification/003c-status.md | owner revision that populates the required `synvoid_subject_*` series; the pinned owner exports the v2 inventory at zero because its supervisor never dispatches `Message::UnifiedServerWorkerHeartbeat` |
+| Security qualification | M003d Eggsec load profiles + live qualification | conditionally closed (Eggbench scope complete and live-verified) | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | plans/closure/security-qualification/003d-status.md | inherits M003c's owner gate; no Eggbench work outstanding |
+| Security qualification | M003 milestone | conditionally closed | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | plans/closure/security-qualification/003-status.md | `m003c-13b` passes against a corrected owner revision plus green hosted four-lane and `live-m003-linux` runs |
 | Security qualification | M002a SynVoid controlled correctness profile | conditionally closed (routine synthetic scope; terminal proof supplied by the closed C002) | plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md | plans/closure/security-qualification/002a-status.md | none; the named condition is discharged by plans/closure/security-qualification-m002-corrective/002-status.md |
 | Security qualification | M002b SynVoid performance/resource suite + M002 closure | conditionally closed (routine synthetic scope; terminal proof supplied by the closed C002) | plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md | plans/closure/security-qualification/002b-status.md | none; the named condition is discharged by plans/closure/security-qualification-m002-corrective/002-status.md |
 
 ## Authored but dependency-blocked implementation plans
 
-| Subsystem | Milestone | Status | Plan | Blocker |
-|---|---|---|---|---|
-| Security qualification | M003d Eggsec load profiles + live qualification + M003 closure | blocked for terminal profile/closure work; Eggsec-load slice implemented and its CI portability corrective closed at `4703333` | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | Terminal M003c qualification is the only remaining gate. M002 C002 is closed and SynVoid v2 is no longer a blocker. |
+None currently. M003d is no longer blocked: its profile, baseline,
+negative-demonstration, and live work is complete, and the milestone inherits
+only the single upstream condition recorded above.
 
 External Oracles M003 netem remains separate.
 
@@ -188,7 +199,7 @@ Security qualification retains separate correctness and performance gate familie
 
 Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed. M002 is closed and hosted-qualified: the routine scope landed at `b74f861` and remains historically conditionally closed, and the post-M002 corrective supplies the terminal proof — **C001 is STOPPED with verification at `b98973f`** (preserved as historical) and **C002 is closed** with real owner-exported SynVoid correctness/performance/live execution plus exact-head hosted runs `36640125422` and `36640125453` on the M003d-corrective source `4703333`. The SynVoid M002 asset contract is CLOSED upstream (`ae045481` / `30e68af8`). Eggbench does not translate SynVoid Detect/Pass semantics itself.
 
-Security Qualification M003 has now been researched and decomposed. M003a-b are closed; M003c is closing on its own live evidence and M003d is blocked only on it. SynVoid's M003 telemetry-export handoff is CLOSED QUALIFIED under `synvoid.eggbench-telemetry.v2`; Eggsec required no upstream change for the load-profile adapter.
+Security Qualification M003 has now been researched and decomposed. M003a-b are closed; M003c, M003d, and the M003 milestone are conditionally closed on Eggbench-owned scope, verified live against the real pinned SynVoid and Eggsec (`pass=29 stopped=1 notexec=0`). SynVoid's M003 telemetry-export handoff is CLOSED QUALIFIED under `synvoid.eggbench-telemetry.v2`; no upstream change was needed for the Eggsec load-profile adapter, although executing it against the real tool exposed four adapter-contract defects that are now repaired.
 
 ### Gate H — Distributed execution
 
@@ -316,8 +327,14 @@ The M003d Eggsec-load CI portability corrective is **closed**
 (implementation `4703333`; closure
 `plans/closure/security-qualification/003d-corrective-status.md`).
 
-Next handoff: terminal M003c qualification on real current-head SynVoid v2
-telemetry evidence, closing on green hosted source (`36640125422` /
-`36640125453` on `4703333` or a later green descendant). M003d's remaining
-profile/baseline/live/negative-demonstration work follows M003c; M002 is
-fully qualified and is no longer a premise gate.
+Next handoff: the upstream telemetry-population fix in SynVoid. M003c, M003d,
+and M003 are conditionally closed on Eggbench-owned scope and verified against
+the real pinned SynVoid and Eggsec; the one unmet gate is that the pinned owner
+exports the `synvoid.eggbench-telemetry.v2` inventory without populating it
+(`src/supervisor/ipc.rs` has no `UnifiedServerWorkerHeartbeat` dispatch arm, so
+the bridge aggregates default payloads and publishes zeros under load). Report
+it upstream, then re-run
+`scripts/qualification/synvoid-m003/run-live-qualification.sh` against the
+corrected owner revision and collect hosted four-lane plus `live-m003-linux`
+evidence on the closing revision. M002 remains fully qualified and is no longer a
+premise gate.

@@ -1,0 +1,321 @@
+{
+  "schema_version": 10,
+  "experiment": "synvoid-m003-target-telemetry-optional-c32-synthetic",
+  "subject": {
+    "kind": "label",
+    "label": "synvoid-m003-synthetic-stand-in"
+  },
+  "services": [
+    {
+      "name": "synvoid",
+      "kind": {
+        "kind": "command",
+        "argv": [
+          "stubs/fake_synvoid_m003.py",
+          "--port",
+          "18080",
+          "--metrics-port",
+          "19090",
+          "--metrics-log",
+          "metrics-scrapes.log",
+          "--fault-file",
+          "faults.json"
+        ]
+      },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {},
+      "http_url": "http://127.0.0.1:18080/",
+      "readiness": {
+        "kind": "probe",
+        "probe": "tcp-loopback",
+        "timeout_ms": 20000
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    },
+    {
+      "name": "origin",
+      "kind": {
+        "kind": "command",
+        "argv": [
+          "stubs/controlled_origin_m003.py",
+          "--port",
+          "18090",
+          "--routes-json",
+          "routes.json",
+          "--log-file",
+          "origin-requests.log"
+        ]
+      },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {},
+      "http_url": "http://127.0.0.1:18090/api/users",
+      "readiness": {
+        "kind": "probe",
+        "probe": "tcp-loopback",
+        "timeout_ms": 20000
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    },
+    {
+      "name": "subject-metrics",
+      "kind": {
+        "kind": "named",
+        "service_type": "prometheus-http"
+      },
+      "lifecycle": "external",
+      "depends_on": [],
+      "config": {
+        "target_service": "subject-metrics",
+        "binding_key": "http_url",
+        "mapping_ref": "telemetry/telemetry-mapping.json",
+        "mapping_sha256": "dd7d58dd204a691ab0b83b82a83d49f3438b67e3ea6d0e14c7c1fba3832584b0",
+        "poll_interval_ms": "200"
+      },
+      "http_url": "http://127.0.0.1:19090/metrics",
+      "readiness": null,
+      "shutdown": {
+        "grace_ms": 1,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    }
+  ],
+  "workload": {
+    "kind": "http_corpus",
+    "target": "synvoid",
+    "corpus_ref": "corpus.json",
+    "corpus_sha256": "6c4663aa500f5b5e38fe6984b0dc8f84001b387e16974bffa45749398fd82df3",
+    "schedule": [
+      {
+        "case_id": "benign-json-body",
+        "count": 384
+      },
+      {
+        "case_id": "benign-small-get",
+        "count": 256
+      },
+      {
+        "case_id": "detect-sqli-body",
+        "count": 80
+      },
+      {
+        "case_id": "detect-ssrf-body",
+        "count": 48
+      },
+      {
+        "case_id": "detect-xss-query",
+        "count": 32
+      }
+    ],
+    "concurrency": 32,
+    "connection_policy": "pooled",
+    "default_headers": []
+  },
+  "trials": {
+    "measured": 3,
+    "warmup": 1,
+    "cooldown_ms": 50,
+    "reset": {
+      "kind": "none"
+    },
+    "timeouts": {
+      "measurement": 120000,
+      "drain": 10000,
+      "telemetry": 20000
+    }
+  },
+  "telemetry": [
+    {
+      "source": "prometheus-http",
+      "fields": [
+        "subject_event_loop_lag_ms",
+        "subject_request_queue_p95_ms",
+        "subject_active_connections",
+        "subject_worker_memory_bytes",
+        "subject_worker_cpu_percent",
+        "subject_body_buffering_bytes_total",
+        "subject_offload_submissions_total",
+        "subject_offload_timeouts_total",
+        "subject_offload_rejections_total",
+        "subject_offload_fallbacks_total",
+        "subject_cpu_worker_rss_bytes",
+        "subject_worker_metric_resets_total"
+      ],
+      "required": true
+    }
+  ],
+  "metrics": [
+    {
+      "name": "expected_outcome_mismatch_rate",
+      "unit": "ratio",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "primary",
+      "gate": {
+        "kind": "absolute",
+        "value": 0.0
+      }
+    },
+    {
+      "name": "transport_error_rate",
+      "unit": "ratio",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "primary",
+      "gate": {
+        "kind": "absolute",
+        "value": 0.0
+      }
+    },
+    {
+      "name": "throughput",
+      "unit": "rps",
+      "direction": {
+        "kind": "higher_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "latency_p95",
+      "unit": "ms",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_event_loop_lag_ms",
+      "unit": "ms",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_request_queue_p95_ms",
+      "unit": "ms",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_active_connections",
+      "unit": "connections",
+      "direction": {
+        "kind": "informational"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_worker_memory_bytes",
+      "unit": "bytes",
+      "direction": {
+        "kind": "informational"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_worker_cpu_percent",
+      "unit": "percent",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_body_buffering_bytes_total",
+      "unit": "bytes",
+      "direction": {
+        "kind": "informational"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_offload_submissions_total",
+      "unit": "count",
+      "direction": {
+        "kind": "informational"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_offload_timeouts_total",
+      "unit": "count",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_offload_rejections_total",
+      "unit": "count",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_offload_fallbacks_total",
+      "unit": "count",
+      "direction": {
+        "kind": "lower_is_better"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_cpu_worker_rss_bytes",
+      "unit": "bytes",
+      "direction": {
+        "kind": "informational"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    },
+    {
+      "name": "subject_worker_metric_resets_total",
+      "unit": "count",
+      "direction": {
+        "kind": "informational"
+      },
+      "intent": "diagnostic",
+      "gate": null
+    }
+  ],
+  "environment_policy": {
+    "kind": "strict_same_testbed"
+  },
+  "seed": 50,
+  "bounds": {
+    "artifact_count": 256,
+    "artifact_bytes": 16777216,
+    "total_bytes": 268435456
+  }
+}

@@ -86,11 +86,43 @@ profiles declare no collector (deviation D5); enable it only where a
 qualified daemon is provisioned, with gates added solely after
 repeatability is demonstrated.
 
-## Deferred shapes (M003 candidates)
+## M003: subject telemetry and load profiles
 
-Mixed malicious/benign traffic under load, request-body attack
-performance campaigns, explicit connection-churn/keepalive controls,
-SynVoid Prometheus/event-loop/queue ingestion, challenge/stall/tarpit
+`qualification/synvoid/v2` is the M003 workspace. Routine scope runs against
+the synthetic stand-in; live scope materializes the owner contracts from the
+pinned SynVoid tree with
+`cargo xtask eggbench-qualification export` and drives the real minimal
+binary. Both scopes run the same stages in
+`scripts/qualification/synvoid-m003/run-live-qualification.sh`.
+
+Subject telemetry is the owner's: `telemetry/telemetry-mapping.json` is the
+owner mapping byte-for-byte (raw SHA-256
+`622f6a13c4353cc7465cce39a57ed86fa0db2fe4124258e6f06226c1748d2d99`;
+contract `synvoid.eggbench-telemetry.v2`), and plans pin its Eggbench
+content identity. The owner declares 12 samples, 10 required and 2 optional;
+the optional pair stays absent in the minimal runtime and is recorded as
+missing with a warning, never as zero. Ten required fields that drift, reset,
+or disappear fail the run closed.
+
+The live harness starts one owner instance for the whole qualification and
+declares the subject and its controlled origin as external services in the
+plans. A per-scenario managed subject would contend for the owner metrics
+port, and a child that loses that race publishes no series, which would make
+the telemetry evidence describe whichever process still held the port.
+
+Load shapes are `body-pooled`, `body-fresh`, `mixed-80-20-pooled`,
+`mixed-80-20-fresh`, an origin-only control, and the telemetry-pressure and
+optional-absence trials. Only `body-gated-c8` carries performance policy
+gates (statistical-relative throughput and p95 latency against an explicit
+baseline bundle); every other performance observation is diagnostic.
+`eggsec-load` executes one reviewed case per trial as the security-owner
+path, and `oha` supplies transport corroboration where the request shape is
+supported. Both are optional external oracles and neither substitutes for the
+native driver.
+
+## Still deferred
+
+Explicit connection-churn/keepalive controls, challenge/stall/tarpit
 semantics, HTTP/2/TLS variants, and network-path/fault injection.
 
 ## Cleanup and evidence locations

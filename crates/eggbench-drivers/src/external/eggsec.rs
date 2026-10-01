@@ -557,6 +557,29 @@ pub fn generate_scope_manifest(host: &str) -> Result<(Vec<u8>, String), String> 
     Ok((content.into_bytes(), digest))
 }
 
+/// Generate the minimal load-execution policy manifest for one qualified run.
+///
+/// Eggsec denies the `load-test` operation under every enforcement profile
+/// until an execution policy authorizes it, so Eggbench must supply that
+/// authorization explicitly rather than rely on a permissive profile. The
+/// manifest authorizes exactly one capability (load testing), keeps explicit
+/// scope mandatory, and denies every other elevated-risk capability. Content is
+/// deterministic (no timestamps); the SHA-256 is the policy identity that goes
+/// into driver evidence alongside the scope identity.
+#[must_use]
+pub fn generate_load_policy_manifest() -> (Vec<u8>, String) {
+    let content = "[execution_policy]\n\
+         require_explicit_scope = true\n\
+         allow_load_testing = true\n\
+         allow_intrusive_fuzzing = false\n\
+         allow_stress_testing = false\n\
+         allow_raw_packets = false\n\
+         allow_credential_testing = false\n\
+         allow_remote_execution = false\n";
+    let digest = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
+    (content.as_bytes().to_vec(), digest)
+}
+
 /// Exact WAF argv tail after the global scope/strict/json flags.
 ///
 /// Exposed for contract tests: `--header-bypass`, `--smuggling`,

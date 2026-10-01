@@ -10,8 +10,8 @@ use crate::diagnostics::{
 };
 use crate::service::RuntimeBindings;
 use crate::telemetry::{
-    TelemetryError, TelemetryOutput, TelemetryPreflightContext, TelemetryRegistry,
-    TelemetryTrialContext,
+    TelemetryError, TelemetryOutput, TelemetryPreflightContext, TelemetryPreflightTiming,
+    TelemetryRegistry, TelemetryTrialContext,
 };
 use crate::{
     CleanupFailure, LifecycleOutcome, LocalSession, stage_lifecycle_logs, stage_lifecycle_metadata,
@@ -358,6 +358,20 @@ struct TelemetryPlan {
     active: Vec<String>,
     /// Sources disabled for the run with explicit warning detail.
     disabled: Vec<DisabledTelemetry>,
+    /// A required source failed preflight; the run stops before any workload.
+    /// Carries the collector's redaction-safe reason so the failure is
+    /// reportable rather than merely categorical.
+    required_failure: Option<String>,
+}
+
+impl TelemetryPlan {
+    /// Disposition for a required source that failed preflight.
+    fn failed_required(reason: String) -> Self {
+        Self {
+            required_failure: Some(reason),
+            ..Self::default()
+        }
+    }
 }
 
 /// One telemetry source disabled for the run (optional preflight failure).
@@ -601,6 +615,9 @@ pub struct RunOutcome {
     pub bundle_path: PathBuf,
     /// Verified immutable manifest.
     pub manifest: BundleManifest,
+    /// Redaction-safe reason a required telemetry source failed preflight
+    /// after readiness, when that ended the run before any workload.
+    pub telemetry_preflight_failure: Option<String>,
 }
 
 /// Preflight, orchestration, or evidence-finalization error.
@@ -609,6 +626,13 @@ pub enum OrchestrationError {
     /// M002 configuration cannot be executed safely.
     #[error("orchestration preflight failed: {0}")]
     Preflight(&'static str),
+    /// A required telemetry source failed its preflight probe.
+    ///
+    /// Separate from [`Self::Preflight`] because the reason is per-source
+    /// runtime detail (source, failure kind, and observed contract state),
+    /// not a static configuration verdict.
+    #[error("telemetry preflight failed: {0}")]
+    TelemetryPreflight(String),
     /// Evidence could not be truthfully finalized; the staged tree is incomplete and the
     /// final bundle path was not published.
     ///
@@ -630,7 +654,7 @@ impl OrchestrationError {
     pub fn source(&self) -> Option<&BundleError> {
         match self {
             Self::Evidence { source, .. } => Some(source),
-            Self::Preflight(_) => None,
+            Self::Preflight(_) | Self::TelemetryPreflight(_) => None,
         }
     }
 
@@ -639,7 +663,7 @@ impl OrchestrationError {
     pub fn cleanup(&self) -> &[CleanupFailure] {
         match self {
             Self::Evidence { cleanup, .. } => cleanup,
-            Self::Preflight(_) => &[],
+            Self::Preflight(_) | Self::TelemetryPreflight(_) => &[],
         }
     }
 }
@@ -677,6 +701,9 @@ struct RunState {
     /// Primary evidence-staging failure encountered during the experimental phase,
     /// if any. Preserved across the mandatory cleanup tail.
     staging_error: Option<BundleError>,
+    /// Redaction-safe reason a required telemetry source failed preflight
+    /// after readiness, recorded as a phase outcome detail.
+    telemetry_preflight_failure: Option<String>,
 }
 
 impl RunState {
@@ -693,6 +720,7 @@ impl RunState {
             started: Vec::new(),
             services_started: false,
             workload_entered: false,
+            telemetry_preflight_failure: None,
             staging_error: None,
         }
     }
@@ -798,14 +826,28 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     let mut state = RunState::new(writer, Vec::with_capacity(phase_bound));
 
     // ---- Telemetry preflight ----
-    // Before managed startup: validate every requested backend. Required
-    // failures prevent measurement; optional failures disable the collector
-    // for the run with an explicit per-trial warning (never zeroes).
-    let telemetry_plan = if cancel.is_cancelled() {
+    // Probe point one, before managed startup: every source whose endpoint
+    // is provisioned outside this run. Sources whose endpoint belongs to a
+    // managed service of this run are probed after readiness, still before
+    // any warmup or measured trial. Required failures prevent measurement;
+    // optional failures disable the collector for the run with an explicit
+    // per-trial warning (never zeroes).
+    let mut telemetry_plan = if cancel.is_cancelled() {
         TelemetryPlan::default()
     } else {
-        preflight_telemetry(telemetry, resolved, run_id, &config, cancel).await?
+        preflight_telemetry(
+            telemetry,
+            resolved,
+            run_id,
+            &config,
+            cancel,
+            TelemetryPreflightTiming::BeforeStartup,
+        )
+        .await
     };
+    if let Some(reason) = telemetry_plan.required_failure {
+        return Err(OrchestrationError::TelemetryPreflight(reason));
+    }
 
     // ---- Diagnostic preflight ----
     // Before managed startup: every requested diagnostic source must have a
@@ -893,6 +935,35 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
                     state.primary_failure,
                 );
             }
+        }
+    }
+
+    // ---- Telemetry preflight (managed endpoints) ----
+    // Probe point two, after readiness and before warmups: every source whose
+    // endpoint belongs to a service this run starts. Still outside every
+    // measured interval, so a required subject-telemetry failure sets the run
+    // Failed without any workload traffic. The common cleanup tail still
+    // drains telemetry and tears services down.
+    if state.status == ExecutionStatus::Completed && state.staging_error.is_none() {
+        let deferred = if cancel.is_cancelled() {
+            TelemetryPlan::default()
+        } else {
+            preflight_telemetry(
+                telemetry,
+                resolved,
+                run_id,
+                &config,
+                cancel,
+                TelemetryPreflightTiming::AfterReadiness,
+            )
+            .await
+        };
+        telemetry_plan.active.extend(deferred.active);
+        telemetry_plan.disabled.extend(deferred.disabled);
+        if let Some(reason) = deferred.required_failure {
+            state.status = ExecutionStatus::Failed;
+            state.primary_failure = Some(FailureCategory::TelemetryFailed);
+            state.telemetry_preflight_failure = Some(reason);
         }
     }
 
@@ -1683,6 +1754,7 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
         phases: state.phases,
         bundle_path: path,
         manifest: bundle.manifest().clone(),
+        telemetry_preflight_failure: state.telemetry_preflight_failure,
     })
 }
 
@@ -1892,12 +1964,17 @@ fn preflight(
     })
 }
 
-/// Preflight every telemetry source requested by the resolved plan.
+/// Preflight every telemetry source requested by the resolved plan at the
+/// probe point its endpoint belongs to.
 ///
-/// Runs before managed startup. A required source whose collector is
-/// missing or whose preflight fails prevents measurement with a preflight
-/// error. An optional source failure disables the collector for the run;
-/// its requested metrics later normalize as missing with an explicit
+/// `timing` selects the phase: collectors whose endpoint is provisioned
+/// outside the run are probed before managed startup; collectors whose
+/// endpoint belongs to a service this run starts are probed after readiness.
+/// Both points precede every warmup and measured trial, so a required
+/// collector is always validated before any workload traffic. A required
+/// source whose collector is missing or whose preflight fails prevents
+/// measurement. An optional source failure disables the collector for the
+/// run; its requested metrics later normalize as missing with an explicit
 /// warning, never as fabricated zeroes.
 async fn preflight_telemetry(
     telemetry: &mut TelemetryRegistry,
@@ -1905,22 +1982,32 @@ async fn preflight_telemetry(
     run_id: RunId,
     config: &PhaseConfig,
     cancel: &CancellationToken,
-) -> Result<TelemetryPlan, OrchestrationError> {
+    timing: TelemetryPreflightTiming,
+) -> TelemetryPlan {
     let mut plan = TelemetryPlan::default();
     for request in &resolved.telemetry {
         let source = request.source.as_str();
         let Some(collector) = telemetry.get_mut(source) else {
             if request.required {
-                return Err(OrchestrationError::Preflight(
-                    "required telemetry collector is not registered",
-                ));
+                // A missing required collector is a static registry defect,
+                // not an endpoint-liveness question: it is reported at the
+                // first probe point regardless of the source's timing.
+                if timing == TelemetryPreflightTiming::BeforeStartup {
+                    return TelemetryPlan::failed_required(
+                        "required telemetry collector is not registered".to_owned(),
+                    );
+                }
+            } else if timing == TelemetryPreflightTiming::BeforeStartup {
+                plan.disabled.push(DisabledTelemetry {
+                    source: source.to_owned(),
+                    reason: "collector not registered".to_owned(),
+                });
             }
-            plan.disabled.push(DisabledTelemetry {
-                source: source.to_owned(),
-                reason: "collector not registered".to_owned(),
-            });
             continue;
         };
+        if collector.preflight_timing() != timing {
+            continue;
+        }
         let context = TelemetryPreflightContext {
             run_id,
             cancellation: cancel.child_token(),
@@ -1933,14 +2020,14 @@ async fn preflight_telemetry(
         // Cancellation races preflight; the startup section reports the
         // Cancelled outcome. Leave collectors undispositioned.
         let Some(probed) = outcome else {
-            return Ok(TelemetryPlan::default());
+            return TelemetryPlan::default();
         };
         match probed {
             Ok(Ok(_)) => plan.active.push(source.to_owned()),
             Ok(Err(error)) => {
                 if request.required {
-                    return Err(OrchestrationError::Preflight(
-                        "required telemetry preflight failed",
+                    return TelemetryPlan::failed_required(format!(
+                        "required telemetry source {source} failed preflight: {error}"
                     ));
                 }
                 plan.disabled.push(DisabledTelemetry {
@@ -1950,8 +2037,8 @@ async fn preflight_telemetry(
             }
             Err(_) => {
                 if request.required {
-                    return Err(OrchestrationError::Preflight(
-                        "required telemetry preflight timed out",
+                    return TelemetryPlan::failed_required(format!(
+                        "required telemetry source {source} preflight timed out"
                     ));
                 }
                 plan.disabled.push(DisabledTelemetry {
@@ -1961,7 +2048,7 @@ async fn preflight_telemetry(
             }
         }
     }
-    Ok(plan)
+    plan
 }
 
 /// Number of diagnostic executions in one run: requests with `Both` run twice.

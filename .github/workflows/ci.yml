@@ -30,6 +30,7 @@ jobs:
           cargo check -p eggbench-drivers --no-default-features --features gregg --locked
           cargo check -p eggbench-drivers --no-default-features --features eggstack-path --locked
           cargo check -p eggbench-drivers --no-default-features --features eggstack-path,gregg --locked
+          cargo check -p eggbench-drivers --no-default-features --features prometheus-http --locked
           cargo check -p eggbench-cli --no-default-features --features eggstack-path --locked
           if cargo tree -p eggbench-drivers --no-default-features --edges normal | grep -E 'eggress|eggchaos'; then exit 1; fi
           if cargo tree -p eggbench-drivers --no-default-features --features eggstack-http --edges normal | grep -E 'eggress|eggchaos'; then exit 1; fi

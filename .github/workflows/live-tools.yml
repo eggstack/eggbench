@@ -115,3 +115,33 @@ jobs:
           name: live-synvoid-qualification-log
           path: live-synvoid-qualification.log
           retention-days: 30
+
+  # M003c/M003d terminal qualification: subject telemetry ingestion against the
+  # real pinned SynVoid telemetry contract plus the Eggsec strict-scope load
+  # profiles against the real pinned Eggsec binary. The harness materializes the
+  # owner contracts from the pinned SynVoid tree, so a contract change upstream
+  # fails this job rather than silently changing the evidence.
+  live-m003-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Eggbench release binary with all features
+        run: cargo build --locked --release --all-features -p eggbench-cli
+      - name: Run M003c/M003d live qualification harness
+        run: |
+          set -u
+          EGGBENCH_BIN="$PWD/target/release/eggbench" \
+            bash scripts/qualification/synvoid-m003/run-live-qualification.sh >live-m003-qualification.log 2>&1
+          rc=$?
+          tail -60 live-m003-qualification.log
+          exit "$rc"
+      - name: Upload bounded provenance and evidence summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-m003-qualification-log
+          path: live-m003-qualification.log
+          retention-days: 30

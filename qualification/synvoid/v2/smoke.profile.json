@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "id": "synvoid-m003-smoke-v1",
+  "owner": "Eggbench Security Qualification M003 synthetic routine scope",
+  "scenarios": [
+    {
+      "id": "synvoid-m003-correctness",
+      "plan": "scenarios/waf-correctness.json"
+    },
+    {
+      "id": "synvoid-m003-body-pooled-c8",
+      "plan": "scenarios/body-pooled-c8.json",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-mixed-80-20-pooled-c8",
+      "plan": "scenarios/mixed-80-20-pooled-c8.json",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-mixed-80-20-fresh-c8",
+      "plan": "scenarios/mixed-80-20-fresh-c8.json",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "origin-m003-body-control-c8",
+      "plan": "scenarios/control-origin-body-c8.json",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-target-telemetry-pressure-c32",
+      "plan": "scenarios/telemetry-pressure-c32.json",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-target-telemetry-optional-c32",
+      "plan": "scenarios/telemetry-optional-c32.json",
+      "workload_driver": "eggfetch-http"
+    }
+  ],
+  "corpus": {
+    "path": "corpus.json"
+  },
+  "target_config": {
+    "path": "target-config.json"
+  }
+}

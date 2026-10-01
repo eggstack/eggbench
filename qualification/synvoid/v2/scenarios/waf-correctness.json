@@ -1,0 +1,113 @@
+{
+  "schema_version": 9,
+  "experiment": "synvoid-m003-correctness-synthetic",
+  "subject": {
+    "kind": "label",
+    "label": "synvoid-m003-synthetic-stand-in"
+  },
+  "services": [
+    {
+      "name": "synvoid",
+      "kind": {
+        "kind": "command",
+        "argv": [
+          "stubs/fake_synvoid_m003.py",
+          "--port",
+          "18080",
+          "--metrics-port",
+          "19090",
+          "--metrics-log",
+          "metrics-scrapes.log",
+          "--fault-file",
+          "faults.json"
+        ]
+      },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {},
+      "http_url": "http://127.0.0.1:18080/",
+      "readiness": {
+        "kind": "probe",
+        "probe": "tcp-loopback",
+        "timeout_ms": 20000
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    },
+    {
+      "name": "origin",
+      "kind": {
+        "kind": "command",
+        "argv": [
+          "stubs/controlled_origin_m003.py",
+          "--port",
+          "18090",
+          "--routes-json",
+          "routes.json",
+          "--log-file",
+          "origin-requests.log"
+        ]
+      },
+      "lifecycle": "managed",
+      "depends_on": [],
+      "config": {},
+      "http_url": "http://127.0.0.1:18090/api/users",
+      "readiness": {
+        "kind": "probe",
+        "probe": "tcp-loopback",
+        "timeout_ms": 20000
+      },
+      "shutdown": {
+        "grace_ms": 3000,
+        "method": null
+      },
+      "working_directory": null,
+      "log_limit_bytes": 65536
+    }
+  ],
+  "workload": {
+    "kind": "finite_count",
+    "target": "synvoid",
+    "requests": 4,
+    "concurrency": 1
+  },
+  "trials": {
+    "measured": 1,
+    "warmup": 0,
+    "cooldown_ms": 50,
+    "reset": {
+      "kind": "none"
+    },
+    "timeouts": {
+      "measurement": 20000,
+      "drain": 10000,
+      "telemetry": 20000
+    }
+  },
+  "telemetry": [],
+  "metrics": [],
+  "environment_policy": {
+    "kind": "strict_same_testbed"
+  },
+  "seed": 41,
+  "bounds": {
+    "artifact_count": 256,
+    "artifact_bytes": 16777216,
+    "total_bytes": 268435456
+  },
+  "http_corpus_checks": [
+    {
+      "id": "synvoid-m003-correctness",
+      "source": "eggbench-http-corpus",
+      "target": "synvoid",
+      "corpus_ref": "correctness-corpus.json",
+      "corpus_sha256": "516dde8cf9e5a6493b138d089cf8229de7633e76de7fd9ba909f253b67cc9349",
+      "timeout_ms": 60000,
+      "case_timeout_ms": 5000
+    }
+  ]
+}

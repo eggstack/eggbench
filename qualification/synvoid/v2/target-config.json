@@ -1,0 +1,35 @@
+{
+  "contract": "synvoid-qualification-target.v1",
+  "note": "M003 synthetic routine scope. The subject is a routine-test-only stand-in that publishes the owner-authored SynVoid v2 telemetry sample names; live qualification runs the real minimal SynVoid binary against the SynVoid-owned export.",
+  "policy_id": "synvoid.eggbench-qualification.v1",
+  "expected_tree": [
+    "telemetry/telemetry-mapping.json",
+    "telemetry/telemetry-contract.json"
+  ],
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 18080
+  },
+  "metrics": {
+    "host": "127.0.0.1",
+    "port": 19090
+  },
+  "origin": {
+    "url": "http://127.0.0.1:18090"
+  },
+  "telemetry": {
+    "contract_id": "synvoid.eggbench-telemetry.v2",
+    "owner_mapping_sha256": "622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99",
+    "mapping_ref": "telemetry/telemetry-mapping.json",
+    "mapping_content_identity": "dd7d58dd204a691ab0b83b82a83d49f3438b67e3ea6d0e14c7c1fba3832584b0",
+    "scrape_path": "/metrics"
+  },
+  "mapping": {
+    "detect": {
+      "status_any_of": [403]
+    },
+    "pass": {
+      "status_exact": 200
+    }
+  }
+}

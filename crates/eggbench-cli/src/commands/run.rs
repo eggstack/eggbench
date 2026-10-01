@@ -472,6 +472,11 @@ async fn run_impl(
     };
 
     let mut presented = presented_run_outcome(&outcome);
+    if let Some(reason) = &outcome.telemetry_preflight_failure {
+        presented.envelope = presented
+            .envelope
+            .with_warning("telemetry_preflight_failed", reason.clone());
+    }
     for (category, detail) in telemetry_warnings {
         presented.envelope = presented.envelope.with_warning(category, detail);
     }

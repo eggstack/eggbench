@@ -1,6 +1,6 @@
 # Security Qualification M003d — Eggsec Load Profiles, Live Qualification, and M003 Closure
 
-Status: Eggsec load adapter slice implemented at `739f382` (status record: `plans/closure/security-qualification/003d-status.md`); the narrow CI/portability corrective is **closed** at `4703333` (closure record `plans/closure/security-qualification/003d-corrective-status.md`, exact-head hosted runs `36640125422` four-lane and `36640125453` live). Overall M003d closure remains gated on M003c terminal qualification only; M002 C002 is closed.
+Status: **CONDITIONALLY CLOSED — M003d scope complete and live-verified** (2026-10-01; closure record `plans/closure/security-qualification/003d-status.md`). Eggsec load adapter slice at `739f382`; CI/portability corrective closed at `4703333` (hosted runs `36640125422` four-lane and `36640125453` live); the M003 profile family, explicit baselines, single-owner-instance live workspace, and negative demonstrations are closed. Executing against the real pinned Eggsec exposed and repaired four adapter-contract defects (`--headers` spelling, the load-only execution policy Eggsec requires, `--quiet` suppressing the machine report, and preflight document extraction). Milestone record: `plans/closure/security-qualification/003-status.md`. The milestone inherits M003c's single upstream gate; no Eggbench work remains.
 
 Research baselines:
 

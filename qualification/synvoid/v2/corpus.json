@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "owner": "Eggbench synthetic M003 routine scope (not a SynVoid owner export)",
+  "corpus_id": "synvoid-m003-synthetic-v1",
+  "cases": [
+    {
+      "id": "benign-json-body",
+      "category": "body/benign",
+      "request": {
+        "method": "POST",
+        "path_and_query": "/api/users",
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "kind": "inline_utf8",
+          "value": "{\"name\":\"John Doe\",\"email\":\"john@example.com\",\"age\":30}"
+        }
+      },
+      "expectation": {
+        "status_exact": 200
+      }
+    },
+    {
+      "id": "benign-small-get",
+      "category": "benign",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/qualbench/small",
+        "headers": [],
+        "body": {
+          "kind": "none"
+        }
+      },
+      "expectation": {
+        "status_exact": 200
+      }
+    },
+    {
+      "id": "benign-stream-get",
+      "category": "benign",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/qualbench/stream",
+        "headers": [],
+        "body": {
+          "kind": "none"
+        }
+      },
+      "expectation": {
+        "status_exact": 200
+      }
+    },
+    {
+      "id": "benign-unicode-query",
+      "category": "benign",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/qualbench/small?q=caf%C3%A9%20price%3C100",
+        "headers": [],
+        "body": {
+          "kind": "none"
+        }
+      },
+      "expectation": {
+        "status_exact": 200
+      }
+    },
+    {
+      "id": "detect-path-traversal-get",
+      "category": "path_traversal/detect",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/files/../../etc/passwd",
+        "headers": [],
+        "body": {
+          "kind": "none"
+        }
+      },
+      "expectation": {
+        "status_any_of": [403]
+      }
+    },
+    {
+      "id": "detect-xss-query",
+      "category": "xss/detect",
+      "request": {
+        "method": "GET",
+        "path_and_query": "/qualbench/small?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+        "headers": [],
+        "body": {
+          "kind": "none"
+        }
+      },
+      "expectation": {
+        "status_any_of": [403]
+      }
+    },
+    {
+      "id": "detect-sqli-body",
+      "category": "sqli/detect",
+      "request": {
+        "method": "POST",
+        "path_and_query": "/api/users",
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "kind": "inline_utf8",
+          "value": "{\"name\":\"' OR 1=1 --\",\"note\":\"union select 1\"}"
+        }
+      },
+      "expectation": {
+        "status_any_of": [403]
+      }
+    },
+    {
+      "id": "detect-ssrf-body",
+      "category": "ssrf/detect",
+      "request": {
+        "method": "POST",
+        "path_and_query": "/api/users",
+        "headers": [["Content-Type", "application/json"]],
+        "body": {
+          "kind": "inline_utf8",
+          "value": "{\"callback\":\"http://169.254.169.254/latest/meta-data/\"}"
+        }
+      },
+      "expectation": {
+        "status_any_of": [403]
+      }
+    }
+  ]
+}

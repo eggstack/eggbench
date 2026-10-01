@@ -103,12 +103,35 @@ pub struct TelemetryOutput {
     pub warnings: Vec<MetricWarning>,
 }
 
+/// When a collector's live endpoint is expected to exist.
+///
+/// The runner probes every collector before any workload traffic, but the
+/// endpoint itself may be provisioned either outside the run or by the run's
+/// own managed services. Probing a managed subject's endpoint before startup
+/// would fail against a subject that has not been spawned yet, so a
+/// collector declares which of the two pre-run probe points its endpoint
+/// belongs to. Both points precede every warmup and measured trial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelemetryPreflightTiming {
+    /// The endpoint is provisioned outside the run; probe before managed startup.
+    BeforeStartup,
+    /// The endpoint belongs to a service this run starts; probe after readiness.
+    AfterReadiness,
+}
+
 /// Object-safe trial-synchronized telemetry collector.
 pub trait TelemetryCollector: Send {
     /// Stable source label matching `TelemetryRequest.source` (for example `gregg`).
     fn source(&self) -> &'static str;
 
-    /// Validate the backend before managed startup. No measurement occurs.
+    /// Which pre-run probe point this collector's endpoint belongs to.
+    ///
+    /// Defaults to [`TelemetryPreflightTiming::BeforeStartup`].
+    fn preflight_timing(&self) -> TelemetryPreflightTiming {
+        TelemetryPreflightTiming::BeforeStartup
+    }
+
+    /// Validate the backend before any workload traffic. No measurement occurs.
     fn preflight(
         &mut self,
         context: TelemetryPreflightContext,

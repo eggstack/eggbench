@@ -82,7 +82,7 @@ pub use service::{
 pub use telemetry::{
     FakeTelemetryCollector, FakeTelemetryHandle, MAX_TELEMETRY_DETAIL_LEN, TelemetryCapability,
     TelemetryCollector, TelemetryError, TelemetryFuture, TelemetryOutput,
-    TelemetryPreflightContext, TelemetryRegistry, TelemetryTrialContext,
+    TelemetryPreflightContext, TelemetryPreflightTiming, TelemetryRegistry, TelemetryTrialContext,
 };
 
 /// Deterministic adapters for runner integration tests and qualification.

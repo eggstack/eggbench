@@ -214,7 +214,7 @@ async fn required_preflight_failure_prevents_startup() {
     .await
     .unwrap_err();
     assert!(
-        matches!(error, OrchestrationError::Preflight(_)),
+        matches!(error, OrchestrationError::TelemetryPreflight(_)),
         "required failure prevents measurement, got {error:?}"
     );
     // No managed startup occurred and the workload never ran.
@@ -239,7 +239,7 @@ async fn missing_required_collector_prevents_startup() {
     )
     .await
     .unwrap_err();
-    assert!(matches!(error, OrchestrationError::Preflight(_)));
+    assert!(matches!(error, OrchestrationError::TelemetryPreflight(_)));
     assert!(session.events().is_empty());
 }
 

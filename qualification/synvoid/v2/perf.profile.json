@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "id": "synvoid-m003-perf-v1",
+  "owner": "Eggbench Security Qualification M003 synthetic routine scope",
+  "scenarios": [
+    {
+      "id": "synvoid-m003-correctness",
+      "plan": "scenarios/waf-correctness.json"
+    },
+    {
+      "id": "synvoid-m003-body-pooled-c8",
+      "plan": "scenarios/body-pooled-c8.json",
+      "baseline_bundle": "baselines/body-pooled-c8.eggb",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-body-pooled-c32",
+      "plan": "scenarios/body-pooled-c32.json",
+      "baseline_bundle": "baselines/body-pooled-c32.eggb",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-body-gated-c8",
+      "plan": "scenarios/body-gated-c8.json",
+      "baseline_bundle": "baselines/body-gated-c8.eggb",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-mixed-80-20-pooled-c8",
+      "plan": "scenarios/mixed-80-20-pooled-c8.json",
+      "baseline_bundle": "baselines/mixed-80-20-pooled-c8.eggb",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-mixed-80-20-fresh-c8",
+      "plan": "scenarios/mixed-80-20-fresh-c8.json",
+      "baseline_bundle": "baselines/mixed-80-20-fresh-c8.eggb",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "origin-m003-body-control-c8",
+      "plan": "scenarios/control-origin-body-c8.json",
+      "baseline_bundle": "baselines/control-origin-body-c8.eggb",
+      "workload_driver": "eggfetch-http"
+    },
+    {
+      "id": "synvoid-m003-target-telemetry-pressure-c32",
+      "plan": "scenarios/telemetry-pressure-c32.json",
+      "baseline_bundle": "baselines/telemetry-pressure-c32.eggb",
+      "workload_driver": "eggfetch-http"
+    }
+  ],
+  "corpus": {
+    "path": "corpus.json"
+  },
+  "target_config": {
+    "path": "target-config.json"
+  }
+}

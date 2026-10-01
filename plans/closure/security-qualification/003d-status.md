@@ -1,6 +1,6 @@
 # Security Qualification M003d — Status
 
-Disposition: **PARTIAL IMPLEMENTATION; CI corrective closed**. The Eggsec-load slice landed at `739f382`; the two portability/integration defects it introduced were repaired at `4703333` and the repository-wide qualification gate is green again (four-lane run `36640125422`, live run `36640125453`). M003d remains open; this is not an M003d or M003 milestone closure.
+Disposition: **conditionally closed — M003d scope complete and verified; the milestone inherits one upstream gate from M003c**. The Eggsec-load slice landed at `739f382`, its two portability/integration defects were repaired at `4703333` (four-lane run `36640125422`, live run `36640125453`), and the M003 profile/qualification work plus three further real-Eggsec adapter defects are closed below. Overall M003 closure remains conditional; see "Remaining condition".
 
 Implementation: `739f382` (`feat(security): add Eggsec strict-scope load workload`).
 
@@ -85,21 +85,101 @@ still open: the profile family, negative demonstrations, bounded real-SynVoid
 M003 qualification, and `plans/closure/security-qualification/003-status.md`
 remain outstanding.
 
-## Remaining M003d gates
+## M003d profile and qualification work — closed
 
-After that corrective, the original plan still requires a checked-in SynVoid
-M003 profile family, repeatability-accepted baselines,
-correctness-only/performance-only/telemetry-only negative demonstrations, the
-bounded real SynVoid Linux stages, and terminal C002 closure/reconciliation.
-The corrective is now closed and M002 C002 is closed; what remains is
-M003d's own profile and qualification work plus terminal M003c proof.
+Implementation: the M003d slice at `739f382`, its CI portability corrective at
+`4703333`, and the M003 profile/qualification work on this branch.
 
-The prior upstream telemetry blocker is closed: SynVoid's
-`synvoid.eggbench-telemetry.v2` implementation is qualified at
-`739e7ba6f02c5e3f83fe9ff5321b09213182b193` with terminal closeout on
-current head `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`. Eggbench M003c
-is now closing on its consumer-side live/current-head proof.
+### Adapter defects found and repaired against the real Eggsec
 
-Terminal M003d is now gated only on terminal M003c; M002 C002 is closed. The
-narrow CI corrective that previously blocked C002's repo-wide closure
-criterion is closed and is no longer a blocker for M003d.
+The live harness executed the adapter against the real pinned Eggsec
+(`0509ac668adfd78e9899cd3428a807d0b3c9f27b`, `eggsec 0.1.0`) and found three
+contract defects that no unit test could have found, because the tests asserted
+the adapter's own intent rather than the tool's interface:
+
+1. **Wrong flag.** The adapter passed `--header`; Eggsec accepts `--headers`
+   (`Vec<String>`, format `Key:Value`). Fixed; the strict-argv test now asserts
+   repeated `--headers` and rejects the old spelling.
+2. **Missing execution policy.** Eggsec denies `load-test` under *every*
+   enforcement profile (`manual`, `ci`, `mcp`, `agent`, `guarded`) with
+   `risk-policy-denied` until an execution policy authorizes it. The adapter now
+   generates a private policy manifest that enables load testing only, keeps
+   `require_explicit_scope = true`, and denies intrusive fuzzing, stress testing,
+   raw packets, credential testing, and remote execution. Both the scope and the
+   policy digest are recorded as security-configuration identity in
+   `eggsec-load-method.json`; both files live in one `0700` directory as `0600`
+   files and are removed on drop.
+3. **`--quiet` suppresses the report.** With `--quiet` Eggsec prints only its
+   log lines and no machine document, so report parsing could never succeed. The
+   flag is gone, with a comment recording why it must not return.
+4. **Preflight document extraction.** Eggsec writes structured log lines to
+   stdout before its JSON document. The load report already tolerated that; the
+   preflight parser required the whole stream to be one JSON value and so failed
+   with `ParseFailed`. Both now share one `machine_document` extractor that takes
+   the last standalone document and rejects a truncated one, with a unit test for
+   each shape.
+
+### Implemented
+
+- Live real-SynVoid M003 profile family: correctness, `body-pooled`,
+  `body-fresh`, `body-gated`, `mixed-80-20-pooled`, `mixed-80-20-fresh`,
+  `mixed-80-20-pooled-c32`, origin-only control, and the telemetry-pressure and
+  optional-absence trials, materialized from the owner export.
+- Explicit baseline bundles for every performance scenario; no baseline is
+  auto-discovered, and the perf profile validates only once its baselines exist.
+- One owner instance for the whole live qualification, with the subject and its
+  controlled origin declared as external services in the plans. A per-scenario
+  managed subject contended for the owner metrics port, and a child that lost
+  that race published no series at all, so the telemetry evidence described a
+  different process than the subject under test; that defect also made an
+  unrelated correctness-regression suite report `Invalid`.
+- Fail-closed preconditions discovered by the harness itself: the harness
+  verifies its Eggbench binary advertises `eggfetch-http`, `eggserve-origin`,
+  `eggsec-load`, `oha`, and `prometheus-http` (a default-features build fails
+  closed here instead of later with an opaque "missing required Service
+  driver"), and it records the actual ports/pids it owns.
+
+### Verification
+
+Live local run (`pass=29 stopped=1 notexec=0`, the single stop being M003c's
+upstream gate):
+
+- `m003d-1` eight accepted-revision baseline bundles materialized and the perf
+  profile validates against them.
+- `m003d-2` same-source performance pair: `pass`.
+- `m003d-3` the controlled origin logged 24,594 requests and **no** owner-blocked
+  case reached it (checked against the corpus, not just a non-empty log).
+- `m003d-4` `oha` body scenario compared against its own baseline.
+- `m003d-5` Eggsec build and version probe at the pin.
+- `m003d-6` `eggsec-load` executes a benign body case and an owner-blocked case
+  under strict scope with the generated policy: expected status outcomes, no
+  transport errors.
+- `m003d-7` correctness-only regression (a mutated expected status) fails the
+  suite with exit 6 while performance stays acceptable.
+- `m003d-8` performance-only regression (a 100 ms controlled-origin throttle)
+  fails the suite with exit 6, `body-gated-c8` performance `fail`, and the
+  correctness scenario `pass`.
+- `m003d-9` telemetry-only regression is covered by `m003c-16`/`m003c-17`.
+- Teardown leaves no listener and reaps the owner process tree.
+
+The frozen performance claim rests on one gated scenario, `body-gated-c8`
+(statistical-relative throughput and p95 latency); every other performance
+observation is diagnostic. The gated scenario is measured more often than the
+diagnostic ones so that a bootstrap interval can distinguish a real regression
+from host noise.
+
+### Known limitation
+
+The unthrottled perf pair can return `Inconclusive` on a heavily contended
+shared host rather than `Pass`; the harness accepts 0 or 7 for that stage and
+requires the correctness family to pass. Hosted CI runs the same stage on a
+dedicated runner and is the authority for repeatability.
+
+## Remaining condition
+
+M003d's own work is complete. The milestone disposition stays conditional on the
+single upstream gate recorded in
+`plans/closure/security-qualification/003c-status.md`: the pinned SynVoid exports
+its telemetry inventory without populating it, so "subject telemetry
+participates in measured evidence" cannot be asserted end-to-end yet. That is an
+owner-side fix; nothing in M003d is outstanding on the Eggbench side.

@@ -8,7 +8,7 @@
 use super::artifact::artifact_candidates;
 use super::command::{ExternalCommandOutcome, ExternalCommandSpec, run_command};
 use super::common::{check_min_version, driver_env, metric_u64_as_f64, target_http_url};
-use super::eggsec::{confine_target_url, generate_scope_manifest};
+use super::eggsec::{confine_target_url, generate_load_policy_manifest, generate_scope_manifest};
 use super::error::{DriverError, ErrorCategory};
 use super::resolver::{BinaryResolver, ResolvedExecutable};
 use super::version::ToolVersion;
@@ -158,12 +158,16 @@ impl WorkloadExecutor for EggsecLoadWorkload {
             let confined = confine_target_url(&url).map_err(|_| FailureCategory::WorkloadFailed)?;
             let (scope_bytes, scope_sha) = generate_scope_manifest(&confined.host)
                 .map_err(|_| FailureCategory::WorkloadFailed)?;
-            let scope_file = create_scope_file(&scope_sha, &scope_bytes)
-                .map_err(|_| FailureCategory::WorkloadFailed)?;
-            let scope_path = &scope_file.path;
+            let (policy_bytes, policy_sha) = generate_load_policy_manifest();
+            let manifests =
+                create_manifest_files(&scope_sha, &scope_bytes, &policy_sha, &policy_bytes)
+                    .map_err(|_| FailureCategory::WorkloadFailed)?;
+            let scope_path = &manifests.scope;
+            let policy_path = &manifests.policy;
             let preflight = run_load_preflight(
                 &self.executable,
                 scope_path,
+                policy_path,
                 &url,
                 &confined,
                 &context.cancellation,
@@ -178,6 +182,7 @@ impl WorkloadExecutor for EggsecLoadWorkload {
                 .ok_or(FailureCategory::WorkloadFailed)?;
             let args = load_argv(
                 scope_path,
+                policy_path,
                 &request_url,
                 &case.request.method,
                 &case.request.headers,
@@ -210,6 +215,7 @@ impl WorkloadExecutor for EggsecLoadWorkload {
                 &case.expectation,
                 &version,
                 &scope_sha,
+                &policy_sha,
                 &case.id,
             );
             if body_file.is_some() {
@@ -238,14 +244,16 @@ impl WorkloadExecutor for EggsecLoadWorkload {
     }
 }
 
-struct ScopeFile {
-    path: std::path::PathBuf,
+struct ManifestFiles {
+    scope: std::path::PathBuf,
+    policy: std::path::PathBuf,
     directory: std::path::PathBuf,
 }
 
-impl Drop for ScopeFile {
+impl Drop for ManifestFiles {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(&self.scope);
+        let _ = std::fs::remove_file(&self.policy);
         let _ = std::fs::remove_dir(&self.directory);
     }
 }
@@ -279,7 +287,12 @@ fn scope_file_options() -> std::fs::OpenOptions {
     options
 }
 
-fn create_scope_file(digest: &str, bytes: &[u8]) -> Result<ScopeFile, std::io::Error> {
+fn create_manifest_files(
+    scope_digest: &str,
+    scope_bytes: &[u8],
+    policy_digest: &str,
+    policy_bytes: &[u8],
+) -> Result<ManifestFiles, std::io::Error> {
     use std::io::Write as _;
     let root = std::env::temp_dir();
     loop {
@@ -287,14 +300,17 @@ fn create_scope_file(digest: &str, bytes: &[u8]) -> Result<ScopeFile, std::io::E
         let directory = root.join(format!("eggbench-load-{}-{nonce}", std::process::id()));
         match scope_dir_builder().create(&directory) {
             Ok(()) => {
-                let path = directory.join(format!("{digest}.toml"));
-                let scope_file = ScopeFile {
-                    path: path.clone(),
+                let scope = directory.join(format!("{scope_digest}.toml"));
+                let policy = directory.join(format!("{policy_digest}.toml"));
+                let mut scope_file = scope_file_options().open(&scope)?;
+                scope_file.write_all(scope_bytes)?;
+                let mut policy_file = scope_file_options().open(&policy)?;
+                policy_file.write_all(policy_bytes)?;
+                return Ok(ManifestFiles {
+                    scope,
+                    policy,
                     directory,
-                };
-                let mut file = scope_file_options().open(&path)?;
-                file.write_all(bytes)?;
-                return Ok(scope_file);
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
@@ -324,6 +340,31 @@ struct EggsecLoadReport {
     error_kinds: BTreeMap<String, u64>,
 }
 
+/// Extract Eggsec's machine document from bounded stdout.
+///
+/// Eggsec emits structured log lines on stdout before the document it was asked
+/// for, so both the preflight decision and the load report are the *last*
+/// standalone JSON document on the stream. Anything else - truncation, a
+/// truncated document, or a log line that is not a complete document - is
+/// absent, and the caller fails closed.
+fn machine_document(text: &str) -> Option<serde_json::Value> {
+    if let Ok(document) = serde_json::from_str::<serde_json::Value>(text) {
+        return Some(document);
+    }
+    for (index, fragment) in text.match_indices('{').rev() {
+        if index > 0
+            && text[..index]
+                .rsplit_once('\n')
+                .is_some_and(|(_, prefix)| prefix.trim().is_empty())
+            && fragment == "{"
+            && let Ok(document) = serde_json::from_str::<serde_json::Value>(&text[index..])
+        {
+            return Some(document);
+        }
+    }
+    None
+}
+
 fn parse_load_report(
     outcome: &ExternalCommandOutcome,
     expected_url: &str,
@@ -333,23 +374,9 @@ fn parse_load_report(
     }
     let text = std::str::from_utf8(outcome.stdout.retained())
         .map_err(|_| FailureCategory::WorkloadFailed)?;
-    let mut report = serde_json::from_str::<EggsecLoadReport>(text).ok();
-    if report.is_none() {
-        for (index, line) in text.match_indices('{').rev() {
-            if index > 0
-                && text[..index]
-                    .rsplit_once('\n')
-                    .is_some_and(|(_, prefix)| prefix.trim().is_empty())
-                && line == "{"
-            {
-                report = serde_json::from_str(&text[index..]).ok();
-                if report.is_some() {
-                    break;
-                }
-            }
-        }
-    }
-    let report = report.ok_or(FailureCategory::WorkloadFailed)?;
+    let report = machine_document(text)
+        .and_then(|document| serde_json::from_value::<EggsecLoadReport>(document).ok())
+        .ok_or(FailureCategory::WorkloadFailed)?;
     if report.target_url != expected_url
         || report.total_requests == 0
         || report.total_requests > MAX_REQUESTS
@@ -386,6 +413,7 @@ fn load_output(
     expected: &HttpObservableExpectationV1,
     version: &str,
     scope_sha: &str,
+    policy_sha: &str,
     case_id: &str,
 ) -> WorkloadOutput {
     let transport_errors = report.error_kinds.values().copied().sum::<u64>();
@@ -434,6 +462,7 @@ fn load_output(
             "eggsec_version": version,
             "executable_sha256": outcome.executable.sha256_hex,
             "scope_sha256": scope_sha,
+            "execution_policy_sha256": policy_sha,
             "case_id": case_id,
             "planned_requests": report.total_requests,
             "method": "Eggsec load via Eggfetch",
@@ -499,6 +528,7 @@ fn expected_statuses(expected: &HttpObservableExpectationV1) -> Vec<u16> {
 #[allow(clippy::too_many_arguments)] // Mirrors the explicit reviewed request contract.
 fn load_argv(
     scope: &std::path::Path,
+    policy: &std::path::Path,
     url: &str,
     method: &str,
     headers: &[(String, String)],
@@ -524,6 +554,8 @@ fn load_argv(
         ));
     }
     let mut args = vec![
+        "--config".into(),
+        policy.as_os_str().to_owned(),
         "--scope".into(),
         scope.as_os_str().to_owned(),
         "--strict-scope".into(),
@@ -531,7 +563,8 @@ fn load_argv(
         "load".into(),
         url.into(),
         "--json".into(),
-        "--quiet".into(),
+        // No `--quiet`: Eggsec suppresses the machine report under it, and
+        // report semantics are Eggsec's to own here.
         "--requests".into(),
         requests.to_string().into(),
         "--concurrency".into(),
@@ -565,7 +598,7 @@ fn load_argv(
                 "eggsec-load header rejected",
             ));
         }
-        args.extend(["--header".into(), format!("{key}:{value}").into()]);
+        args.extend(["--headers".into(), format!("{key}:{value}").into()]);
     }
     if let Some(body) = body {
         if body.len() > MAX_REQUEST_BODY {
@@ -668,11 +701,14 @@ fn append_path(base: &str, path: &str) -> Option<String> {
 async fn run_load_preflight(
     executable: &ResolvedExecutable,
     scope: &std::path::Path,
+    policy: &std::path::Path,
     url: &str,
     expected_target: &super::eggsec::ConfinedTarget,
     cancel: &CancellationToken,
 ) -> Result<(), DriverError> {
     let args = vec![
+        "--config".into(),
+        policy.as_os_str().to_owned(),
         "--scope".into(),
         scope.as_os_str().to_owned(),
         "--strict-scope".into(),
@@ -711,7 +747,7 @@ async fn run_load_preflight(
             "Eggsec load preflight invalid UTF-8",
         )
     })?;
-    let value: serde_json::Value = serde_json::from_str(text).map_err(|_| {
+    let value = machine_document(text).ok_or_else(|| {
         DriverError::parse(
             ErrorCategory::ParseFailed,
             "Eggsec load preflight invalid JSON",
@@ -855,11 +891,16 @@ mod tests {
     #[test]
     fn strict_argv_binds_body_and_rejects_sensitive_headers() {
         let path = std::path::Path::new("/tmp/scope.toml");
+        let policy = std::path::Path::new("/tmp/policy.toml");
         let args = load_argv(
             path,
+            policy,
             "http://127.0.0.1:8080/submit",
             "POST",
-            &[("content-type".to_owned(), "application/json".to_owned())],
+            &[
+                ("content-type".to_owned(), "application/json".to_owned()),
+                ("x-eggbench".to_owned(), "m003".to_owned()),
+            ],
             Some(br#"{"ok":true}"#),
             100,
             8,
@@ -872,11 +913,18 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(rendered.contains("--strict-scope"));
+        assert!(rendered.contains("--config /tmp/policy.toml"));
+        assert!(rendered.contains("--headers content-type:application/json"));
+        assert!(rendered.contains("--headers x-eggbench:m003"));
+        // Eggsec drops the machine report under `--quiet`.
+        assert!(!rendered.contains("--quiet"));
+        assert!(!rendered.contains("--header "));
         assert!(rendered.contains("--body {\"ok\":true}"));
         assert!(!rendered.contains("--allow"));
         assert!(
             load_argv(
                 path,
+                policy,
                 "http://127.0.0.1/",
                 "POST",
                 &[("Authorization".to_owned(), "secret".to_owned())],
@@ -890,15 +938,49 @@ mod tests {
     }
 
     #[test]
-    fn scope_file_is_private_exclusive_and_removed_on_drop() {
-        let digest = "b".repeat(64);
-        let scope = create_scope_file(&digest, b"[[targets]]\n").expect("scope file created");
-        let path = scope.path.clone();
-        let directory = scope.directory.clone();
-        assert!(path.is_file());
+    fn load_policy_authorizes_only_load_testing() {
+        let (bytes, digest) = generate_load_policy_manifest();
+        let text = String::from_utf8(bytes.clone()).expect("policy manifest is UTF-8");
+        assert!(text.contains("require_explicit_scope = true"));
+        assert!(text.contains("allow_load_testing = true"));
+        for denied in [
+            "allow_intrusive_fuzzing",
+            "allow_stress_testing",
+            "allow_raw_packets",
+            "allow_credential_testing",
+            "allow_remote_execution",
+        ] {
+            assert!(text.contains(&format!("{denied} = false")));
+        }
+        assert_eq!(digest.len(), 64);
+        let (again, same_digest) = generate_load_policy_manifest();
+        assert_eq!(again, bytes);
+        assert_eq!(same_digest, digest);
+    }
+
+    #[test]
+    fn manifest_files_are_private_exclusive_and_removed_on_drop() {
+        let scope_digest = "b".repeat(64);
+        let policy_digest = "c".repeat(64);
+        let manifests = create_manifest_files(
+            &scope_digest,
+            b"[[targets]]\n",
+            &policy_digest,
+            b"[execution_policy]\n",
+        )
+        .expect("manifest files created");
+        let scope = manifests.scope.clone();
+        let policy = manifests.policy.clone();
+        let directory = manifests.directory.clone();
+        assert!(scope.is_file());
+        assert!(policy.is_file());
         assert_eq!(
-            path.file_name().unwrap(),
-            std::ffi::OsString::from(format!("{digest}.toml"))
+            scope.file_name().unwrap(),
+            std::ffi::OsString::from(format!("{scope_digest}.toml"))
+        );
+        assert_eq!(
+            policy.file_name().unwrap(),
+            std::ffi::OsString::from(format!("{policy_digest}.toml"))
         );
         #[cfg(unix)]
         {
@@ -907,19 +989,47 @@ mod tests {
                 directory.metadata().unwrap().permissions().mode() & 0o777,
                 0o700
             );
-            assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                scope.metadata().unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                policy.metadata().unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         // The exclusive-create contract rejects a second writer.
         assert_eq!(
             scope_file_options()
-                .open(&path)
+                .open(&scope)
                 .expect_err("create_new refuses an existing scope file")
                 .kind(),
             std::io::ErrorKind::AlreadyExists
         );
-        drop(scope);
-        assert!(!path.exists());
+        drop(manifests);
+        assert!(!scope.exists());
+        assert!(!policy.exists());
         assert!(!directory.exists());
+    }
+
+    #[test]
+    fn machine_document_is_the_last_standalone_document() {
+        assert!(machine_document("{\"a\":1}").is_some());
+        let with_logs = concat!(
+            "{\"level\":\"INFO\",\"message\":\"Loading scope\"}\n",
+            "{\"level\":\"WARN\"}\n",
+            "{\n  \"decision\": {\n    \"allowed\": true\n  }\n}\n"
+        );
+        let document = machine_document(with_logs).expect("document after log lines");
+        assert_eq!(
+            document
+                .pointer("/decision/allowed")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        // A truncated document is not a decision.
+        assert!(machine_document("{\"level\":\"INFO\"}\n{\n  \"decision\": {\n").is_none());
+        assert!(machine_document("").is_none());
     }
 
     #[test]
@@ -935,6 +1045,7 @@ mod tests {
             &expected,
             "eggsec 0.1.0",
             &"a".repeat(64),
+            &"d".repeat(64),
             "blocked",
         );
         let mismatch = output

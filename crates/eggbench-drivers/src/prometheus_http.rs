@@ -9,7 +9,8 @@ use eggbench_core::{
 };
 use eggbench_runner::{
     DrainContext, TelemetryCapability, TelemetryCollector, TelemetryError, TelemetryFuture,
-    TelemetryOutput, TelemetryPreflightContext, TelemetryTrialContext, WorkloadArtifact,
+    TelemetryOutput, TelemetryPreflightContext, TelemetryPreflightTiming, TelemetryTrialContext,
+    WorkloadArtifact,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -171,22 +172,57 @@ impl PrometheusHttpCollector {
                 "preflight cancelled",
             ));
         }
-        let sample = tokio::time::timeout(context.timeout, self.scrape())
-            .await
-            .map_err(|_| {
-                TelemetryError::new("preflight_timeout", "scrape exceeded preflight bound")
-            })??;
-        let missing_required = self
-            .mapping
-            .fields
-            .iter()
-            .any(|field| field.required && !sample.contains_key(&field.output_name));
-        if missing_required {
-            return Err(TelemetryError::new(
-                "required_metric_missing",
-                "required mapped field absent",
-            ));
+        // An owner publishes on its own refresh cadence: a subject can be
+        // listening well before its worker series exist. Probing therefore
+        // retries on a bounded cadence until the required contract is
+        // observable or the run's telemetry bound expires. The first
+        // successful sample still carries the contract decision, and the last
+        // observed failure is what a permanently absent contract reports.
+        let deadline = tokio::time::Instant::now() + context.timeout;
+        let mut last_error = None;
+        loop {
+            if context.cancellation.is_cancelled() {
+                return Err(TelemetryError::new(
+                    "collector_cancelled",
+                    "preflight cancelled",
+                ));
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(last_error.unwrap_or_else(|| {
+                    TelemetryError::new("required_metric_missing", "no scrape completed in bounds")
+                }));
+            }
+            match tokio::time::timeout(remaining, self.scrape()).await {
+                Ok(Ok(sample)) => {
+                    let missing_required =
+                        self.mapping.fields.iter().any(|field| {
+                            field.required && !sample.contains_key(&field.output_name)
+                        });
+                    if !missing_required {
+                        return Ok(self.capability());
+                    }
+                    last_error = Some(TelemetryError::new(
+                        "required_metric_missing",
+                        "required mapped field absent",
+                    ));
+                }
+                Ok(Err(error)) => last_error = Some(error),
+                Err(_) => {
+                    return Err(last_error.unwrap_or_else(|| {
+                        TelemetryError::new("preflight_timeout", "scrape exceeded preflight bound")
+                    }));
+                }
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(last_error.expect("a failed probe records a reason"));
+            }
+            tokio::time::sleep(remaining.min(self.poll_interval)).await;
         }
+    }
+
+    fn capability(&self) -> TelemetryCapability {
         let mut identity = BTreeMap::new();
         identity.insert(
             "endpoint_authority".to_owned(),
@@ -199,10 +235,10 @@ impl PrometheusHttpCollector {
             "mapping_schema".to_owned(),
             MAPPING_SCHEMA_VERSION.to_string(),
         );
-        Ok(TelemetryCapability {
+        TelemetryCapability {
             poll_interval: self.poll_interval,
             identity,
-        })
+        }
     }
 
     async fn start_inner(&mut self, context: TelemetryTrialContext) -> Result<(), TelemetryError> {
@@ -443,6 +479,12 @@ impl TelemetryCollector for PrometheusHttpCollector {
     fn source(&self) -> &'static str {
         PROMETHEUS_HTTP_SOURCE
     }
+    fn preflight_timing(&self) -> TelemetryPreflightTiming {
+        // The scrape endpoint is normally a listener of the subject this run
+        // manages, so it cannot exist before managed startup. Probing after
+        // readiness is still strictly before any warmup or measured trial.
+        TelemetryPreflightTiming::AfterReadiness
+    }
     fn preflight(
         &mut self,
         context: TelemetryPreflightContext,
@@ -461,13 +503,27 @@ impl TelemetryCollector for PrometheusHttpCollector {
     ) -> TelemetryFuture<'_, Result<TelemetryOutput, TelemetryError>> {
         Box::pin(async move { self.stop_inner(context).await })
     }
-    fn drain(&mut self, _context: DrainContext) -> TelemetryFuture<'_, Result<(), TelemetryError>> {
+    fn drain(&mut self, context: DrainContext) -> TelemetryFuture<'_, Result<(), TelemetryError>> {
         Box::pin(async move {
-            if let Some(window) = self.window.take() {
-                window.stop.cancel();
-                window.task.abort();
+            let Some(window) = self.window.take() else {
+                return Ok(());
+            };
+            window.stop.cancel();
+            let mut task = window.task;
+            match tokio::time::timeout(context.timeout, &mut task).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(_)) => Err(TelemetryError::new(
+                    "polling_failed",
+                    "polling task join failed during drain",
+                )),
+                Err(_) => {
+                    task.abort();
+                    Err(TelemetryError::new(
+                        "polling_timeout",
+                        "polling task did not drain before the drain bound",
+                    ))
+                }
             }
-            Ok(())
         })
     }
 }
@@ -1030,7 +1086,7 @@ mod tests {
     use eggbench_runner::{
         DrainContext, TelemetryCollector, TelemetryPreflightContext, TelemetryTrialContext,
     };
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -1127,6 +1183,92 @@ mod tests {
                     required: true,
                 },
             ],
+        }
+    }
+
+    /// A live loopback exposition whose body a test can rewrite between
+    /// scrapes, counting scrapes and their served bytes.
+    async fn scripted_metrics_origin(
+        body: Arc<Mutex<String>>,
+    ) -> (String, Arc<AtomicUsize>, Arc<AtomicU64>, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let scrapes = Arc::new(AtomicUsize::new(0));
+        let scrapes_for_task = Arc::clone(&scrapes);
+        let served_bytes = Arc::new(AtomicU64::new(0));
+        let served_for_task = Arc::clone(&served_bytes);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request).await;
+                let body = body.lock().expect("scripted body lock").clone();
+                scrapes_for_task.fetch_add(1, Ordering::SeqCst);
+                served_for_task.fetch_add(body.len() as u64, Ordering::SeqCst);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                if stream.write_all(response.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (
+            format!("http://{address}/metrics"),
+            scrapes,
+            served_bytes,
+            task,
+        )
+    }
+
+    fn gauge_and_counter_body(gauge: &str, counter: u64) -> String {
+        format!(
+            "# HELP subject_cpu_percent gauge\n# TYPE subject_cpu_percent gauge\n# TYPE subject_requests_total counter\nsubject_cpu_percent {gauge}\nsubject_requests_total {counter}\n"
+        )
+    }
+
+    fn scripted_collector(
+        endpoint: &str,
+        digest_byte: char,
+    ) -> Result<PrometheusHttpCollector, &'static str> {
+        PrometheusHttpCollector::new(
+            endpoint,
+            collector_mapping(),
+            std::iter::repeat_n(digest_byte, 64).collect(),
+            "subject".to_owned(),
+            "metrics_url".to_owned(),
+            "telemetry/telemetry-mapping.json".to_owned(),
+            vec![
+                RequestedPrometheusMetric {
+                    name: "subject_cpu_percent".to_owned(),
+                    unit: "percent".to_owned(),
+                },
+                RequestedPrometheusMetric {
+                    name: "subject_requests_total".to_owned(),
+                    unit: "count".to_owned(),
+                },
+            ],
+            MIN_POLL_INTERVAL,
+        )
+    }
+
+    fn preflight_context() -> TelemetryPreflightContext {
+        TelemetryPreflightContext {
+            run_id: RunId::new(),
+            cancellation: CancellationToken::new(),
+            timeout: Duration::from_secs(2),
+        }
+    }
+
+    fn trial_context(trial_id: u32) -> TelemetryTrialContext {
+        TelemetryTrialContext {
+            run_id: RunId::new(),
+            trial_id: TrialId::new(trial_id).unwrap(),
+            cancellation: CancellationToken::new(),
+            timeout: Duration::from_secs(2),
         }
     }
 
@@ -1383,5 +1525,220 @@ mod tests {
                 .any(|warning| warning.category == "prometheus_missing_samples")
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn drain_cancels_polling_and_the_task_never_outlives_the_window() {
+        let body = Arc::new(Mutex::new(gauge_and_counter_body("1", 1)));
+        let (endpoint, scrapes, _bytes, server) = scripted_metrics_origin(body).await;
+        let mut collector = scripted_collector(&endpoint, 'a').unwrap();
+        collector.preflight(preflight_context()).await.unwrap();
+        let trial = trial_context(1);
+        collector.start_trial(trial.clone()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let before_drain = scrapes.load(Ordering::SeqCst);
+        assert!(before_drain >= 2, "polling must run inside the window");
+        // Cancellation alone must not be relied on for teardown: drain owns
+        // joining the polling task.
+        trial.cancellation.cancel();
+        collector
+            .drain(DrainContext {
+                run_id: RunId::new(),
+                cancellation: CancellationToken::new(),
+                timeout: Duration::from_secs(2),
+            })
+            .await
+            .unwrap();
+        assert!(collector.window.is_none());
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(
+            scrapes.load(Ordering::SeqCst),
+            before_drain,
+            "no scrape may be issued after drain"
+        );
+        // A drained collector cannot be stopped; the window is gone.
+        assert_eq!(
+            collector
+                .stop_trial(trial_context(1))
+                .await
+                .unwrap_err()
+                .category,
+            "polling_failed"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn type_drift_on_a_required_sample_fails_preflight_closed() {
+        let body = Arc::new(Mutex::new(
+            "# TYPE subject_cpu_percent counter\nsubject_cpu_percent 4\nsubject_requests_total 7\n"
+                .to_owned(),
+        ));
+        let (endpoint, _scrapes, _bytes, server) = scripted_metrics_origin(body).await;
+        let mut collector = scripted_collector(&endpoint, 'a').unwrap();
+        assert_eq!(
+            collector
+                .preflight(preflight_context())
+                .await
+                .unwrap_err()
+                .category,
+            "sample_type_mismatch"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn required_counter_reset_during_the_trial_fails_closed() {
+        let body = Arc::new(Mutex::new(gauge_and_counter_body("1", 1)));
+        let (endpoint, _scrapes, _bytes, server) = scripted_metrics_origin(Arc::clone(&body)).await;
+        let mut collector = scripted_collector(&endpoint, 'a').unwrap();
+        collector.preflight(preflight_context()).await.unwrap();
+        let trial = trial_context(1);
+        collector.start_trial(trial.clone()).await.unwrap();
+        *body.lock().unwrap() = gauge_and_counter_body("1", 9);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        // A reset is a restart of the owner counter, never a negative delta.
+        *body.lock().unwrap() = gauge_and_counter_body("1", 2);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            collector.stop_trial(trial).await.unwrap_err().category,
+            "required_metric_invalid"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn required_sample_disappearing_mid_trial_fails_closed() {
+        let body = Arc::new(Mutex::new(gauge_and_counter_body("1", 1)));
+        let (endpoint, _scrapes, _bytes, server) = scripted_metrics_origin(Arc::clone(&body)).await;
+        let mut collector = scripted_collector(&endpoint, 'a').unwrap();
+        collector.preflight(preflight_context()).await.unwrap();
+        let trial = trial_context(1);
+        collector.start_trial(trial.clone()).await.unwrap();
+        // Required gauge disappears while the trial is still measured.
+        *body.lock().unwrap() =
+            "# TYPE subject_requests_total counter\nsubject_requests_total 4\n".to_owned();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            collector.stop_trial(trial).await.unwrap_err().category,
+            "required_metric_invalid"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn polling_is_bounded_by_the_declared_cadence() {
+        let body = Arc::new(Mutex::new(gauge_and_counter_body("1", 1)));
+        let (endpoint, scrapes, served_bytes, server) = scripted_metrics_origin(body).await;
+        let mut collector = scripted_collector(&endpoint, 'a').unwrap();
+        collector.preflight(preflight_context()).await.unwrap();
+        let trial = trial_context(1);
+        collector.start_trial(trial).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let in_window = scrapes.load(Ordering::SeqCst);
+        // One cadence start snapshot, at most one in-flight scrape at a time,
+        // plus the bounded stop snapshot: never a busy loop.
+        assert!(
+            (3..=8).contains(&in_window),
+            "unexpected scrape count {in_window} at {MIN_POLL_INTERVAL:?} cadence"
+        );
+        assert!(served_bytes.load(Ordering::SeqCst) > 0);
+        let stopped = collector.stop_trial(trial_context(1)).await.unwrap();
+        assert!(
+            stopped
+                .metrics
+                .iter()
+                .any(|metric| metric.name == "subject_requests_total")
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn mapping_digest_is_capability_and_provenance_identity() {
+        let body = Arc::new(Mutex::new(gauge_and_counter_body("1", 1)));
+        let (endpoint, _scrapes, _bytes, server) = scripted_metrics_origin(body).await;
+        let mut first = scripted_collector(&endpoint, 'a').unwrap();
+        let mut second = scripted_collector(&endpoint, 'b').unwrap();
+        let first_identity = first.preflight(preflight_context()).await.unwrap().identity;
+        let second_identity = second
+            .preflight(preflight_context())
+            .await
+            .unwrap()
+            .identity;
+        assert_eq!(first_identity.get("mapping_sha256"), Some(&"a".repeat(64)));
+        assert_eq!(second_identity.get("mapping_sha256"), Some(&"b".repeat(64)));
+        assert_ne!(first_identity, second_identity);
+        for collector in [&mut first, &mut second] {
+            let trial = trial_context(1);
+            collector.start_trial(trial.clone()).await.unwrap();
+            let output = collector.stop_trial(trial).await.unwrap();
+            let provenance = output
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.name == "prometheus-provenance.json")
+                .expect("provenance artifact");
+            let document: serde_json::Value =
+                serde_json::from_slice(&provenance.bytes).expect("provenance json");
+            assert_eq!(
+                document["mapping_sha256"],
+                collector.mapping_sha256.as_str(),
+                "provenance must carry the pinned mapping identity"
+            );
+            assert_eq!(document["source"], PROMETHEUS_HTTP_SOURCE);
+            assert_eq!(document["poll_interval_ms"], 100);
+        }
+        server.abort();
+    }
+
+    #[test]
+    fn mapping_cannot_publish_a_host_named_output() {
+        // Gregg host metrics keep the `host_` prefix; the generic subject
+        // collector may not shadow or rename them.
+        let mut collision = collector_mapping();
+        collision.fields[0].output_name = "host_cpu_percent".to_owned();
+        assert_eq!(validate_mapping(&collision), Err("mapping_field_invalid"));
+        let mut owner_metric_name = collector_mapping();
+        owner_metric_name.fields[0].output_name = "subject_synvoid_cpu_percent".to_owned();
+        assert_eq!(validate_mapping(&owner_metric_name), Ok(()));
+    }
+
+    #[test]
+    fn exposition_line_and_sample_ring_bounds_are_enforced() {
+        let lines = b"subject_cpu_percent 1\n".repeat(MAX_EXPOSITION_LINES + 1);
+        assert_eq!(
+            parse_exposition(&lines, &collector_mapping()),
+            Err("scrape_line_bound")
+        );
+        // The in-window ring buffer is bounded; overflow is counted, never
+        // silently forgotten.
+        let window = Arc::new(Mutex::new(PrometheusWindow::default()));
+        let mapping = collector_mapping();
+        let mut values = BTreeMap::new();
+        values.insert("subject_cpu_percent".to_owned(), 1.0);
+        values.insert("subject_requests_total".to_owned(), 1.0);
+        for _ in 0..600 {
+            push_snapshot(&window, values.clone(), &mapping);
+        }
+        let state = window.lock().expect("window lock");
+        assert_eq!(state.samples.len(), 512);
+        assert_eq!(state.dropped_samples, 88);
+    }
+
+    #[test]
+    fn endpoint_policy_rejects_credentials_queries_and_public_names() {
+        for invalid in [
+            "http://user@127.0.0.1:9100/metrics",
+            "http://127.0.0.1:9100/metrics?x=1",
+            "http://127.0.0.1:0/metrics",
+            "http://example.com:80/metrics",
+            "http://172.32.0.1:9100/metrics",
+        ] {
+            assert!(
+                validate_private_endpoint(invalid).is_err(),
+                "{invalid} must be rejected"
+            );
+        }
+        assert!(validate_private_endpoint("http://[::1]:9100/metrics").is_ok());
+        assert!(validate_private_endpoint("http://192.168.1.10:9100/metrics").is_ok());
     }
 }

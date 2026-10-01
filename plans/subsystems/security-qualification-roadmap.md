@@ -419,10 +419,10 @@ Ordered implementation decomposition:
    **CLOSED** at `plans/closure/security-qualification/003b-status.md`. Reuses immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, pooled/fresh connection methods, and the independent oha single-case body/churn subset.
 3. **M003c — subject telemetry and SynVoid metrics ingestion**  
    `plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md`  
-   Generic bounded Prometheus collector implemented at `2742e0e`, with `host_*` Gregg semantics separate from `subject_*` target metrics. The SynVoid owner telemetry contract is closed under `synvoid.eggbench-telemetry.v2`, so the upstream dependency is discharged. Terminal live qualification on real current-head SynVoid v2 evidence is outstanding; the green-hosted-source precondition is now satisfied by run `36640125422` on `4703333`.
+   Closure: `plans/closure/security-qualification/003c-status.md` — **conditionally closed**. Generic bounded Prometheus collector (`2742e0e`) plus the `TelemetryPreflightTiming` probe-point seam, bounded polling drain, cadence-aware preflight retry, and fail-closed negatives. Live evidence against the real pinned minimal SynVoid: `m003c-13` collected 3 trials × 20 in-window samples of the owner mapping with required fields observed; renamed-metric and TYPE-drift runs fail closed; optional owner samples stay absent and warned. One gate is blocked upstream: at `739e7ba6...` the owner publishes the v2 inventory without populating it (the supervisor has no `UnifiedServerWorkerHeartbeat` dispatch arm), so `m003c-13b` "required series carry live values" is reported stopped rather than weakened.
 4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
    `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
-   Strict-scope Eggsec load adapter slice implemented and its CI portability corrective closed at `4703333` (see `plans/closure/security-qualification/003d-corrective-status.md`); remaining profile, negative-control, baseline, live SynVoid, and closure work is blocked only on terminal M003c.
+   Closure: `plans/closure/security-qualification/003d-status.md` — **conditionally closed**. Adapter slice `739f382`, CI portability corrective `4703333`, then the M003 profile family, explicit baselines, single-owner-instance live workspace, and negative demonstrations. Executing against the real pinned Eggsec found three further adapter contract defects (`--header` vs `--headers`, the load-only execution policy Eggsec requires before it will authorize `load-test` under any profile, and `--quiet` suppressing the machine report) plus a preflight document-extraction defect; all are repaired with tests. Live `m003d-7`/`m003d-8` prove correctness-only and performance-only regressions each fail the suite. M003 milestone record: `plans/closure/security-qualification/003-status.md`.
 
 Explicitly deferred from M003 v1:
 
@@ -492,11 +492,20 @@ M003 dependency reconciliation (2026-09-29):
 - Full M003d profile/live/closure work is now gated only on terminal M003c.
   SynVoid telemetry and M002 C002 are no longer blockers.
 
-Required execution order is now:
+M003 execution status after the profile/qualification pass:
 
-1. close M003c on real current-head SynVoid v2 telemetry evidence, citing
-   green hosted source (runs `36640125422` / `36640125453` on `4703333` or a
-   later green descendant);
-2. resume M003d profile/baseline/live/negative-demonstration work;
-3. write terminal M003 closure only after the original M003d acceptance gates
-   are satisfied.
+- M003c and M003d Eggbench-owned scope is complete and locally verified
+  (`pass=29 stopped=1 notexec=0` in the live harness; the single stop is the
+  upstream gate below).
+- The M003 milestone is **conditionally closed** at
+  `plans/closure/security-qualification/003-status.md`.
+- Required next actions, in order:
+  1. report the upstream telemetry-population defect to SynVoid (missing
+     `UnifiedServerWorkerHeartbeat` dispatch arm in `src/supervisor/ipc.rs`) and
+     re-run `scripts/qualification/synvoid-m003/run-live-qualification.sh`
+     against an owner revision that populates the required series;
+  2. capture hosted four-lane CI plus the new `live-m003-linux` job on the
+     closing revision;
+  3. convert M003c/M003d/M003 to terminal closure only when `m003c-13b` passes
+     and hosted evidence is green. No Eggbench implementation work remains
+     unless that re-run finds a consumer-side defect.
