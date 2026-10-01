@@ -305,10 +305,37 @@ fn has_tool(name: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
+/// Baseline bundles the checked-in performance profile declares, derived from
+/// the profile rather than restated here. The correctness scenario declares no
+/// baseline: its verdict comes from the run's own expected outcomes, so
+/// materializing one would produce an unreferenced bundle.
+fn profile_baselines(workspace: &Workspace) -> Vec<String> {
+    let profile = read_json(&workspace.path().join("perf.profile.json"));
+    let declared: Vec<String> = profile["scenarios"]
+        .as_array()
+        .expect("profile scenarios")
+        .iter()
+        .filter_map(|scenario| scenario["baseline_bundle"].as_str())
+        .map(|bundle| {
+            bundle
+                .strip_prefix("baselines/")
+                .and_then(|name| name.strip_suffix(".eggb"))
+                .expect("profile baseline naming")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        declared.len(),
+        PERF_SCENARIOS.len() - 1,
+        "the profile declares {declared:?}, which no longer matches the scenarios these tests assert on"
+    );
+    declared
+}
+
 /// Stage A of the baseline workflow: materialize every accepted-revision
 /// baseline bundle explicitly. There is no automatic baseline discovery.
 fn materialize_baselines(workspace: &Workspace) {
-    for scenario in PERF_SCENARIOS {
+    for scenario in profile_baselines(workspace) {
         let output = workspace.run(&[
             "run",
             &format!("scenarios/{scenario}.json"),

@@ -459,16 +459,32 @@ cp telemetry/telemetry-mapping.owner.json telemetry/telemetry-mapping.json
 python3 "$RESOLVER" --workspace "$WS" --repin >/dev/null 2>&1
 
 # ---- m003d-1: explicit same-source baselines + repeatability ------------
-for plan in body-gated-c8 body-pooled-c8 body-fresh-c8 mixed-80-20-pooled-c8 \
-            mixed-80-20-fresh-c8 mixed-80-20-pooled-c32 control-origin-body-c8 \
-            telemetry-pressure-c8; do
-  "$EGGBENCH_BIN" run "scenarios/$plan.json" "baselines/$plan.eggb" --json >/dev/null 2>&1
+# The baseline set is derived from the emitted profile instead of restated
+# here, so a renamed or dropped scenario cannot leave this stage validating
+# bundles the profile no longer declares.
+BASELINE_PLANS=$(python3 -c '
+import json
+import sys
+
+profile = json.load(open(sys.argv[1]))
+for scenario in profile["scenarios"]:
+    if scenario.get("baseline_bundle"):
+        print(scenario["plan"])
+' perf.profile.json)
+BASELINE_COUNT=0
+for plan in $BASELINE_PLANS; do
+  name=${plan##*/}
+  name=${name%.json}
+  if "$EGGBENCH_BIN" run "$plan" "baselines/$name.eggb" --json >/dev/null 2>&1; then
+    BASELINE_COUNT=$((BASELINE_COUNT + 1))
+  fi
 done
-if [ -f baselines/body-gated-c8.eggb/manifest.json ] && [ -f baselines/telemetry-pressure-c8.eggb/manifest.json ] \
+if [ "$BASELINE_COUNT" -gt 0 ] \
+   && [ "$BASELINE_COUNT" -eq "$(printf '%s\n' $BASELINE_PLANS | wc -l)" ] \
    && "$EGGBENCH_BIN" qualify validate perf.profile.json --json >/dev/null 2>&1; then
-  verdict PASS "m003d-1 explicit baseline bundles materialized" "8 accepted-revision bundles, perf profile validates"
+  verdict PASS "m003d-1 explicit baseline bundles materialized" "$BASELINE_COUNT accepted-revision bundles, perf profile validates"
 else
-  verdict STOPPED "m003d-1 explicit baseline bundles materialized" "baseline run or profile validation failed"
+  verdict STOPPED "m003d-1 explicit baseline bundles materialized" "$BASELINE_COUNT of $(printf '%s\n' $BASELINE_PLANS | wc -l) baseline runs succeeded and the profile validates"
 fi
 
 "$EGGBENCH_BIN" qualify run perf.profile.json --output "$WORK/suite-perf" --json >"$WORK/suite-perf.json" 2>&1
