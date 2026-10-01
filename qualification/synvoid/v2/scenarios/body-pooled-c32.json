@@ -77,7 +77,7 @@
     "schedule": [
       {
         "case_id": "benign-json-body",
-        "count": 160
+        "count": 800
       }
     ],
     "concurrency": 32,

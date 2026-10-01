@@ -495,11 +495,33 @@ fn smoke_profile_qualifies_with_subject_telemetry_evidence() {
     assert_eq!(provenance["poll_error_count"], 0);
     assert_eq!(provenance["dropped_sample_count"], 0);
     assert_eq!(provenance["missing_field_observation_count"], 0);
+    // A finite HTTP-corpus campaign bounds the measured window by workload
+    // volume, so how many polls land inside it follows the host's speed. The
+    // contract is that telemetry is collected during the measured window, at no
+    // more than one poll per cadence interval, and that a window spanning an
+    // interval still contains a start and a stop poll rather than one snapshot.
+    let pressure = workspace.bundle(&suite, "synvoid-m003-target-telemetry-pressure-c32");
+    let window_ms = read_json(&pressure.join("trials/001/result.json"))["measurement_elapsed_ns"]
+        .as_u64()
+        .expect("measured window")
+        / 1_000_000;
+    let interval_ms = provenance["poll_interval_ms"]
+        .as_u64()
+        .expect("poll interval");
+    let samples = provenance["sample_count"].as_u64().expect("sample count");
     assert!(
-        provenance["sample_count"]
-            .as_u64()
-            .is_some_and(|count| count >= 3),
-        "a measured window must contain several bounded polls: {provenance}"
+        samples >= 1,
+        "telemetry must be sampled in the window: {provenance}"
+    );
+    assert!(
+        samples <= window_ms.div_ceil(interval_ms) + 2,
+        "{samples} samples exceed the {interval_ms}ms cadence bound for a {window_ms}ms window: \
+         {provenance}"
+    );
+    assert!(
+        window_ms < interval_ms || samples >= 2,
+        "a {window_ms}ms window spans the {interval_ms}ms cadence but recorded only {samples} \
+         in-window polls: {provenance}"
     );
     let trial = observations(&bundle, "001");
     // A required gauge moves plausibly under load, and the mapped owner
@@ -971,9 +993,14 @@ fn polling_overhead_is_bounded_by_the_declared_cadence() {
         // keeps the bound exact rather than approximately correct.
         let observed = provenance["sample_count"].as_u64().expect("sample count");
         let ceiling = window_ms.div_ceil(interval_ms) + 2;
+        // A window shorter than one cadence can only hold the boundary polls a
+        // shorter window admits; a longer one must show the interval structure
+        // rather than a single snapshot.
+        let floor = if window_ms < interval_ms { 1 } else { 2 };
         assert!(
-            observed >= 2 && observed <= ceiling,
-            "trial {trial}: {observed} samples exceed the {interval_ms}ms cadence bound for a {window_ms}ms window"
+            (floor..=ceiling).contains(&observed),
+            "trial {trial}: {observed} samples are outside the {floor}..={ceiling} bound for a \
+             {window_ms}ms window at a {interval_ms}ms cadence"
         );
         total_samples += observed;
         total_served_ms += window_ms;

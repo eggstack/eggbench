@@ -101,23 +101,23 @@
     "schedule": [
       {
         "case_id": "benign-json-body",
-        "count": 384
+        "count": 3840
       },
       {
         "case_id": "benign-small-get",
-        "count": 256
+        "count": 2560
       },
       {
         "case_id": "detect-sqli-body",
-        "count": 80
+        "count": 800
       },
       {
         "case_id": "detect-ssrf-body",
-        "count": 48
+        "count": 480
       },
       {
         "case_id": "detect-xss-query",
-        "count": 32
+        "count": 320
       }
     ],
     "concurrency": 32,

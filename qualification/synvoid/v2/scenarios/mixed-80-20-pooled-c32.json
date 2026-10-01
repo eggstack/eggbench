@@ -77,23 +77,23 @@
     "schedule": [
       {
         "case_id": "benign-json-body",
-        "count": 96
+        "count": 384
       },
       {
         "case_id": "benign-small-get",
-        "count": 64
+        "count": 256
       },
       {
         "case_id": "detect-sqli-body",
-        "count": 20
+        "count": 80
       },
       {
         "case_id": "detect-ssrf-body",
-        "count": 12
+        "count": 48
       },
       {
         "case_id": "detect-xss-query",
-        "count": 8
+        "count": 32
       }
     ],
     "concurrency": 32,
