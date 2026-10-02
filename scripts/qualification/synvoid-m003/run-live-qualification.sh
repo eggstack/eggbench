@@ -39,7 +39,7 @@
 #   EGGSEC_PIN     exact Eggsec source SHA
 #   KEEP_WORK=1    keep the temp work dir for inspection
 set -u
-SYNVOID_PIN="${SYNVOID_PIN:-739e7ba6f02c5e3f83fe9ff5321b09213182b193}"
+SYNVOID_PIN="${SYNVOID_PIN:-1338ce7b60f3793701091b4c329f80eb542f802d}"
 POLICY_ID="${POLICY_ID:-synvoid.eggbench-qualification.v1}"
 TELEMETRY_CONTRACT_ID="${TELEMETRY_CONTRACT_ID:-synvoid.eggbench-telemetry.v2}"
 # Owner-recorded digest of the materialized telemetry-mapping.json bytes.

@@ -11,7 +11,9 @@ defect in this workspace, and the live harness is the terminal evidence.
 SynVoid owns the telemetry contract: `telemetry/telemetry-mapping.json` and
 `telemetry/telemetry-contract.json` are byte-for-byte copies of the owner
 export produced by `cargo xtask eggbench-qualification export` at
-`dbowm91/synvoid@739e7ba6f02c5e3f83fe9ff5321b09213182b193`. The mapping's raw
+`dbowm91/synvoid@1338ce7b60f3793701091b4c329f80eb542f802d` (advanced from
+`739e7ba6f02c5e3f83fe9ff5321b09213182b193`; the mapping bytes are unchanged —
+the live harness still verifies them byte-identical). The mapping's raw
 SHA-256 is `622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99`;
 its Eggbench content-tree identity (what plans pin) is
 `dd7d58dd204a691ab0b83b82a83d49f3438b67e3ea6d0e14c7c1fba3832584b0`. The

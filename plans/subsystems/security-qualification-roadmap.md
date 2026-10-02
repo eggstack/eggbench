@@ -492,6 +492,25 @@ M003 dependency reconciliation (2026-09-29):
 - Full M003d profile/live/closure work is now gated only on terminal M003c.
   SynVoid telemetry and M002 C002 are no longer blockers.
 
+M003 live-value reconciliation (2026-10-02):
+
+- The upstream defect is repaired in SynVoid: `ccf92694` routes
+  `Message::UnifiedServerWorkerHeartbeat` into
+  `ProcessManager::handle_unified_server_worker_heartbeat` and restores the
+  worker-ID classification; `1338ce7b` additionally unifies the worker's
+  `WorkerMetrics` instance (a second fresh instance had kept every
+  request-derived counter at zero) and seeds the heartbeat lag accumulator at
+  the schedule it measures (it had been one cadence ahead, clamping
+  `event_loop_lag_ms` to a structural zero). No contract, mapping, name, unit,
+  cadence, WAF, or harness-assertion change.
+- The pin advanced to `1338ce7b60f3793701091b4c329f80eb542f802d`; the same
+  harness now reports `pass=30 stopped=0 notexec=0` with `m003c-13b` green
+  (`subject_active_connections = 8.0`, `subject_event_loop_lag_ms = 1.0`, 20
+  in-window samples per trial).
+- M003c is **CLOSED**; M003d is re-verified with it. The M003 milestone waits
+  only on the hosted four-lane plus `live-m003-linux` runs on the closing
+  revision (see `003c-status.md`).
+
 M003 execution status after the profile/qualification pass:
 
 - M003c and M003d Eggbench-owned scope is complete and locally verified

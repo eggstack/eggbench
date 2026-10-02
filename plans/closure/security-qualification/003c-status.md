@@ -1,16 +1,13 @@
-# Security Qualification M003c — Status
+ # Security Qualification M003c — Status
 
-Disposition: **conditionally closed — Eggbench-owned scope complete and
-verified; one terminal gate is blocked by a named upstream defect.**
+Disposition: **CLOSED** — the upstream live-value defect is resolved by owner
+revision `1338ce7b60f3793701091b4c329f80eb542f802d`, and the previously stopped
+gate `m003c-13b` now passes with the harness semantics byte-identical.
 
 Implementation commits: this record accompanies the M003c/M003d work on this
 branch (see the repository history for the exact SHAs); the original collector
-landed at `2742e0e`.
-
-The single unmet gate is *required subject series carry live owner values*.
-Everything Eggbench owns is closed: the collector, the probe-point seam, the
-fail-closed negatives, the routine tests, and the live harness that executes
-against the real pinned SynVoid.
+landed at `2742e0e`. The owner-pin advance to `1338ce7b...` lands with this
+record (see the repository history).
 
 ## Implemented
 
@@ -82,9 +79,78 @@ Live local qualification against the real pinned binaries
 - `m003c-16` renamed required metric fails closed with no measured trials
   published; `m003c-17` TYPE drift fails closed with `sample_type_mismatch`.
 
-## Unresolved finding (blocks terminal closure)
+The pre-corrective run above is retained as the precise downstream proof of
+the defect. It is superseded for the terminal claim by the corrected-owner
+run below.
 
-**Severity: high (upstream, blocks a terminal gate).**
+## Terminal live qualification (corrected owner pin 1338ce7b)
+
+Harness, corpora, profile, and assertion script unchanged; only the owner pin
+advanced from `739e7ba6f02c5e3f83fe9ff5321b09213182b193` to
+`1338ce7b60f3793701091b4c329f80eb542f802d` (no mapping, contract, threshold, or
+gate-semantics change — the pin is the only diff). Owner closeout with the
+proof-bearing implementation SHAs:
+`dbowm91/synvoid@...` → `architecture/eggbench_security_qualification_m003_telemetry_heartbeat_dispatch_corrective_closeout.md`
+in the SynVoid tree.
+
+Local run (`KEEP_WORK=1`, work dir `/tmp/m003-live-qual.DLzHSu`):
+
+- `pass=30 stopped=0 notexec=0`, harness exit code 0.
+- Owner pin `1338ce7b60f3793701091b4c329f80eb542f802d`; owner materializer
+  export plus `cargo xtask eggbench-qualification check --configtest` against
+  the real minimal binary (`--locked --release --no-default-features`,
+  `sha256 251ac1d2e0c45be399570b3e2abcbb2925589bc01102eb2869585bcd7f8030f7`);
+  provenance, contract identity, and mapping bytes asserted; loopback-only
+  metrics endpoint with admin disabled.
+- Contract identity unchanged: `synvoid.eggbench-telemetry.v2`; mapping digest
+  unchanged: `622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99`.
+- `m003c-12` real smoke profile: `pass` (6 scenarios).
+- `m003c-13` owner contract evidence: 3 trials, 20 in-window samples each at a
+  200 ms cadence, required gauges and counters observed, no poll errors, no
+  dropped samples, pinned mapping identity recorded
+  (`dd7d58dd204a691ab0b83b82a83d49f3438b67e3ea6d0e14c7c1fba3832584b0`).
+- **`m003c-13b` required subject series carry live owner values: PASS.**
+  Recorded per-trial observations (all three trials identical):
+  `subject_active_connections = 8.0`, `subject_event_loop_lag_ms = 1.0`,
+  `subject_body_buffering_bytes_total = 0.0`,
+  `subject_offload_rejections_total = 0.0`, each with 20 in-window samples,
+  `poll_error_count = 0`, `dropped_sample_count = 0`, endpoint authority
+  `127.0.0.1:43633`. The gauges the baseline run observed at zero for every
+  trial now carry live worker-backed values; the two required counters are
+  observed with valid counter semantics, and no counter value was
+  manufactured by the consumer.
+- `m003c-14` optional owner samples stay absent and warned; no fabricated zero.
+- `m003c-15` the listener set is unchanged across a suite run.
+- `m003c-16`/`m003c-17` fail-closed negatives unchanged.
+- All `m003d-*` stages unchanged and green; teardown leaves no listener or
+  subject process.
+
+The owner-side root causes Eggbench asked for (recorded here so the closure
+is traceable from the consumer side):
+
+1. `src/supervisor/ipc.rs` dispatched every worker message except
+   `Message::UnifiedServerWorkerHeartbeat` (fell through `_ => {}`), so
+   `ProcessManager` kept default metrics.
+2. The same message was absent from worker-ID classification (global limiter,
+   no per-worker peer-PID path).
+3. `src/worker/unified_server/startup_plan.rs` rebound `metrics` to a second
+   fresh `WorkerMetrics` (Iteration 93 decomposition leftover), so the
+   heartbeat serialized an instance no request had ever touched and every
+   request-derived counter stayed zero.
+4. `src/worker/unified_server/lifecycle.rs` seeded the lag accumulator one
+   cadence ahead of the immediate first `interval.tick()`, clamping
+   `event_loop_lag_ms` to a structural zero.
+
+None of these touched the contract, mapping, names, units, cadence, WAF
+semantics, or any Eggbench assertion. Hosted evidence (four-lane CI +
+`live-m003-linux`) is recorded below once observed on the exact closing
+revision.
+
+## Unresolved finding (was blocking; now resolved downstream)
+
+**Severity: high (upstream) — RESOLVED by owner revision
+`1338ce7b60f3793701091b4c329f80eb542f802d`.** The record below is retained
+verbatim as the baseline that the corrected run closes.
 
 At `dbowm91/synvoid@739e7ba6f02c5e3f83fe9ff5321b09213182b193` the minimal
 runtime exports the twelve `synvoid_subject_*` series of
@@ -132,10 +198,10 @@ worked around in the consumer.
 
 ## Remaining condition
 
-Terminal M003c closure requires: an owner revision that populates the required
-series, the same live harness executed against that revision (hosted evidence
-preferred), and a green hosted four-lane run plus the `live-m003-linux` job on
-the exact source revision.
+Local terminal evidence is complete (`pass=30 stopped=0 notexec=0` on the exact
+pin above). Hosted evidence is pending: a green hosted four-lane run plus the
+`live-m003-linux` job on the exact source revision of this closing commit.
+Once observed, their run IDs are appended here and this clause is struck.
 
 ## Relationship to M003d and M003
 
