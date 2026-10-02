@@ -477,19 +477,37 @@ for scenario in profile["scenarios"]:
         print(scenario["plan"])
 ' perf.profile.json)
 BASELINE_COUNT=0
+BASELINE_FAILED=""
 for plan in $BASELINE_PLANS; do
   name=${plan##*/}
   name=${name%.json}
-  if "$EGGBENCH_BIN" run "$plan" "baselines/$name.eggb" --json >/dev/null 2>&1; then
+  baseline_rc=0
+  "$EGGBENCH_BIN" run "$plan" "baselines/$name.eggb" --json >"$WORK/baseline-$name.json" 2>&1 \
+    || baseline_rc=$?
+  if [ "$baseline_rc" -eq 0 ]; then
     BASELINE_COUNT=$((BASELINE_COUNT + 1))
+  else
+    BASELINE_FAILED="$BASELINE_FAILED $name(exit $baseline_rc: $(python3 -c '
+import json
+import sys
+
+try:
+    document = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as error:
+    print("unreadable envelope: " + str(error))
+    raise SystemExit(0)
+error = document.get("error", {})
+print(str(error.get("category")) + ": " + str(error.get("message"))[:120])
+' "$WORK/baseline-$name.json"))"
   fi
 done
+BASELINE_TOTAL=$(printf '%s\n' $BASELINE_PLANS | wc -l)
 if [ "$BASELINE_COUNT" -gt 0 ] \
-   && [ "$BASELINE_COUNT" -eq "$(printf '%s\n' $BASELINE_PLANS | wc -l)" ] \
+   && [ "$BASELINE_COUNT" -eq "$BASELINE_TOTAL" ] \
    && "$EGGBENCH_BIN" qualify validate perf.profile.json --json >/dev/null 2>&1; then
   verdict PASS "m003d-1 explicit baseline bundles materialized" "$BASELINE_COUNT accepted-revision bundles, perf profile validates"
 else
-  verdict STOPPED "m003d-1 explicit baseline bundles materialized" "$BASELINE_COUNT of $(printf '%s\n' $BASELINE_PLANS | wc -l) baseline runs succeeded and the profile validates"
+  verdict STOPPED "m003d-1 explicit baseline bundles materialized" "$BASELINE_COUNT of $BASELINE_TOTAL baseline runs succeeded; failed:$BASELINE_FAILED"
 fi
 
 "$EGGBENCH_BIN" qualify run perf.profile.json --output "$WORK/suite-perf" --json >"$WORK/suite-perf.json" 2>&1
