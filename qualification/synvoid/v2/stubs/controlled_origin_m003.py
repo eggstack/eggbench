@@ -46,6 +46,13 @@ def main():
             return 2
         prepared[path] = (status, (FILL * body_bytes) if body_bytes else b"")
 
+    class _Server(ThreadingHTTPServer):
+        # Sized above the offered concurrency for the same reason as the
+        # subject stand-in: a short backlog turns a fast host's connection rate
+        # into origin transport errors instead of measurable origin behaviour.
+        request_queue_size = 512
+        daemon_threads = True
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "ControlledOriginM003/0"
         protocol_version = "HTTP/1.1"
@@ -90,7 +97,7 @@ def main():
         do_PUT = _handle
         do_DELETE = _handle
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = _Server(("127.0.0.1", args.port), Handler)
     sys.stderr.write("controlled origin on 127.0.0.1:%d\n" % args.port)
     try:
         server.serve_forever()

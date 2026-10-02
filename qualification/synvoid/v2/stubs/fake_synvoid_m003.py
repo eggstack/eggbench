@@ -156,6 +156,17 @@ def is_attack(raw_target, body):
     )
 
 
+class _Server(ThreadingHTTPServer):
+    # The M003 plans declare fresh-per-request campaigns at c8 and c32, which
+    # open thousands of short-lived connections per trial. The stdlib default
+    # listen backlog of 5 drops connections on a host fast enough to reach that
+    # rate, and the dropped connections surface as subject-side transport
+    # errors rather than as a fixture limitation, so the backlog is sized well
+    # above the offered concurrency.
+    request_queue_size = 512
+    daemon_threads = True
+
+
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "FakeSynVoidM003/0"
     protocol_version = "HTTP/1.1"
@@ -354,8 +365,8 @@ def main():
     RequestHandler.state = state
     MetricsHandler.state = state
 
-    request_server = ThreadingHTTPServer(("127.0.0.1", args.port), RequestHandler)
-    metrics_server = ThreadingHTTPServer(("127.0.0.1", args.metrics_port), MetricsHandler)
+    request_server = _Server(("127.0.0.1", args.port), RequestHandler)
+    metrics_server = _Server(("127.0.0.1", args.metrics_port), MetricsHandler)
     metrics_thread = threading.Thread(
         target=metrics_server.serve_forever, name="metrics", daemon=True
     )
