@@ -305,6 +305,52 @@ fn has_tool(name: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
+/// Metric-level detail for every scenario whose combined verdict is not a
+/// pass. The receipt names the scenario; only its comparison receipt says which
+/// metric and which observed value broke the gate, which is what a portability
+/// failure needs.
+fn failing_metric_detail(suite: &Path) -> String {
+    let document = receipt(suite);
+    let mut detail = String::new();
+    for scenario in document["scenarios"].as_array().expect("scenarios") {
+        if scenario["combined_verdict"] == "pass" || scenario["combined_verdict"].is_null() {
+            continue;
+        }
+        let id = scenario["id"].as_str().expect("scenario id");
+        detail.push_str(id);
+        detail.push_str(": ");
+        let comparison = read_json(
+            &suite
+                .join("scenarios")
+                .join(format!("{id}.comparison.json")),
+        );
+        let metrics = comparison["metrics"]
+            .as_array()
+            .expect("comparison metrics");
+        for metric in metrics {
+            if metric["disposition"] == "pass" || metric["disposition"].is_null() {
+                continue;
+            }
+            detail.push_str(metric["name"].as_str().unwrap_or("?"));
+            detail.push_str("(candidate=");
+            detail.push_str(&metric["candidate_estimate"].to_string());
+            detail.push_str(", baseline=");
+            detail.push_str(&metric["baseline_estimate"].to_string());
+            detail.push_str(", gate=");
+            detail.push_str(&metric["gate"].to_string());
+            detail.push_str(", disposition=");
+            detail.push_str(metric["disposition"].as_str().unwrap_or("-"));
+            detail.push_str(", reason=");
+            detail.push_str(metric["reason"].as_str().unwrap_or("-"));
+            detail.push_str(") ");
+        }
+    }
+    if detail.is_empty() {
+        detail.push_str("no failing metric disposition was recorded");
+    }
+    detail
+}
+
 /// Baseline bundles the checked-in performance profile declares, derived from
 /// the profile rather than restated here. The correctness scenario declares no
 /// baseline: its verdict comes from the run's own expected outcomes, so
@@ -451,8 +497,9 @@ fn smoke_profile_qualifies_with_subject_telemetry_evidence() {
     assert_eq!(
         output.status.code(),
         Some(0),
-        "smoke profile failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "smoke profile failed: {}{}",
+        String::from_utf8_lossy(&output.stderr),
+        failing_metric_detail(&suite)
     );
     let document = receipt(&suite);
     assert_eq!(document["aggregate_verdict"], "pass");
@@ -600,8 +647,9 @@ fn perf_profile_baselines_are_explicit_and_repeatable() {
     ]);
     assert!(
         matches!(output.status.code(), Some(0 | 7)),
-        "perf profile must pass or be inconclusive: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "perf profile must pass or be inconclusive: {}{}",
+        String::from_utf8_lossy(&output.stderr),
+        failing_metric_detail(&suite)
     );
     let document = receipt(&suite);
     assert!(document["aggregate_verdict"] != "fail", "{document}");
@@ -733,8 +781,9 @@ fn performance_only_regression_fails_despite_correct_security_behavior() {
     ]);
     assert!(
         matches!(output.status.code(), Some(0 | 7)),
-        "the accepted-revision perf profile must qualify before the regression: {}",
-        String::from_utf8_lossy(&output.stdout)
+        "the accepted-revision perf profile must qualify before the regression: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        failing_metric_detail(&suite)
     );
     // The throttle lives outside the plan, so the comparison identity is
     // unchanged: a performance verdict, never incomparable drift.
