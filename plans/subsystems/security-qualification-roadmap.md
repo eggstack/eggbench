@@ -524,7 +524,7 @@ M003 execution status after the profile/qualification pass:
      re-run `scripts/qualification/synvoid-m003/run-live-qualification.sh`
      against an owner revision that populates the required series;
   2. capture hosted four-lane CI plus the new `live-m003-linux` job on the
-     closing revision (in flight: CI `37052490008`, live `37052490024` on
+     closing revision (in flight: CI `37052879945`, live `37052879959` on
      `219f70e`);
   3. convert M003c/M003d/M003 to terminal closure — steps 1 and the local
      re-run are done (`pass=30 stopped=0`, `m003c-13b` green, owner

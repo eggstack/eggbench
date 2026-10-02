@@ -199,9 +199,10 @@ worked around in the consumer.
 ## Remaining condition
 
 Local terminal evidence is complete (`pass=30 stopped=0 notexec=0` on the exact
-pin above). Hosted evidence is pending: a green hosted four-lane run plus the
-`live-m003-linux` job on the exact source revision of this closing commit.
-Once observed, their run IDs are appended here and this clause is struck.
+pin above). Hosted evidence is pending on the exact closing revision
+(`325f9f0`): four-lane CI run `37052879945` plus the `live-m003-linux` job in
+live-workflow run `37052879959`. Once observed, their verdicts are appended
+here and this clause is struck.
 
 ## Relationship to M003d and M003
 
