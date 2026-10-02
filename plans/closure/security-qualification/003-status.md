@@ -1,8 +1,9 @@
 # Security Qualification M003 — Status
 
-Disposition: **conditionally closed — all Eggbench-owned M003 scope is complete
-and verified; terminal milestone closure is blocked by one named upstream
-defect.**
+Disposition: **closing — all Eggbench-owned M003 scope is complete and verified;
+the named upstream defect is repaired and the terminal gate passes locally.
+Milestone closure completes when the hosted four-lane and `live-m003-linux`
+runs on the closing revision are recorded green (see "Remaining condition").**
 
 Milestone plans:
 
@@ -98,12 +99,16 @@ participating in measured evidence, and a second security-owner execution path
 ## Condition for terminal closure
 
 1. An owner revision that dispatches the unified-server heartbeat so the
-   required series carry live values.
+   required series carry live values. **Met**: `1338ce7b60f3793701091b4c329f80eb542f802d`
+   (dispatch + classification at `ccf92694`, live-value wiring at `1338ce7b`).
 2. `scripts/qualification/synvoid-m003/run-live-qualification.sh` green against
-   that revision, with `m003c-13b` passing.
+   that revision, with `m003c-13b` passing. **Met**: `pass=30 stopped=0
+   notexec=0` locally on the exact pin, harness exit 0.
 3. Green hosted four-lane CI and the `live-m003-linux` job on the exact closing
-   revision. Both now hold: CI `36972886787` is green on all four lanes, and the
-   live job's only stop is `m003c-13b`. The job still exits non-zero, because
-   the harness reports a stop as exit 10 by design.
+   revision. **Pending**: CI run `37052490008` and live run `37052490024` on
+   `219f70e`, in flight when this record was committed. Pre-corrective
+   reference: CI `36972886787` was green on all four lanes, and the live
+   job's only stop was `m003c-13b` (the job exits 10 by design when a stop
+   fires).
 
 Nothing further is required on the Eggbench side.

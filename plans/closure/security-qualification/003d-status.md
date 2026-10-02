@@ -1,6 +1,8 @@
 # Security Qualification M003d — Status
 
-Disposition: **conditionally closed — M003d scope complete and verified; the milestone inherits one upstream gate from M003c**. The Eggsec-load slice landed at `739f382`, its two portability/integration defects were repaired at `4703333` (four-lane run `36640125422`, live run `36640125453`), and the M003 profile/qualification work plus three further real-Eggsec adapter defects are closed below. Overall M003 closure remains conditional; see "Remaining condition".
+Disposition: **closed — M003d scope complete and verified, re-verified with the
+corrected owner `1338ce7b` in the same terminal harness run
+(`pass=30 stopped=0 notexec=0`)**. The Eggsec-load slice landed at `739f382`, its two portability/integration defects were repaired at `4703333` (four-lane run `36640125422`, live run `36640125453`), and the M003 profile/qualification work plus three further real-Eggsec adapter defects are closed below. The inherited M003c gate is resolved (see `003c-status.md`); only the hosted four-lane + `live-m003-linux` runs on the closing revision remain to be recorded.
 
 Implementation: `739f382` (`feat(security): add Eggsec strict-scope load workload`).
 
@@ -205,9 +207,9 @@ authority.
 
 ## Remaining condition
 
-M003d's own work is complete. The milestone disposition stays conditional on the
-single upstream gate recorded in
-`plans/closure/security-qualification/003c-status.md`: the pinned SynVoid exports
-its telemetry inventory without populating it, so "subject telemetry
-participates in measured evidence" cannot be asserted end-to-end yet. That is an
-owner-side fix; nothing in M003d is outstanding on the Eggbench side.
+M003d's own work is complete and was re-verified with the corrected owner in
+the terminal harness run (`pass=30 stopped=0 notexec=0` on owner
+`1338ce7b`). The milestone disposition stays closing until the hosted
+four-lane and `live-m003-linux` runs on the closing revision are recorded
+green (see `003c-status.md`). Nothing in M003d is outstanding on the
+Eggbench side.

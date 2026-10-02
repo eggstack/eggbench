@@ -419,10 +419,10 @@ Ordered implementation decomposition:
    **CLOSED** at `plans/closure/security-qualification/003b-status.md`. Reuses immutable HTTP corpora for deterministic body/mixed load, owner-expected outcomes, pooled/fresh connection methods, and the independent oha single-case body/churn subset.
 3. **M003c — subject telemetry and SynVoid metrics ingestion**  
    `plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md`  
-   Closure: `plans/closure/security-qualification/003c-status.md` — **conditionally closed**. Generic bounded Prometheus collector (`2742e0e`) plus the `TelemetryPreflightTiming` probe-point seam, bounded polling drain, cadence-aware preflight retry, and fail-closed negatives. Live evidence against the real pinned minimal SynVoid: `m003c-13` collected 3 trials × 20 in-window samples of the owner mapping with required fields observed; renamed-metric and TYPE-drift runs fail closed; optional owner samples stay absent and warned. One gate is blocked upstream: at `739e7ba6...` the owner publishes the v2 inventory without populating it (the supervisor has no `UnifiedServerWorkerHeartbeat` dispatch arm), so `m003c-13b` "required series carry live values" is reported stopped rather than weakened.
+   Closure: `plans/closure/security-qualification/003c-status.md` — **CLOSED** (corrected owner `1338ce7b`). Generic bounded Prometheus collector (`2742e0e`) plus the `TelemetryPreflightTiming` probe-point seam, bounded polling drain, cadence-aware preflight retry, and fail-closed negatives. Live evidence against the real pinned minimal SynVoid: `m003c-13` collected 3 trials × 20 in-window samples of the owner mapping with required fields observed; renamed-metric and TYPE-drift runs fail closed; optional owner samples stay absent and warned. The formerly blocked gate `m003c-13b` now passes (`subject_active_connections = 8.0`, `subject_event_loop_lag_ms = 1.0`); the harness was never weakened.
 4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
    `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
-   Closure: `plans/closure/security-qualification/003d-status.md` — **conditionally closed**. Adapter slice `739f382`, CI portability corrective `4703333`, then the M003 profile family, explicit baselines, single-owner-instance live workspace, and negative demonstrations. Executing against the real pinned Eggsec found three further adapter contract defects (`--header` vs `--headers`, the load-only execution policy Eggsec requires before it will authorize `load-test` under any profile, and `--quiet` suppressing the machine report) plus a preflight document-extraction defect; all are repaired with tests. Live `m003d-7`/`m003d-8` prove correctness-only and performance-only regressions each fail the suite. M003 milestone record: `plans/closure/security-qualification/003-status.md`.
+   Closure: `plans/closure/security-qualification/003d-status.md` — **closed (re-verified with the corrected owner `1338ce7b` in the terminal `pass=30 stopped=0` run; hosted four-lane + `live-m003-linux` pending)**. Adapter slice `739f382`, CI portability corrective `4703333`, then the M003 profile family, explicit baselines, single-owner-instance live workspace, and negative demonstrations. Executing against the real pinned Eggsec found three further adapter contract defects (`--header` vs `--headers`, the load-only execution policy Eggsec requires before it will authorize `load-test` under any profile, and `--quiet` suppressing the machine report) plus a preflight document-extraction defect; all are repaired with tests. Live `m003d-7`/`m003d-8` prove correctness-only and performance-only regressions each fail the suite. M003 milestone record: `plans/closure/security-qualification/003-status.md`.
 
 Explicitly deferred from M003 v1:
 
@@ -524,7 +524,10 @@ M003 execution status after the profile/qualification pass:
      re-run `scripts/qualification/synvoid-m003/run-live-qualification.sh`
      against an owner revision that populates the required series;
   2. capture hosted four-lane CI plus the new `live-m003-linux` job on the
-     closing revision;
-  3. convert M003c/M003d/M003 to terminal closure only when `m003c-13b` passes
-     and hosted evidence is green. No Eggbench implementation work remains
-     unless that re-run finds a consumer-side defect.
+     closing revision (in flight: CI `37052490008`, live `37052490024` on
+     `219f70e`);
+  3. convert M003c/M003d/M003 to terminal closure — steps 1 and the local
+     re-run are done (`pass=30 stopped=0`, `m003c-13b` green, owner
+     `1338ce7b`); the milestone completes when the hosted runs are recorded
+     green. No Eggbench implementation work remains unless a hosted run
+     finds a consumer-side defect.
