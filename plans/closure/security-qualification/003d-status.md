@@ -170,7 +170,7 @@ from host noise.
 
 ### Hosted evidence on the pushed head
 
-Live qualification run `36897109527` (`live-m003-linux`, `aa302d5`) executed the
+Live qualification run `36972886077` (`live-m003-linux`, `11c02373`) executed the
 whole M003 stage group against the real pinned SynVoid and Eggsec binaries on a
 dedicated hosted runner: `pass=28 stopped=1 notexec=1`. Every M003d stage passed
 there — `m003d-1` materialized 8 baseline bundles and validated the perf
@@ -180,7 +180,17 @@ proved 30,994 logged requests with no owner-blocked case reaching the origin,
 `12a3843df00eb5dfa77850cc495dec2f6b4f22b67c31db9d0a3d9df1b916f253`), and
 `m003d-7`/`m003d-8`/`m003d-9` plus teardown all passed. The single stop was
 `m003c-13b`, the upstream telemetry gate; `m003d-4` was not executed because
-`oha` is absent from that runner. The pinned SynVoid binary's hosted digest was
+`oha` is absent from that runner.
+
+Reaching that result took two fixture repairs that only the hosted runner
+exposed, both recorded in `plans/closure/security-qualification/003-status.md`:
+the routine campaigns are sized for the evidence they must carry, and the
+stand-in listen backlogs are sized for the declared fresh-per-request rate. The
+live performance regression additionally needed its origin backlog raised for the
+same reason — with it, `m003d-8` passes; without it the throttled run lost
+evidence in an unrelated scenario and the suite came back `Invalid`.
+
+The pinned SynVoid binary's hosted digest was
 `sha256 07766ca02e129c9abe1c1b32e978e6de0cb710ed6e916b6cb5ae77bd615f8b1f`.
 
 ### Known limitation

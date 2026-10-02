@@ -113,10 +113,11 @@ states that `handle_unified_server_worker_heartbeat` is the source of truth for
 these payloads; at this pin that is not true of the shipped dispatch path. The
 same gap is present on the current closeout head `0dc1f7fb21a5df60e72fc7f2cd60b7cb73bc9f35`.
 
-The hosted live qualification run `36897109527` (`live-m003-linux`) reproduced
-the gate independently of the local runs: `pass=28 stopped=1 notexec=1`, with the
-single stop being `m003c-13b` reporting that required gauge
-`subject_event_loop_lag_ms` was published at zero for every trial. Contract-shape
+The hosted live qualification runs `36897109527` and `36972886077`
+(`live-m003-linux`) reproduced the gate independently of the local runs, both at
+`pass=28 stopped=1 notexec=1`, with the single stop being `m003c-13b` reporting
+that required gauge `subject_event_loop_lag_ms` was published at zero for every
+trial. Contract-shape
 evidence held there as well (`m003c-13` samples [20, 20, 20], `m003c-14` no
 fabricated zero, `m003c-15` no listener leak, `m003c-16`/`m003c-17` fail closed
 on a renamed and a TYPE-drifted owner metric). The pinned binary's hosted digest
