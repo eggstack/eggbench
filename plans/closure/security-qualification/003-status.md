@@ -28,7 +28,7 @@ participating in measured evidence, and a second security-owner execution path
 | One frozen performance policy | `body-gated-c8` is the only gated scenario; all others diagnostic | met |
 | Correctness-only regression fails the suite | `m003d-7` (exit 6, performance acceptable) | met |
 | Performance-only regression fails the suite | `m003d-8` (exit 6, `body-gated-c8` fail, correctness pass) | met |
-| Blocked requests never reach the origin | `m003d-3` (24,594 logged requests locally; 30,994 in hosted `36972886077`; no owner-blocked case present) | met |
+| Blocked requests never reach the origin | `m003d-3` (24,594 logged requests locally; 30,994 in hosted `36989900894`; no owner-blocked case present) | met |
 | Second security-owner execution path | `m003d-6` real `eggsec-load` under strict scope plus a generated load-only execution policy | met |
 | External transport corroboration | `m003d-4` `oha` body scenario against its own baseline | met |
 | Owner telemetry contract consumed unmodified | `m003c-6`/`m003c-10` (mapping byte-identical, contract identity fields equal) | met |
@@ -37,7 +37,7 @@ participating in measured evidence, and a second security-owner execution path
 | Optional absence never fabricated | `m003c-14` | met |
 | No listener or process leak | `m003c-15`, teardown stage | met |
 | **Required subject series carry live owner values** | `m003c-13b` — owner publishes the v2 inventory at zero | **blocked upstream** |
-| Green hosted four-lane CI + live M003 job | normal CI `36972886787` green on all four lanes; live `36972886077` `live-m003-linux` pass=28 stopped=1 notexec=1, the only stop `m003c-13b` | met |
+| Green hosted four-lane CI + live M003 job | normal CI `36989900974` green on all four lanes; live `36989900894` `live-m003-linux` pass=28 stopped=1 notexec=1, the only stop `m003c-13b` | met |
 
 ## Unresolved findings
 
@@ -57,9 +57,9 @@ participating in measured evidence, and a second security-owner execution path
    speed and load: on a heavily contended shared host it can return `Inconclusive`
    instead of `Pass`, and on the two-core hosted runner the M002a live pair
    intermittently returned `Invalid` (insufficient evidence, which is never
-   softened to `Inconclusive`) or `Fail` — observed failing in three of the six
+   softened to `Inconclusive`) or `Fail` — observed failing in four of the eight
    hosted live runs since the M003 head was pushed, and passing in the other
-   three, on commits that do not touch its harness. The harness accepts 0 or 7 for
+   four, on commits that do not touch its harness. The harness accepts 0 or 7 for
    the contended-host case and still requires the correctness family to pass;
    hosted repeatability is the authority, and the same class of failure reproduces
    on pristine `1b79f62` under load. This is recorded rather than repaired here:
@@ -72,11 +72,18 @@ participating in measured evidence, and a second security-owner execution path
    by workload volume, so a fast host served the telemetry scenario in ~82ms —
    shorter than the poll cadence — which collapsed the in-window sample count and
    moved the stand-in's fault injections outside the measured window entirely; the
-   campaigns are now sized for the evidence they must carry. Separately, both
-   stand-ins used the stdlib `ThreadingHTTPServer` backlog of 5, so a host fast
-   enough to reach the declared fresh-per-request connection rate had connections
-   refused, and the loss surfaced as subject transport errors against an absolute
-   zero-error gate rather than as a fixture limitation.
+   campaigns are now sized for the evidence they must carry. That same short
+   window then let the gated scenario decide its frozen 1500bps allowance on
+   ~100ms trials, where ordinary scheduling noise produced intermittent
+   same-source failures; its routine campaign is now measured nine times over
+   3000 requests, with the allowance and its minimum trial count unchanged,
+   while the live campaign stays at the 800 requests its hosted evidence was
+   established at, because a larger live campaign pushes each trial against
+   the measurement budget. Separately, both stand-ins used the stdlib
+   `ThreadingHTTPServer` backlog of 5, so a host fast enough to reach the
+   declared fresh-per-request connection rate had connections refused, and the
+   loss surfaced as subject transport errors against an absolute zero-error
+   gate rather than as a fixture limitation.
 
 5. **Medium, packaging (closed by hosted evidence).** `qualification/synvoid/v2/
    baselines/` was an empty directory, which git cannot track, so the routine

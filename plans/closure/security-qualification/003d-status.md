@@ -170,7 +170,7 @@ from host noise.
 
 ### Hosted evidence on the pushed head
 
-Live qualification run `36972886077` (`live-m003-linux`, `11c02373`) executed the
+Live qualification run `36989900894` (`live-m003-linux`, `2c25bfd`) executed the
 whole M003 stage group against the real pinned SynVoid and Eggsec binaries on a
 dedicated hosted runner: `pass=28 stopped=1 notexec=1`. Every M003d stage passed
 there — `m003d-1` materialized 8 baseline bundles and validated the perf
