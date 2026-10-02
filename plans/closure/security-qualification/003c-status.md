@@ -200,8 +200,8 @@ worked around in the consumer.
 
 Local terminal evidence is complete (`pass=30 stopped=0 notexec=0` on the exact
 pin above). Hosted evidence is pending on the exact closing revision
-(`129defd`): four-lane CI run `37053010752` plus the `live-m003-linux` job in
-live-workflow run `37053010711`. Once observed, their verdicts are appended
+(`871f572`): four-lane CI run `37053186040` plus the `live-m003-linux` job in
+live-workflow run `37053185694`. Once observed, their verdicts are appended
 here and this clause is struck.
 
 ## Relationship to M003d and M003
