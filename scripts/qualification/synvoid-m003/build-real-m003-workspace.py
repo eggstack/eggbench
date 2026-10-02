@@ -419,13 +419,17 @@ def main():
     plan(
         "body-gated-c8.json",
         "synvoid-m003-body-gated-c8-real",
-        http_corpus("synvoid", [[body_case, 800]], 8, "pooled", "corpus.json"),
+        http_corpus("synvoid", [[body_case, 3000]], 8, "pooled", "corpus.json"),
         gated_metrics(),
         63,
         # The only gated scenario carries the whole M003d performance claim, so
         # it is measured more often than the diagnostic scenarios: a narrower
         # bootstrap interval is what makes "pass" distinguishable from host
-        # noise on a shared runner.
+        # noise on a shared runner. The campaign is also long enough that a fast
+        # runner still measures seconds rather than tens of milliseconds, since
+        # a short window makes fixed per-trial overhead a large fraction of
+        # throughput and turns ordinary scheduling noise into a same-source
+        # failure against the frozen allowance.
         measured=9,
     )
     plan(
