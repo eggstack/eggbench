@@ -607,10 +607,11 @@ except (OSError, ValueError) as error:
     print(f"unreadable envelope: {error}")
     raise SystemExit(0)
 states = " ".join(
-    "{0}={1}/{2}".format(
+    "{0}={1}/{2}{3}".format(
         scenario["id"],
         scenario.get("status"),
         scenario.get("performance_verdict") or scenario.get("correctness_verdict") or "-",
+        "" if not scenario.get("reason") else " (" + str(scenario["reason"]) + ")",
     )
     for scenario in document.get("scenarios", [])
 )

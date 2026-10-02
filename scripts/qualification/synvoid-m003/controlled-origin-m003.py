@@ -121,7 +121,17 @@ def main():
     Handler.log_path = args.log_file
     Handler.delay_ms = args.delay_ms
     Handler.delay_signal_file = args.delay_signal_file
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    class _Server(ThreadingHTTPServer):
+        # The perf scenarios open pooled and fresh-per-request campaigns against
+        # this origin, and the performance regression makes it the bottleneck.
+        # The stdlib backlog of 5 turns that into refused connections, which the
+        # transport-error gate then reports as a subject failure instead of the
+        # intended origin degradation, so the backlog is sized above the offered
+        # concurrency.
+        request_queue_size = 512
+        daemon_threads = True
+
+    server = _Server(("127.0.0.1", args.port), Handler)
     sys.stderr.write("controlled origin on 127.0.0.1:%d\n" % args.port)
     try:
         server.serve_forever()
