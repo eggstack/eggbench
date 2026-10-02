@@ -105,8 +105,8 @@ participating in measured evidence, and a second security-owner execution path
    that revision, with `m003c-13b` passing. **Met**: `pass=30 stopped=0
    notexec=0` locally on the exact pin, harness exit 0.
 3. Green hosted four-lane CI and the `live-m003-linux` job on the exact closing
-   revision. **Pending**: CI run `37052879945` and live run `37052879959` on
-   `219f70e`, in flight when this record was committed. Pre-corrective
+   revision. **Pending**: CI run `37053010752` and live run `37053010711` on
+   `129defd`, in flight when this record was committed. Pre-corrective
    reference: CI `36972886787` was green on all four lanes, and the live
    job's only stop was `m003c-13b` (the job exits 10 by design when a stop
    fires).
