@@ -384,11 +384,14 @@ fn smoke_profile_passes_with_absolute_gates() {
     }
 }
 
-// This synthetic Python proxy's performance profile is meaningful on the
-// Linux qualification host only. macOS CI showed consistent relative-gate
-// failures across all proxy concurrency levels while direct-origin controls
-// passed; real-host repeatability is owned by the Linux C002 qualification.
-#[cfg(target_os = "linux")]
+// This synthetic Python proxy's performance profile now qualifies on every
+// qualification host: each scenario's baseline is measured adjacent to its own
+// candidate run, so a same-build pair compares arms that saw the same machine
+// conditions. The gate was previously Linux-only because macOS CI showed
+// consistent relative-gate failures across all proxy concurrency levels while
+// direct-origin controls passed; that was the baseline-to-candidate gap, not a
+// macOS property of the proxy, and real-host repeatability is still owned by
+// the Linux C002 qualification.
 #[test]
 fn perf_same_source_pair_never_fails() {
     let _lock = qualification_test_lock();
