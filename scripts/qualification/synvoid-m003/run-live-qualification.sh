@@ -384,10 +384,22 @@ fi
 # Optional owner sample absent in the minimal runtime: warned, never zeroed.
 OPTIONAL_BUNDLE="$WORK/suite-smoke/scenarios/synvoid-m003-target-telemetry-optional-c8.eggb"
 if [ ! -d "$OPTIONAL_BUNDLE" ]; then
-  "$EGGBENCH_BIN" run scenarios/telemetry-optional-c8.json "$WORK/optional.eggb" --json >/dev/null 2>&1
+  # The generated real workspace's smoke profile carries no optional-telemetry
+  # scenario, so materializing its bundle here is the normal path. Keep the
+  # command's output: a failure here is a harness precondition problem, and
+  # reporting it as a fabricated owner sample would blame the system under
+  # test for a broken setup.
+  "$EGGBENCH_BIN" run scenarios/telemetry-optional-c8.json "$WORK/optional.eggb" --json \
+    >"$WORK/optional-bundle.log" 2>&1
+  OPTIONAL_RC=$?
   OPTIONAL_BUNDLE="$WORK/optional.eggb"
+  if [ "$OPTIONAL_RC" -ne 0 ] || [ ! -d "$OPTIONAL_BUNDLE/trials" ]; then
+    verdict STOPPED "m003c-14 optional owner absence stays absent + warned" \
+      "optional bundle not measured: exit $OPTIONAL_RC $(tail -2 "$WORK/optional-bundle.log" | tr '\n' ' ')"
+    OPTIONAL_UNMEASURED=1
+  fi
 fi
-if python3 - "$OPTIONAL_BUNDLE" <<'PY'
+if [ -z "${OPTIONAL_UNMEASURED:-}" ] && python3 - "$OPTIONAL_BUNDLE" <<'PY'
 import json, os, sys
 bundle = sys.argv[1]
 trials = sorted(os.listdir(os.path.join(bundle, "trials")))
