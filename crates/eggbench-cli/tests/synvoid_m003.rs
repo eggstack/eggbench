@@ -380,6 +380,10 @@ fn profile_baselines(workspace: &Workspace) -> Vec<String> {
 
 /// Stage A of the baseline workflow: materialize every accepted-revision
 /// baseline bundle explicitly. There is no automatic baseline discovery.
+///
+/// Correctness-profile callers only need the bundles that profile references,
+/// and they are not performance-paired here, so the whole performance baseline
+/// set stays a single explicit pass.
 fn materialize_baselines(workspace: &Workspace) {
     for scenario in profile_baselines(workspace) {
         let output = workspace.run(&[
@@ -395,6 +399,163 @@ fn materialize_baselines(workspace: &Workspace) {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+/// One performance scenario measured as a temporally adjacent pair: its own
+/// baseline bundle, then its own candidate qualification.
+///
+/// The `statistical_relative` gate compares paired per-trial log differences,
+/// which is only a measurement of the candidate when both arms saw the same
+/// machine conditions. A whole-profile baseline pass followed by a whole-profile
+/// candidate pass separates the two arms of a scenario by the duration of the
+/// remaining suite. On a shared hosted runner that gap is minutes of
+/// uncontrolled load drift, and because the candidate arm always runs second the
+/// drift is attributed entirely to the candidate: the gate correctly reports a
+/// regression that is really the host. Adjacent pairing removes the gap without
+/// touching any gate, allowance, trial count, or assertion, so a real
+/// performance regression still fails exactly as before.
+struct PerfPair {
+    id: String,
+    plan: String,
+    part: std::path::PathBuf,
+    exit: Option<i32>,
+}
+
+impl PerfPair {
+    fn record(&self) -> Value {
+        scenario_record(&self.part, &self.id)
+    }
+
+    fn comparison(&self) -> Value {
+        read_json(
+            &self
+                .part
+                .join("scenarios")
+                .join(format!("{}.comparison.json", self.id)),
+        )
+    }
+
+    /// A passed or inconclusive pair; anything else is a regression verdict
+    /// that the scenario's own gate produced.
+    fn accepted(&self) -> bool {
+        matches!(self.exit, Some(0 | 7))
+    }
+}
+
+/// When an arm's baseline bundle is captured.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BaselineTiming {
+    /// Immediately before the candidate run it is compared against: the
+    /// adjacent pairing that keeps both arms in the same machine conditions.
+    Adjacent,
+    /// Every baseline is captured first, before the caller applies a
+    /// plan-invisible runtime fault. A throttled candidate must still be
+    /// compared against an unthrottled baseline, or the fault is invisible by
+    /// construction.
+    BeforeFault,
+}
+
+/// Qualify the whole performance profile one scenario at a time so each
+/// scenario's baseline is measured adjacent to its own candidate run.
+fn qualify_paired(
+    workspace: &Workspace,
+    label: &str,
+    timing: BaselineTiming,
+    before_candidates: impl FnOnce(),
+) -> Vec<PerfPair> {
+    let full = read_json(&workspace.path().join("perf.profile.json"));
+    let scenarios = full["scenarios"]
+        .as_array()
+        .expect("profile scenarios")
+        .clone();
+    let mut arms = Vec::new();
+    for scenario in scenarios {
+        let id = scenario["id"].as_str().expect("scenario id").to_owned();
+        let slug = id.strip_prefix("synvoid-m003-").unwrap_or(&id);
+        // Each arm gets its own baseline bundle: the arms are measured
+        // separately, and a later arm must never compare against a bundle an
+        // earlier arm wrote.
+        let mut entry = scenario.clone();
+        let baseline = format!("baselines/{label}-{slug}.eggb");
+        let gated = entry["baseline_bundle"].is_string();
+        if gated {
+            entry["baseline_bundle"] = Value::String(baseline.clone());
+        }
+        let single = serde_json::json!({
+            "schema_version": 2,
+            "id": format!("{label}-{slug}"),
+            "owner": "Eggbench Security Qualification M003 synthetic routine scope",
+            "scenarios": [entry],
+            "corpus": full["corpus"].clone(),
+            "target_config": full["target_config"].clone(),
+        });
+        let profile_name = format!("paired-{slug}.profile.json");
+        write_json(&workspace.path().join(&profile_name), &single);
+        let part = std::env::temp_dir().join(format!(
+            "eggbench-m003-{label}-{slug}-{}",
+            workspace.subject_port
+        ));
+        let plan = scenario["plan"].as_str().expect("scenario plan").to_owned();
+        arms.push((id, profile_name, part, gated, baseline, plan));
+    }
+    if timing == BaselineTiming::BeforeFault {
+        for (_, _, _, gated, baseline, plan) in &arms {
+            if !gated {
+                continue;
+            }
+            let output = workspace.run(&["run", plan, baseline, "--json"]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "baseline failed: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        // The fault lands between the clean baselines and the candidates.
+        before_candidates();
+    } else {
+        let _ = &before_candidates;
+    }
+    let mut pairs = Vec::new();
+    for (id, profile_name, part, gated, baseline, plan) in arms {
+        if gated && timing == BaselineTiming::Adjacent {
+            let output = workspace.run(&["run", &plan, &baseline, "--json"]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{id} baseline failed: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&part);
+        let output = workspace.run(&[
+            "qualify",
+            "run",
+            &profile_name,
+            "--output",
+            part.to_str().expect("utf-8 suite path"),
+            "--json",
+        ]);
+        pairs.push(PerfPair {
+            id,
+            plan,
+            part,
+            exit: output.status.code(),
+        });
+    }
+    pairs
+}
+
+fn paired_detail(pairs: &[PerfPair]) -> String {
+    let mut detail = String::new();
+    for pair in pairs.iter().filter(|pair| !pair.accepted()) {
+        detail.push_str(&failing_metric_detail(&pair.part));
+        detail.push('\n');
+    }
+    if detail.is_empty() {
+        detail.push_str("no failing metric disposition was recorded");
+    }
+    detail
 }
 
 #[test]
@@ -634,41 +795,33 @@ fn smoke_profile_qualifies_with_subject_telemetry_evidence() {
 fn perf_profile_baselines_are_explicit_and_repeatable() {
     let _guard = qualification_test_lock();
     let workspace = Workspace::new();
-    materialize_baselines(&workspace);
-    let suite = std::env::temp_dir().join(format!("eggbench-m003-perf-{}", workspace.subject_port));
-    let _ = std::fs::remove_dir_all(&suite);
-    let output = workspace.run(&[
-        "qualify",
-        "run",
-        "perf.profile.json",
-        "--output",
-        suite.to_str().expect("utf-8 suite path"),
-        "--json",
-    ]);
-    assert!(
-        matches!(output.status.code(), Some(0 | 7)),
-        "perf profile must pass or be inconclusive: {}{}",
-        String::from_utf8_lossy(&output.stderr),
-        failing_metric_detail(&suite)
-    );
-    let document = receipt(&suite);
-    assert!(document["aggregate_verdict"] != "fail", "{document}");
+    let pairs = qualify_paired(&workspace, "perf", BaselineTiming::Adjacent, || {});
+    for pair in &pairs {
+        assert!(
+            pair.accepted(),
+            "{id} must pass or be inconclusive: {detail}",
+            id = pair.id,
+            detail = paired_detail(&pairs),
+        );
+    }
     // Every performance scenario compared against an explicit accepted
     // baseline identity, and every metric stayed honest about its gate.
     for scenario in PERF_SCENARIOS {
         if scenario == "waf-correctness" {
-            let record = scenario_record(&suite, "synvoid-m003-correctness");
-            assert_eq!(record["correctness_verdict"], "pass");
+            let correctness = pairs
+                .iter()
+                .find(|pair| pair.id == "synvoid-m003-correctness")
+                .expect("correctness pair")
+                .record();
+            assert_eq!(correctness["correctness_verdict"], "pass");
             continue;
         }
-        let record =
-            find_record(&suite, &format!("synvoid-m003-{scenario}")).unwrap_or(Value::Null);
-        let record = if record.is_null() {
-            // The direct-origin control keeps its own scenario id.
-            scenario_record(&suite, "origin-m003-body-control-c8")
-        } else {
-            record
-        };
+        let plan = format!("scenarios/{scenario}.json");
+        let pair = pairs
+            .iter()
+            .find(|pair| pair.plan == plan)
+            .unwrap_or_else(|| panic!("profile qualifies {plan}"));
+        let record = pair.record();
         assert_eq!(record["status"], "completed", "{record}");
         assert!(
             record["baseline_bundle_identity"]["manifest_sha256"].is_string(),
@@ -678,8 +831,11 @@ fn perf_profile_baselines_are_explicit_and_repeatable() {
     }
     // Mixed/body performance metrics remain diagnostic until repeatability
     // justifies a reviewed gate.
-    let comparison =
-        read_json(&suite.join("scenarios/synvoid-m003-mixed-80-20-pooled-c8.comparison.json"));
+    let comparison = pairs
+        .iter()
+        .find(|pair| pair.id == "synvoid-m003-mixed-80-20-pooled-c8")
+        .expect("mixed pooled pair")
+        .comparison();
     let throughput = comparison["metrics"]
         .as_array()
         .expect("metrics")
@@ -765,63 +921,53 @@ fn correctness_only_regression_fails_despite_acceptable_performance() {
 fn performance_only_regression_fails_despite_correct_security_behavior() {
     let _guard = qualification_test_lock();
     let workspace = Workspace::new();
-    materialize_baselines(&workspace);
-    let suite = std::env::temp_dir().join(format!(
-        "eggbench-m003-performance-regression-{}",
-        workspace.subject_port
-    ));
-    let _ = std::fs::remove_dir_all(&suite);
-    let output = workspace.run(&[
-        "qualify",
-        "run",
-        "perf.profile.json",
-        "--output",
-        suite.to_str().expect("utf-8 suite path"),
-        "--json",
-    ]);
-    assert!(
-        matches!(output.status.code(), Some(0 | 7)),
-        "the accepted-revision perf profile must qualify before the regression: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        failing_metric_detail(&suite)
-    );
+    let accepted = qualify_paired(&workspace, "accepted", BaselineTiming::Adjacent, || {});
+    for pair in &accepted {
+        assert!(
+            pair.accepted(),
+            "the accepted-revision perf profile must qualify before the regression: {id}{detail}",
+            id = pair.id,
+            detail = paired_detail(&accepted),
+        );
+    }
     // The throttle lives outside the plan, so the comparison identity is
     // unchanged: a performance verdict, never incomparable drift.
-    workspace.set_delay_ms(10);
-    let regressed = std::env::temp_dir().join(format!(
-        "eggbench-m003-performance-regression-delayed-{}",
-        workspace.subject_port
-    ));
-    let _ = std::fs::remove_dir_all(&regressed);
-    let output = workspace.run(&[
-        "qualify",
-        "run",
-        "perf.profile.json",
-        "--output",
-        regressed.to_str().expect("utf-8 suite path"),
-        "--json",
-    ]);
+    // The regressed arm's baselines are captured before the throttle so the
+    // comparison is against an unthrottled baseline, then the throttled
+    // candidates are qualified against it.
+    let mut throttled = false;
+    let regressed = qualify_paired(&workspace, "regressed", BaselineTiming::BeforeFault, || {
+        workspace.set_delay_ms(10);
+        throttled = true;
+    });
+    assert!(throttled, "the regression arm applied its throttle");
     workspace.clear_delay_ms();
+    let gated = regressed
+        .iter()
+        .find(|pair| pair.id == "synvoid-m003-body-gated-c8")
+        .expect("body-gated pair");
     assert_eq!(
-        output.status.code(),
+        gated.exit,
         Some(6),
         "a performance-only regression must fail the suite: {}",
-        String::from_utf8_lossy(&output.stdout)
+        failing_metric_detail(&gated.part)
     );
-    let document = receipt(&regressed);
-    let correctness = scenario_record(&regressed, "synvoid-m003-correctness");
+    let correctness = regressed
+        .iter()
+        .find(|pair| pair.id == "synvoid-m003-correctness")
+        .expect("correctness pair");
+    let correctness = correctness.record();
     assert_eq!(
         correctness["correctness_verdict"], "pass",
         "owner security outcomes stay correct under a throttle"
     );
-    let gated = scenario_record(&regressed, "synvoid-m003-body-gated-c8");
+    let record = gated.record();
     assert_eq!(
-        gated["performance_verdict"], "fail",
-        "the throttled performance gate must fail: {gated}"
+        record["performance_verdict"], "fail",
+        "the throttled performance gate must fail: {record}"
     );
-    assert_eq!(gated["correctness_verdict"], Value::Null);
-    assert_eq!(gated["combined_verdict"], "fail");
-    assert_eq!(document["aggregate_verdict"], "fail");
+    assert_eq!(record["correctness_verdict"], Value::Null);
+    assert_eq!(record["combined_verdict"], "fail");
 }
 
 /// Assert a run that failed closed on required subject telemetry: no pass, no
