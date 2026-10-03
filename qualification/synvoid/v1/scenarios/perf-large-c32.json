@@ -74,7 +74,7 @@
       "kind": "none"
     },
     "timeouts": {
-      "measurement": 120000,
+      "measurement": 300000,
       "drain": 10000
     }
   },
