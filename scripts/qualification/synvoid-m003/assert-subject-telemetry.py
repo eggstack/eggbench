@@ -132,15 +132,14 @@ def main():
             value = state.get("value")
             if value is None:
                 fail("required subject metric %s has no value" % name)
-            if name not in seen_gauge:
-                continue
-            if name in args.allow_zero_gauge:
-                # A health gauge is populated when it reports a valid
-                # reading; zero is the honest value for a never-late loop.
-                if value >= 0.0:
+            if name in seen_gauge:
+                if name in args.allow_zero_gauge:
+                    # A health gauge is populated when it reports a valid
+                    # reading; zero is the honest value for a never-late loop.
+                    if value >= 0.0:
+                        seen_gauge[name] = True
+                elif value > 0.0:
                     seen_gauge[name] = True
-            elif value > 0.0:
-                seen_gauge[name] = True
             if name in seen_counter and value >= 0.0:
                 seen_counter[name] = True
         for name in args.expect_optional_absent:
