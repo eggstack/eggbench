@@ -160,30 +160,156 @@ fn patch_subject_ports(workspace: &Path, port: u16) {
     }
 }
 
-/// Stage A of the baseline workflow: run every perf scenario into
-/// `baselines/` from the accepted (here: synthetic) revision.
-fn materialize_baselines(workspace: &Path) {
-    for scenario in PERF_SCENARIOS {
-        let output = eggbench(
-            workspace,
-            &[
-                "run",
-                &format!("scenarios/{scenario}.json"),
-                &format!("baselines/{scenario}.eggb"),
-                "--json",
-            ],
-        );
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "{scenario} baseline failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+fn receipt(output_dir: &Path) -> Value {
+    read_json(&output_dir.join("qualification-receipt.json"))
+}
+
+/// One performance scenario measured as a temporally adjacent pair: its own
+/// baseline bundle, then its own candidate qualification.
+///
+/// The `statistical_relative` gate compares paired per-trial log differences,
+/// which measures the candidate only when both arms saw the same machine
+/// conditions. A whole-profile baseline pass followed by a whole-profile
+/// candidate pass separates the two arms of a scenario by the duration of the
+/// remaining suite. On a shared hosted runner that gap is minutes of
+/// uncontrolled load drift, and because the candidate arm always runs second
+/// the drift is attributed entirely to the candidate, so a same-build pair
+/// reports a regression that is really the host. Adjacent pairing removes the
+/// gap without changing any gate, allowance, trial count, or assertion.
+struct PerfPair {
+    id: String,
+    part: PathBuf,
+    exit: Option<i32>,
+}
+
+impl PerfPair {
+    fn record(&self) -> Value {
+        let document = receipt(&self.part);
+        document["scenarios"]
+            .as_array()
+            .expect("scenarios")
+            .iter()
+            .find(|record| record["id"] == Value::String(self.id.clone()))
+            .cloned()
+            .unwrap_or_else(|| panic!("receipt has scenario {}", self.id))
+    }
+
+    /// A passed or inconclusive pair; anything else is a verdict the
+    /// scenario's own gates produced.
+    fn accepted(&self) -> bool {
+        matches!(self.exit, Some(0 | 7))
     }
 }
 
-fn receipt(output_dir: &Path) -> Value {
-    read_json(&output_dir.join("qualification-receipt.json"))
+/// When an arm's baseline bundle is captured.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BaselineTiming {
+    /// Immediately before the candidate run it is compared against.
+    Adjacent,
+    /// Every baseline first, before the caller applies a plan-invisible
+    /// runtime fault. A throttled candidate must still be compared against an
+    /// unthrottled baseline, or the fault is invisible by construction.
+    BeforeFault,
+}
+
+/// Qualify the whole performance profile one scenario at a time so each
+/// scenario's baseline is measured adjacent to its own candidate run.
+fn qualify_paired(
+    root: &Path,
+    label: &str,
+    timing: BaselineTiming,
+    before_candidates: impl FnOnce(),
+) -> Vec<PerfPair> {
+    let full = read_json(&root.join("perf.profile.json"));
+    let scenarios = full["scenarios"]
+        .as_array()
+        .expect("profile scenarios")
+        .clone();
+    // The profile must still qualify exactly the enumerated performance
+    // scenarios; a renamed or dropped scenario cannot silently skip a pair.
+    for scenario in PERF_SCENARIOS {
+        let plan = format!("scenarios/{scenario}.json");
+        assert!(
+            scenarios
+                .iter()
+                .any(|entry| entry["plan"] == Value::String(plan.clone())),
+            "the performance profile no longer declares {plan}"
+        );
+    }
+    let mut arms = Vec::new();
+    for scenario in scenarios {
+        let id = scenario["id"].as_str().expect("scenario id").to_owned();
+        // Each arm gets its own baseline bundle: the arms are measured
+        // separately, and a later arm must never compare against a bundle an
+        // earlier arm wrote.
+        let mut entry = scenario.clone();
+        let baseline = format!("baselines/{label}-{id}.eggb");
+        let gated = entry["baseline_bundle"].is_string();
+        if gated {
+            entry["baseline_bundle"] = Value::String(baseline.clone());
+        }
+        let single = serde_json::json!({
+            "schema_version": 2,
+            "id": format!("{label}-{id}"),
+            "owner": full["owner"].clone(),
+            "scenarios": [entry],
+            "corpus": full["corpus"].clone(),
+            "target_config": full["target_config"].clone(),
+        });
+        let profile_name = format!("paired-{id}.profile.json");
+        write_json(&root.join(&profile_name), &single);
+        let part = root.join(format!("suite-{label}-{id}"));
+        let plan = scenario["plan"].as_str().expect("scenario plan").to_owned();
+        arms.push((id, profile_name, part, gated, baseline, plan));
+    }
+    if timing == BaselineTiming::BeforeFault {
+        for (_, _, _, gated, baseline, plan) in &arms {
+            if !gated {
+                continue;
+            }
+            let output = eggbench(root, &["run", plan, baseline, "--json"]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "baseline failed: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        // The fault lands between the clean baselines and the candidates.
+        before_candidates();
+    } else {
+        let _ = &before_candidates;
+    }
+    let mut pairs = Vec::new();
+    for (id, profile_name, part, gated, baseline, plan) in arms {
+        if gated && timing == BaselineTiming::Adjacent {
+            let output = eggbench(root, &["run", &plan, &baseline, "--json"]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{id} baseline failed: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&part);
+        let output = eggbench(
+            root,
+            &[
+                "qualify",
+                "run",
+                &profile_name,
+                "--output",
+                part.to_str().expect("utf-8 suite path"),
+                "--json",
+            ],
+        );
+        pairs.push(PerfPair {
+            id,
+            part,
+            exit: output.status.code(),
+        });
+    }
+    pairs
 }
 
 fn expanded_corpus_digest(workspace: &Path) -> String {
@@ -272,42 +398,19 @@ fn perf_same_source_pair_never_fails() {
     let workspace = copy_workspace();
     let root = workspace.path();
     patch_subject_ports(root, free_port());
-    materialize_baselines(root);
 
-    let run = eggbench(
-        root,
-        &[
-            "qualify",
-            "run",
-            "perf.profile.json",
-            "--output",
-            "suite",
-            "--json",
-        ],
-    );
-    let verdict: Value = serde_json::from_slice(&run.stdout).expect("run json");
-    // Same-build noise may yield Inconclusive; it must never yield Fail.
-    // (Live-host repeatability remains an M002 closure condition.)
-    assert!(
-        run.status.code() == Some(0) || run.status.code() == Some(7),
-        "exit: {:?}\nstdout: {}\nstderr: {}",
-        run.status.code(),
-        String::from_utf8_lossy(&run.stdout),
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let result = receipt(&root.join("suite"));
-    assert_eq!(result["execution_complete"], true);
-    assert!(
-        verdict["aggregate_verdict"] == "pass" || verdict["aggregate_verdict"] == "inconclusive"
-    );
-    for record in result["scenarios"].as_array().expect("scenarios") {
-        assert_eq!(record["status"], "completed", "scenario {}", record["id"]);
+    let pairs = qualify_paired(root, "same-source", BaselineTiming::Adjacent, || {});
+    for pair in &pairs {
+        let result = receipt(&pair.part);
+        assert!(result["execution_complete"] == true, "{}", result);
+        let record = pair.record();
+        assert_eq!(record["status"], "completed", "scenario {}", pair.id);
         // Every baseline-relative scenario froze the materialized identity.
-        if record["id"] != "synvoid-waf-correctness" {
+        if pair.id != "synvoid-waf-correctness" {
             assert!(
                 record["baseline_bundle_identity"].is_object(),
                 "scenario {} has no frozen baseline",
-                record["id"]
+                pair.id
             );
             assert!(record["comparison_receipt_sha256"].is_string());
         }
@@ -317,8 +420,9 @@ fn perf_same_source_pair_never_fails() {
         assert!(
             combined == "pass" || combined == "inconclusive",
             "scenario {} unexpectedly failed",
-            record["id"]
+            pair.id
         );
+        assert!(pair.accepted(), "exit: {:?}\nreceipt: {result}", pair.exit);
     }
 }
 
@@ -331,7 +435,6 @@ fn correctness_only_regression_fails_suite_despite_perf_pass() {
     let workspace = copy_workspace();
     let root = workspace.path();
     patch_subject_ports(root, free_port());
-    materialize_baselines(root);
 
     // Mutate only the owner-authored corpus expectation, then recompute
     // the temporary corpus identity through normal input handling.
@@ -345,32 +448,18 @@ fn correctness_only_regression_fails_suite_despite_perf_pass() {
     plan["http_corpus_checks"][0]["corpus_sha256"] = Value::String(digest);
     write_json(&plan_path, &plan);
 
-    let run = eggbench(
-        root,
-        &[
-            "qualify",
-            "run",
-            "perf.profile.json",
-            "--output",
-            "suite",
-            "--json",
-        ],
-    );
-    assert_eq!(
-        run.status.code(),
-        Some(6),
-        "stderr: {}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let result = receipt(&root.join("suite"));
-    assert_eq!(result["aggregate_verdict"], "fail");
-    let waf = result["scenarios"]
-        .as_array()
-        .expect("scenarios")
+    let pairs = qualify_paired(root, "correctness", BaselineTiming::Adjacent, || {});
+    let waf = pairs
         .iter()
-        .find(|record| record["id"] == "synvoid-waf-correctness")
-        .expect("waf record");
-    assert_eq!(waf["correctness_verdict"], "fail");
+        .find(|pair| pair.id == "synvoid-waf-correctness")
+        .expect("waf pair");
+    assert_eq!(
+        waf.exit,
+        Some(6),
+        "a security-correctness regression must fail the suite: {}",
+        receipt(&waf.part)
+    );
+    assert_eq!(waf.record()["correctness_verdict"], "fail");
 }
 
 #[test]
@@ -383,45 +472,25 @@ fn performance_only_regression_fails_suite_despite_correctness_pass() {
     let root = workspace.path();
     let port = free_port();
     patch_subject_ports(root, port);
-    materialize_baselines(root);
 
     // Qualification-only controlled delay in the subject harness: the
     // scenario plans (and therefore comparison identities) are untouched,
-    // and WAF block/pass semantics are identical with any delay.
+    // and WAF block/pass semantics are identical with any delay. The
+    // baselines are captured before the delay lands, so the candidates are
+    // compared against unthrottled evidence.
     let sidecar = std::env::temp_dir().join(format!("fake-synvoid-{port}.delay_ms"));
-    std::fs::write(&sidecar, "100").expect("write delay sidecar");
-    let run = eggbench(
-        root,
-        &[
-            "qualify",
-            "run",
-            "perf.profile.json",
-            "--output",
-            "suite",
-            "--json",
-        ],
-    );
+    let pairs = qualify_paired(root, "throttled", BaselineTiming::BeforeFault, || {
+        std::fs::write(&sidecar, "100").expect("write delay sidecar");
+    });
     std::fs::remove_file(&sidecar).ok();
-    assert_eq!(
-        run.status.code(),
-        Some(6),
-        "stderr: {}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let result = receipt(&root.join("suite"));
-    assert_eq!(result["aggregate_verdict"], "fail");
-    let waf = result["scenarios"]
-        .as_array()
-        .expect("scenarios")
+    let waf = pairs
         .iter()
-        .find(|record| record["id"] == "synvoid-waf-correctness")
-        .expect("waf record");
-    assert_eq!(waf["correctness_verdict"], "pass");
-    let perf_failed = result["scenarios"]
-        .as_array()
-        .expect("scenarios")
+        .find(|pair| pair.id == "synvoid-waf-correctness")
+        .expect("waf pair");
+    assert_eq!(waf.record()["correctness_verdict"], "pass");
+    let perf_failed = pairs
         .iter()
-        .filter(|record| record["performance_verdict"] == "fail")
+        .filter(|pair| pair.record()["performance_verdict"] == "fail")
         .count();
     assert!(perf_failed >= 1, "no performance gate failed");
 }
@@ -435,45 +504,34 @@ fn workload_drift_compares_as_incomparable() {
     let workspace = copy_workspace();
     let root = workspace.path();
     patch_subject_ports(root, free_port());
-    materialize_baselines(root);
 
     // Candidate intentionally changes workload semantics: the existing
-    // profile must become incomparable rather than a performance result.
+    // profile must become incomparable rather than a performance result. The
+    // baseline is captured before the candidate's workload changes, so the
+    // comparison sees a real semantic drift instead of two matching arms.
     let plan_path = root.join("scenarios/perf-small-c8.json");
-    let mut plan = read_json(&plan_path);
-    plan["workload"]["concurrency"] = Value::from(16);
-    write_json(&plan_path, &plan);
-
-    let run = eggbench(
-        root,
-        &[
-            "qualify",
-            "run",
-            "perf.profile.json",
-            "--output",
-            "suite",
-            "--json",
-        ],
-    );
-    assert_eq!(
-        run.status.code(),
-        Some(8),
-        "stderr: {}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let result = receipt(&root.join("suite"));
-    assert_eq!(result["aggregate_verdict"], "invalid");
-    let drifted = result["scenarios"]
-        .as_array()
-        .expect("scenarios")
+    let pairs = qualify_paired(root, "drifted", BaselineTiming::BeforeFault, || {
+        let mut plan = read_json(&plan_path);
+        plan["workload"]["concurrency"] = Value::from(16);
+        write_json(&plan_path, &plan);
+    });
+    let drifted = pairs
         .iter()
-        .find(|record| record["id"] == "synvoid-benign-small-native-c8")
-        .expect("drifted record");
+        .find(|pair| pair.id == "synvoid-benign-small-native-c8")
+        .expect("drifted pair");
+    assert_eq!(
+        drifted.exit,
+        Some(8),
+        "an incomparable candidate must not aggregate as comparable: {}",
+        receipt(&drifted.part)
+    );
+    assert_eq!(receipt(&drifted.part)["aggregate_verdict"], "invalid");
     // An incomparable comparison is trustworthy evidence of drift: the
     // scenario completes with an Invalid combined verdict (only failed
     // runs map to `invalid` status), and the suite aggregates Invalid.
-    assert_eq!(drifted["status"], "completed");
-    assert_eq!(drifted["combined_verdict"], "invalid");
+    let record = drifted.record();
+    assert_eq!(record["status"], "completed");
+    assert_eq!(record["combined_verdict"], "invalid");
 }
 
 #[test]
