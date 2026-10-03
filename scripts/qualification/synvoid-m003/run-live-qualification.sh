@@ -65,6 +65,13 @@ TELEMETRY_ASSERT="$HERE/assert-subject-telemetry.py"
 ORIGIN_PY="$HERE/controlled-origin-m003.py"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/m003-live-qual.XXXXXX")"
+# Stopped stages name the log that explains them, but $WORK is removed on exit,
+# so those references pointed at a file that no longer existed. Retain the
+# bounded per-stage driver output in a stable directory the caller can keep and
+# upload. Only small text/JSON evidence is copied, never a bundle or trial set.
+DIAGNOSTICS="${DIAGNOSTICS_DIR:-$REPO/m003-live-diagnostics}"
+rm -rf "$DIAGNOSTICS"
+mkdir -p "$DIAGNOSTICS"
 PIDS=""
 cleanup() {
   # shellcheck disable=SC2086
@@ -74,8 +81,15 @@ cleanup() {
   for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
   rm -f "$WORK"/ws*/origin-delay-ms 2>/dev/null || true
   if [ "${KEEP_WORK:-0}" != "1" ]; then rm -rf "$WORK"; else echo "work kept at $WORK"; fi
+  echo "retained stage diagnostics: $DIAGNOSTICS"
 }
 trap cleanup EXIT
+
+# Retain one bounded stage artifact under a stable name.
+retain() {
+  [ -f "$1" ] || return 0
+  cp "$1" "$DIAGNOSTICS/$2" 2>/dev/null || true
+}
 
 pass=0; stopped=0; notexec=0
 verdict() { # $1 = PASS|STOPPED|NOT-EXECUTED, $2 = label, $3 = detail
@@ -256,13 +270,21 @@ python3 "$BUILDER" --export "$EXPORT" --workspace "$WS" --listen-port "$LPORT" \
   --origin-port "$OPORT" --metrics-port "$MPORT" --synvoid "$SYNBIN" \
   --config "$EXPORT/config" --policy "$POLICY_ID" --git-sha "$SYNVOID_PIN" \
   --mapping-sha256 "$MAPPING_SHA256" --poll-interval-ms "$POLL_INTERVAL_MS" \
-  >"$WORK/workspace-build.log" 2>&1 \
-  && verdict PASS "m003c-8 real M003 workspace built" "$(tail -1 "$WORK/workspace-build.log")" \
-  || { verdict STOPPED "m003c-8 real M003 workspace built" "see $WORK/workspace-build.log"; exit 10; }
+  >"$WORK/workspace-build.log" 2>&1
+retain "$WORK/workspace-build.log" m003c-8-workspace-build.log
+if [ -s "$WORK/workspace-build.log" ]; then
+  verdict PASS "m003c-8 real M003 workspace built" "$(tail -1 "$WORK/workspace-build.log")"
+else
+  verdict STOPPED "m003c-8 real M003 workspace built" "see retained m003c-8-workspace-build.log"; exit 10
+fi
 
-( cd "$WS" && python3 "$RESOLVER" --workspace "$WS" ) >"$WORK/identities.log" 2>&1 \
-  && verdict PASS "m003c-9 content identities resolved" "$(grep -c identity "$WORK/identities.log") inputs pinned" \
-  || { verdict STOPPED "m003c-9 content identities resolved" "see $WORK/identities.log"; exit 10; }
+( cd "$WS" && python3 "$RESOLVER" --workspace "$WS" ) >"$WORK/identities.log" 2>&1
+retain "$WORK/identities.log" m003c-9-identities.log
+if grep -q identity "$WORK/identities.log"; then
+  verdict PASS "m003c-9 content identities resolved" "$(grep -c identity "$WORK/identities.log") inputs pinned"
+else
+  verdict STOPPED "m003c-9 content identities resolved" "see retained m003c-9-identities.log"; exit 10
+fi
 
 # The owner mapping bytes in the workspace must be the checked-in fixture
 # byte-for-byte: Eggbench consumes the owner artifact, not a translation. The
@@ -343,6 +365,7 @@ cd "$WS" || exit 10
 ss -Hltn | awk '{print $4}' | sort -u >"$WORK/listeners-before.txt"
 "$EGGBENCH_BIN" qualify run smoke.profile.json --output "$WORK/suite-smoke" --json >"$WORK/suite-smoke.json" 2>&1
 SMOKE_RC=$?
+retain "$WORK/suite-smoke.json" m003c-12-smoke.json
 ss -Hltn | awk '{print $4}' | sort -u >"$WORK/listeners-after.txt"
 if [ "$SMOKE_RC" -eq 0 ] || [ "$SMOKE_RC" -eq 7 ]; then
   "$EGGBENCH_BIN" qualify inspect "$WORK/suite-smoke/qualification-receipt.json" --json >/dev/null 2>&1 \
@@ -381,11 +404,13 @@ if python3 "$TELEMETRY_ASSERT" "${TELEMETRY_COMMON[@]}" >"$WORK/telemetry-eviden
 else
   verdict STOPPED "m003c-13 subject telemetry evidence satisfies the owner contract" "$(tail -2 "$WORK/telemetry-evidence.log")"
 fi
+retain "$WORK/telemetry-evidence.log" m003c-13-telemetry-evidence.log
 if python3 "$TELEMETRY_ASSERT" "${TELEMETRY_COMMON[@]}" --require-live-values \
      >"$WORK/telemetry-values.log" 2>&1; then
+  retain "$WORK/telemetry-values.log" m003c-13b-telemetry-values.log
   verdict PASS "m003c-13b required subject series carry live owner values" "$(tail -1 "$WORK/telemetry-values.log")"
 else
-  verdict STOPPED "m003c-13b required subject series carry live owner values (upstream: synvoid@$SYNVOID_PIN publishes the v2 inventory at zero; supervisor/ipc.rs has no UnifiedServerWorkerHeartbeat dispatch arm)" "$(tail -2 "$WORK/telemetry-values.log")"
+  verdict STOPPED "m003c-13b required subject series carry live owner values (owner: synvoid@$SYNVOID_PIN; see retained m003c-13b-telemetry-values.log)" "$(tail -2 "$WORK/telemetry-values.log")"
 fi
 
 # Optional owner sample absent in the minimal runtime: warned, never zeroed.
@@ -399,6 +424,7 @@ if [ ! -d "$OPTIONAL_BUNDLE" ]; then
   "$EGGBENCH_BIN" run scenarios/telemetry-optional-c8.json "$WORK/optional.eggb" --json \
     >"$WORK/optional-bundle.log" 2>&1
   OPTIONAL_RC=$?
+  retain "$WORK/optional-bundle.log" m003c-14-optional-bundle.log
   OPTIONAL_BUNDLE="$WORK/optional.eggb"
   if [ "$OPTIONAL_RC" -ne 0 ] || [ ! -d "$OPTIONAL_BUNDLE/trials" ]; then
     verdict STOPPED "m003c-14 optional owner absence stays absent + warned" \
@@ -451,6 +477,7 @@ PY
 python3 "$RESOLVER" --workspace "$WS" --repin >/dev/null 2>&1
 "$EGGBENCH_BIN" run scenarios/telemetry-pressure-c8.json "$WORK/drift-missing.eggb" --json >"$WORK/drift-missing.json" 2>&1
 DRIFT_RC=$?
+retain "$WORK/drift-missing.json" m003c-16-drift-missing.json
 if [ "$DRIFT_RC" -ne 0 ] && grep -q "required_metric_missing" "$WORK/drift-missing.json" \
    && [ ! -d "$WORK/drift-missing.eggb/trials" ]; then
   verdict PASS "m003c-16 renamed required owner metric fails closed" "no measured trials published"
@@ -591,9 +618,11 @@ if git clone -q "$EGGSEC_REPO" "$EGGSRC" >/dev/null 2>&1 \
   "$EGGBENCH_BIN" run scenarios/eggsec-benign-body-c8.json "$WORK/eggsec-benign.eggb" \
       --workload-driver eggsec-load --json >"$WORK/eggsec-benign.json" 2>&1
   BENIGN_RC=$?
+retain "$WORK/eggsec-benign.json" m003d-6-eggsec-benign.json
   "$EGGBENCH_BIN" run scenarios/eggsec-blocked-c8.json "$WORK/eggsec-blocked.eggb" \
       --workload-driver eggsec-load --json >"$WORK/eggsec-blocked.json" 2>&1
   BLOCKED_RC=$?
+retain "$WORK/eggsec-blocked.json" m003d-6-eggsec-blocked.json
   if [ "$BENIGN_RC" -eq 0 ] && [ "$BLOCKED_RC" -eq 0 ]; then
     verdict PASS "m003d-6 Eggsec strict-scope load (benign body + blocked case)" "expected status outcomes, not transport errors"
   else
@@ -631,6 +660,7 @@ rm -f origin-delay-ms
 echo "$ORIGIN_DELAY_MS" > origin-delay-ms
 "$EGGBENCH_BIN" qualify run perf.profile.json --output "$WORK/suite-performance-regression" --json >"$WORK/perf-regression.json" 2>&1
 PERFORMANCE_RC=$?
+retain "$WORK/perf-regression.json" m003d-8-perf-regression.json
 rm -f origin-delay-ms
 # A stopped stage must say which scenario ended up in what state, otherwise the
 # only evidence is an exit code that does not identify the cause.

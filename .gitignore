@@ -1,1 +1,4 @@
 /target/
+
+# Bounded per-stage driver output retained by the M003 live harness.
+m003-live-diagnostics/

@@ -145,3 +145,13 @@ jobs:
           name: live-m003-qualification-log
           path: live-m003-qualification.log
           retention-days: 30
+      # Stopped stages name the evidence that explains them, so that evidence
+      # has to outlive the harness's temporary work directory.
+      - name: Upload retained stage diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-m003-stage-diagnostics
+          path: m003-live-diagnostics
+          if-no-files-found: warn
+          retention-days: 30
