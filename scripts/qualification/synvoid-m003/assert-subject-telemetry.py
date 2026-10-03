@@ -14,6 +14,17 @@ the required series rather than publishing inventory at zero. That is an
 owner-side property, so a failure here is an upstream finding, not a consumer
 defect; the harness reports it separately from the contract shape.
 
+That claim is classified per metric, because "populated" is not the same
+question for every series. A workload-derived gauge such as in-flight active
+connections is only populated if it actually rose, so it must exceed zero. A
+health gauge such as event-loop lag is populated when it reports a valid
+reading, and zero is the correct reading for an event loop that was never
+late: demanding a non-zero lag would fail a healthy subject and misreport it
+as an unpopulated series. `--positive-gauge` names the former class and
+`--allow-zero-gauge` the latter. Any required gauge left unclassified keeps the
+strict must-exceed-zero rule, so refining the classification can never silently
+weaken a series that nobody reasoned about.
+
 Usage:
   assert-subject-telemetry.py --bundle <eggb> --mapping-sha256 <hex>
       [--require-gauge <name>] [--require-counter <name>]
@@ -66,6 +77,18 @@ def main():
     parser.add_argument("--expect-optional-absent", action="append", default=[])
     parser.add_argument("--min-samples", type=int, default=2)
     parser.add_argument("--require-live-values", action="store_true")
+    parser.add_argument(
+        "--positive-gauge",
+        action="append",
+        default=[],
+        help="required gauge that must exceed zero under load",
+    )
+    parser.add_argument(
+        "--allow-zero-gauge",
+        action="append",
+        default=[],
+        help="required health gauge whose zero reading is valid",
+    )
     args = parser.parse_args()
 
     trial_dirs = trials(args.bundle)
@@ -109,7 +132,14 @@ def main():
             value = state.get("value")
             if value is None:
                 fail("required subject metric %s has no value" % name)
-            if name in seen_gauge and value > 0.0:
+            if name not in seen_gauge:
+                continue
+            if name in args.allow_zero_gauge:
+                # A health gauge is populated when it reports a valid
+                # reading; zero is the honest value for a never-late loop.
+                if value >= 0.0:
+                    seen_gauge[name] = True
+            elif value > 0.0:
                 seen_gauge[name] = True
             if name in seen_counter and value >= 0.0:
                 seen_counter[name] = True
@@ -121,7 +151,13 @@ def main():
 
     if args.require_live_values:
         for name, observed in seen_gauge.items():
-            if not observed:
+            if observed:
+                continue
+            if name in args.allow_zero_gauge:
+                fail(
+                    "owner published required health gauge %s with no valid reading" % name
+                )
+            else:
                 fail(
                     "owner published required gauge %s at zero for every trial" % name
                 )

@@ -368,7 +368,14 @@ TELEMETRY_COMMON=(--bundle "$TELEMETRY_BUNDLE" --mapping-sha256 "$MAPPING_IDENTI
   --require-gauge subject_active_connections
   --require-counter subject_body_buffering_bytes_total
   --require-counter subject_offload_rejections_total
-  --min-samples 4)
+  --min-samples 4
+  # "Populated" is per metric class. In-flight active connections only exist
+  # if connections were actually open, so a zero there is an unpopulated
+  # series. Event-loop lag is a health reading whose correct value is zero
+  # whenever the loop was never late, so requiring a non-zero lag would fail a
+  # healthy subject and misreport it upstream.
+  --positive-gauge subject_active_connections
+  --allow-zero-gauge subject_event_loop_lag_ms)
 if python3 "$TELEMETRY_ASSERT" "${TELEMETRY_COMMON[@]}" >"$WORK/telemetry-evidence.log" 2>&1; then
   verdict PASS "m003c-13 subject telemetry evidence satisfies the owner contract" "$(tail -1 "$WORK/telemetry-evidence.log")"
 else
