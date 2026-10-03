@@ -143,8 +143,7 @@ is traceable from the consumer side):
 
 None of these touched the contract, mapping, names, units, cadence, WAF
 semantics, or any Eggbench assertion. Hosted evidence (four-lane CI +
-`live-m003-linux`) is recorded below once observed on the exact closing
-revision.
+`live-m003-linux`) is recorded below on the exact closing revision.
 
 ## Unresolved finding (was blocking; now resolved downstream)
 
@@ -196,13 +195,71 @@ behaves correctly. Closing this gate requires an owner revision whose supervisor
 dispatches the unified-server heartbeat; it is not Eggbench work and must not be
 worked around in the consumer.
 
+## Hosted terminal evidence (exact-head)
+
+Both acceptance gates are green on the same closing revision
+`30a38251bccb5157beb68202ffe630f6253771e0`, with the owner pin at
+`1338ce7b60f3793701091b4c329f80eb542f802d`:
+
+- four-lane CI run `37143714313` — `linux-stable`, `linux-msrv`,
+  `windows-stable`, and `macos-stable` all `success`;
+- live external-tool qualification run `37143714261` — `live-tools-linux`,
+  `live-synvoid-linux`, `live-eggsec-linux`, `live-m004b-linux`, and
+  `live-m003-linux` all `success`;
+- `live-m003-linux` harness summary: `pass=29 stopped=0 notexec=1`, where the
+  single `NOT-EXECUTED` is `m003d-4` because `oha` is not installed on the
+  hosted runner, an external-tool availability condition rather than a verdict;
+- `m003c-13b required subject series carry live owner values` **PASS** on the
+  real pinned owner, and `m003c-13`, `m003c-14`, `m003d-2`, `m003d-6`,
+  `m003d-7`, and `m003d-8` all pass in the same run;
+- minimal owner binary built by the harness:
+  `6a9a169236b24656f4d853fca914ce0ecbe9d49e42273fe6ba929a66d62f0870`.
+
+### What it took to make the hosted evidence green
+
+Three real defects in Eggbench's own measurement and reporting had to be fixed
+before the owner's corrected telemetry could be observed as correct. Each is
+recorded in the repository history with its own test evidence.
+
+1. **Baseline/candidate arms a suite apart.** The performance profiles
+   materialized every baseline, then ran one whole-profile candidate pass, so a
+   scenario's two arms were separated by the rest of the suite and the candidate
+   arm always ran second. On a shared runner the drift in that gap was attributed
+   entirely to the candidate: macOS reported ~0.7 degradation for byte-identical
+   code, and the same-build pair failed. The profiles now qualify one scenario at
+   a time with each baseline immediately before its own candidate run. No gate,
+   allowance, trial count, or assertion changed; the 10 ms and 100 ms
+   plan-invisible throttles still fail their gates, correctness regressions
+   still fail the suite, and a workload-concurrency change is still reported
+   incomparable.
+2. **`m003c-13b` demanded a non-zero health gauge.** The live-value check
+   required every required gauge to exceed `0.0`, but `event_loop_lag_ms` is a
+   health reading whose correct value is zero whenever the loop was never late.
+   A healthy subject was therefore reported upstream as an unpopulated series,
+   intermittently, depending on runner load. The check is now classified per
+   metric: in-flight `active_connections` must exceed zero, a health gauge only
+   has to report a valid reading, and any unclassified required gauge keeps the
+   strict rule. The reader was differentially verified to be identical on all 27
+   unflagged zero/non-zero/missing value combinations.
+3. **Stopped stages pointed at deleted evidence.** Every "see
+   `$WORK/<log>`" reference named a file the harness removed on exit, so a stop
+   was only ever an exit code. The bounded per-stage driver output is now
+   retained and uploaded as `live-m003-stage-diagnostics`, and the `m003c-13b`
+   stop text no longer names a dispatch arm the corrected owner already routes.
+
+A fourth change is a portability bound rather than a defect: the v1 perf,
+control, and smoke scenarios' per-trial measurement bound moved from 120 s to
+300 s after macOS finalized a baseline with `primary_failure TimedOut`. The
+bound exists to stop a hung run, not to express a speed target. The oracle
+scenarios keep their own 60 s bound and the v2 profile is untouched. This
+follows the M002 C001 precedent, which replaced a 500 ms readiness bound with a
+bounded retry after macOS slow binds produced spurious transport failures.
+
 ## Remaining condition
 
-Local terminal evidence is complete (`pass=30 stopped=0 notexec=0` on the exact
-pin above). Hosted evidence is pending on the exact closing revision
-(`871f572`): four-lane CI run `37053186040` plus the `live-m003-linux` job in
-live-workflow run `37053185694`. Once observed, their verdicts are appended
-here and this clause is struck.
+None. Local terminal evidence and exact-head hosted evidence are both complete
+on the corrected owner, so the clause that gated this record on an upstream
+defect is discharged.
 
 ## Relationship to M003d and M003
 

@@ -422,7 +422,7 @@ Ordered implementation decomposition:
    Closure: `plans/closure/security-qualification/003c-status.md` — **CLOSED** (corrected owner `1338ce7b`). Generic bounded Prometheus collector (`2742e0e`) plus the `TelemetryPreflightTiming` probe-point seam, bounded polling drain, cadence-aware preflight retry, and fail-closed negatives. Live evidence against the real pinned minimal SynVoid: `m003c-13` collected 3 trials × 20 in-window samples of the owner mapping with required fields observed; renamed-metric and TYPE-drift runs fail closed; optional owner samples stay absent and warned. The formerly blocked gate `m003c-13b` now passes (`subject_active_connections = 8.0`, `subject_event_loop_lag_ms = 1.0`); the harness was never weakened.
 4. **M003d — Eggsec load profiles, live qualification, and M003 closure**  
    `plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md`  
-   Closure: `plans/closure/security-qualification/003d-status.md` — **closed (re-verified with the corrected owner `1338ce7b` in the terminal `pass=30 stopped=0` run; hosted four-lane + `live-m003-linux` pending)**. Adapter slice `739f382`, CI portability corrective `4703333`, then the M003 profile family, explicit baselines, single-owner-instance live workspace, and negative demonstrations. Executing against the real pinned Eggsec found three further adapter contract defects (`--header` vs `--headers`, the load-only execution policy Eggsec requires before it will authorize `load-test` under any profile, and `--quiet` suppressing the machine report) plus a preflight document-extraction defect; all are repaired with tests. Live `m003d-7`/`m003d-8` prove correctness-only and performance-only regressions each fail the suite. M003 milestone record: `plans/closure/security-qualification/003-status.md`.
+   Closure: `plans/closure/security-qualification/003d-status.md` — **closed and hosted-qualified (corrected owner `1338ce7b`; four-lane CI `37143714313` + live `37143714261` green on `30a3825`)**. Adapter slice `739f382`, CI portability corrective `4703333`, then the M003 profile family, explicit baselines, single-owner-instance live workspace, and negative demonstrations. Executing against the real pinned Eggsec found three further adapter contract defects (`--header` vs `--headers`, the load-only execution policy Eggsec requires before it will authorize `load-test` under any profile, and `--quiet` suppressing the machine report) plus a preflight document-extraction defect; all are repaired with tests. Live `m003d-7`/`m003d-8` prove correctness-only and performance-only regressions each fail the suite. M003 milestone record: `plans/closure/security-qualification/003-status.md`.
 
 Explicitly deferred from M003 v1:
 
@@ -513,21 +513,17 @@ M003 live-value reconciliation (2026-10-02):
 
 M003 execution status after the profile/qualification pass:
 
-- M003c and M003d Eggbench-owned scope is complete and locally verified
-  (`pass=29 stopped=1 notexec=0` in the live harness; the single stop is the
-  upstream gate below).
-- The M003 milestone is **conditionally closed** at
-  `plans/closure/security-qualification/003-status.md`.
-- Required next actions, in order:
-  1. report the upstream telemetry-population defect to SynVoid (missing
-     `UnifiedServerWorkerHeartbeat` dispatch arm in `src/supervisor/ipc.rs`) and
-     re-run `scripts/qualification/synvoid-m003/run-live-qualification.sh`
-     against an owner revision that populates the required series;
-  2. capture hosted four-lane CI plus the new `live-m003-linux` job on the
-     closing revision (in flight: CI `37053186040`, live `37053185694` on
-     `871f572`);
-  3. convert M003c/M003d/M003 to terminal closure — steps 1 and the local
-     re-run are done (`pass=30 stopped=0`, `m003c-13b` green, owner
-     `1338ce7b`); the milestone completes when the hosted runs are recorded
-     green. No Eggbench implementation work remains unless a hosted run
-     finds a consumer-side defect.
+- M003c and M003d Eggbench-owned scope is complete and verified both locally
+  (`pass=30 stopped=0 notexec=0`) and on the hosted real owner
+  (`pass=29 stopped=0 notexec=1`, the one `NOT-EXECUTED` being `m003d-4` on a
+  runner without `oha`).
+- The M003 milestone is **closed and hosted-qualified** at
+  `plans/closure/security-qualification/003-status.md`, with exact-head hosted
+  evidence on `30a3825`: four-lane CI `37143714313` and live external-tool
+  qualification `37143714261`, both green.
+- The upstream telemetry-population defect was reported to SynVoid and fixed at
+  owner `1338ce7b`; the milestone's disposition is terminal.
+- Remaining optional work, not a closure condition: `m003d-4` executes only
+  where `oha` is installed, and the M002b same-source performance proof remains
+  Linux-gated because that Python proxy stand-in cannot reproduce a same-build
+  pair on macOS at any concurrency. Both are recorded in their closure records.

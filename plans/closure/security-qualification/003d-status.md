@@ -2,7 +2,8 @@
 
 Disposition: **closed — M003d scope complete and verified, re-verified with the
 corrected owner `1338ce7b` in the same terminal harness run
-(`pass=30 stopped=0 notexec=0`)**. The Eggsec-load slice landed at `739f382`, its two portability/integration defects were repaired at `4703333` (four-lane run `36640125422`, live run `36640125453`), and the M003 profile/qualification work plus three further real-Eggsec adapter defects are closed below. The inherited M003c gate is resolved (see `003c-status.md`); only the hosted four-lane + `live-m003-linux` runs on the closing revision remain to be recorded.
+(`pass=30 stopped=0 notexec=0` locally; `pass=29 stopped=0 notexec=1` hosted, the
+one `NOT-EXECUTED` being `m003d-4` on a runner without `oha`)**. The Eggsec-load slice landed at `739f382`, its two portability/integration defects were repaired at `4703333` (four-lane run `36640125422`, live run `36640125453`), and the M003 profile/qualification work plus three further real-Eggsec adapter defects are closed below. The inherited M003c gate is resolved and the exact-head hosted evidence is recorded: four-lane CI run `37143714313` and live run `37143714261`, both green on closing revision `30a3825` (see `003c-status.md`).
 
 Implementation: `739f382` (`feat(security): add Eggsec strict-scope load workload`).
 
@@ -207,9 +208,12 @@ authority.
 
 ## Remaining condition
 
-M003d's own work is complete and was re-verified with the corrected owner in
-the terminal harness run (`pass=30 stopped=0 notexec=0` on owner
-`1338ce7b`). The milestone disposition stays closing until the hosted
-four-lane and `live-m003-linux` runs on the closing revision are recorded
-green (see `003c-status.md`). Nothing in M003d is outstanding on the
-Eggbench side.
+M003d's own work is complete. It was re-verified with the corrected owner in
+the terminal local harness run (`pass=30 stopped=0 notexec=0` on owner
+`1338ce7b`) and again on hosted runners, where `m003d-1`, `m003d-2`, `m003d-3`,
+`m003d-5`, `m003d-6`, `m003d-7`, `m003d-8`, and `m003d-9` all pass in
+`live-m003-linux` run `37143714261` on closing revision `30a3825`. The four-lane
+CI run `37143714313` is green on the same revision. `m003d-4` is `NOT-EXECUTED`
+because `oha` is not installed on the hosted runner, which is an external-tool
+availability condition and not a verdict; it remains executed in the local
+harness. Nothing in M003d is outstanding on the Eggbench side.

@@ -1,9 +1,11 @@
 # Security Qualification M003 — Status
 
-Disposition: **closing — all Eggbench-owned M003 scope is complete and verified;
-the named upstream defect is repaired and the terminal gate passes locally.
-Milestone closure completes when the hosted four-lane and `live-m003-linux`
-runs on the closing revision are recorded green (see "Remaining condition").**
+Disposition: **CLOSED QUALIFIED** — all Eggbench-owned M003 scope is complete
+and verified, the named upstream defect is repaired by owner revision
+`1338ce7b60f3793701091b4c329f80eb542f802d`, and every closure condition is
+discharged by exact-head hosted evidence: four-lane CI run `37143714313` and
+live external-tool qualification run `37143714261`, both green on closing
+revision `30a38251bccb5157beb68202ffe630f6253771e0`.
 
 Milestone plans:
 
@@ -105,10 +107,22 @@ participating in measured evidence, and a second security-owner execution path
    that revision, with `m003c-13b` passing. **Met**: `pass=30 stopped=0
    notexec=0` locally on the exact pin, harness exit 0.
 3. Green hosted four-lane CI and the `live-m003-linux` job on the exact closing
-   revision. **Pending**: CI run `37053186040` and live run `37053185694` on
-   `871f572`, in flight when this record was committed. Pre-corrective
-   reference: CI `36972886787` was green on all four lanes, and the live
-   job's only stop was `m003c-13b` (the job exits 10 by design when a stop
-   fires).
+   revision. **Met**: CI run `37143714313` (`linux-stable`, `linux-msrv`,
+   `windows-stable`, `macos-stable` all success) and live run `37143714261`
+   (all five live jobs success) on `30a3825`, harness summary
+   `pass=29 stopped=0 notexec=1` with the single `NOT-EXECUTED` being
+   `m003d-4` because `oha` is not installed on the hosted runner.
+   Pre-corrective reference: CI `36972886787` was green on all four lanes and
+   the live job's only stop was `m003c-13b` (the job exits 10 by design when a
+   stop fires).
+
+Reaching green required fixing three real defects in Eggbench's own measurement
+and reporting, each with its own test evidence and each described in
+`plans/closure/security-qualification/003c-status.md`: performance arms that
+were a suite apart rather than adjacent, a live-value check that demanded a
+non-zero event-loop-lag health gauge, and stopped stages whose only evidence was
+an exit code because the log they named had been deleted. A fourth change is a
+portability bound (the v1 per-trial measurement bound 120 s to 300 s), not a
+defect.
 
 Nothing further is required on the Eggbench side.
