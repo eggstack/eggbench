@@ -1,6 +1,7 @@
 /target/
 
 # Bounded per-stage driver output retained by the M003 live harness.
+m002-live-diagnostics/
 m003-live-diagnostics/
 
 # Pinned external oracles installed by

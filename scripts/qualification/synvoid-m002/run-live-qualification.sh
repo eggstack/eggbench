@@ -48,6 +48,14 @@ EGGBENCH_BIN="${EGGBENCH_BIN:-$REPO/target/release/eggbench}"
 SYNVOID_REPO="${SYNVOID_REPO:-https://github.com/dbowm91/synvoid.git}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/m002a-live-qual.XXXXXX")"
+# The temp work dir is removed on exit, so a bare log line saying "aggregate
+# invalid" leaves nothing to diagnose it with — the same evidence-deletion
+# defect M003 fixed with its retained diagnostics dir. Retain the bounded
+# per-stage driver output in a stable directory the caller can keep and
+# upload. Only small text/JSON evidence is copied, never a bundle or trial set.
+DIAGNOSTICS="${DIAGNOSTICS_DIR:-$REPO/m002-live-diagnostics}"
+rm -rf "$DIAGNOSTICS"
+mkdir -p "$DIAGNOSTICS"
 PIDS=""
 cleanup() {
   # shellcheck disable=SC2086
@@ -57,8 +65,51 @@ cleanup() {
   for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
   if [ "${KEEP_WORK:-0}" != "1" ]; then rm -rf "$WORK"; else echo "work kept at $WORK"; fi
   rm -f /tmp/fake-synvoid-*.delay_ms
+  echo "retained stage diagnostics: $DIAGNOSTICS"
 }
 trap cleanup EXIT
+
+# Retain one bounded stage artifact under a stable name.
+retain() {
+  [ -f "$1" ] || return 0
+  cp "$1" "$DIAGNOSTICS/$2" 2>/dev/null || true
+}
+
+# Retain a qualify-run suite's receipt plus every per-scenario comparison, so
+# a non-pass aggregate stays diagnosable after $WORK is removed.
+retain_suite() { # $1 = suite dir, $2 = name prefix
+  retain "$1/qualification-receipt.json" "$2-receipt.json"
+  for comparison in "$1"/scenarios/*.comparison.json; do
+    [ -f "$comparison" ] || break
+    retain "$comparison" "$2-$(basename "$comparison")"
+  done
+}
+
+# One bounded line naming the primary metrics that kept a perf pair from
+# passing: scenario/metric=disposition(reason). An "aggregate invalid" verdict
+# without this is unactionable; the comparison receipt records exactly which
+# gate went invalid and why (insufficient_trials, comparability_mismatch,
+# nonpositive_relative_value, baseline_required), and this surfaces it.
+perf_pair_diagnosis() { # $1 = suite dir
+  python3 - "$1" <<'EOF' 2>/dev/null | head -c 600
+import glob, json, sys
+suite = sys.argv[1]
+hits = []
+for path in sorted(glob.glob(suite + "/scenarios/*.comparison.json")):
+    try:
+        doc = json.load(open(path))
+    except OSError:
+        continue
+    scenario = path.rsplit("/", 1)[-1].replace(".comparison.json", "")
+    for metric in doc.get("metrics", []):
+        disposition = metric.get("disposition")
+        if disposition in ("invalid", "fail"):
+            hits.append("%s/%s=%s(%s)" % (
+                scenario, metric.get("name"), disposition,
+                metric.get("reason") or "no reason recorded"))
+print("; ".join(hits) if hits else "no invalid/fail primary metric recorded")
+EOF
+}
 
 pass=0; stopped=0; notexec=0
 verdict() { # $1 = PASS|STOPPED|NOT-EXECUTED, $2 = label, $3 = detail
@@ -161,6 +212,7 @@ EOF
 # pairs prove orchestration mechanics (plan section 16). A same-source
 # Fail is the section 8 stop condition, not a pass.
 "$EGGBENCH_BIN" qualify run smoke.profile.json --output "$WS/suite-smoke" --json >"$WORK/smoke.json" 2>&1
+retain "$WORK/smoke.json" stage-c-smoke-run.json
 [ $? -eq 0 ] \
   && verdict PASS "stage-c smoke profile passes" "5 scenarios, absolute gates" \
   || { verdict STOPPED "stage-c smoke profile passes" "$(head -c 300 "$WORK/smoke.json")"; exit 10; }
@@ -174,10 +226,12 @@ verdict PASS "stage-c explicit baselines materialized" "8 baseline bundles"
 "$EGGBENCH_BIN" qualify run perf.profile.json --output "$WS/suite-perf" --json >"$WORK/perf.json" 2>&1
 perf_rc=$?
 perf_agg="$(python3 -c "import json; print(json.load(open('$WORK/perf.json'))['aggregate_verdict'])" 2>/dev/null)"
+retain "$WORK/perf.json" stage-c-perf-run.json
+retain_suite "$WS/suite-perf" stage-c-perf
 if { [ "$perf_rc" -eq 0 ] || [ "$perf_rc" -eq 7 ]; } && { [ "$perf_agg" = "pass" ] || [ "$perf_agg" = "inconclusive" ]; }; then
   verdict PASS "stage-c same-source perf pair" "aggregate $perf_agg (Pass/Inconclusive, never Fail)"
 else
-  verdict STOPPED "stage-c same-source perf pair" "aggregate $perf_agg violates section 8 repeatability"
+  verdict STOPPED "stage-c same-source perf pair" "aggregate $perf_agg violates section 8 repeatability; $(perf_pair_diagnosis "$WS/suite-perf"); see retained stage-c-perf-*"
   exit 10
 fi
 # Negative performance proof: qualification-only controlled delay in the
@@ -200,16 +254,26 @@ rm -f "/tmp/fake-synvoid-${PORT}.delay_ms"
 if command -v oha >/dev/null 2>&1; then
   OHA_VERSION="$(oha --version 2>&1 | head -1)"
   OHA_SHA="$(sha256sum "$(command -v oha)" | cut -d' ' -f1)"
+  oracle_ok=1
   "$EGGBENCH_BIN" run scenarios/oracle-oha-c8.json "$WS/oracle-oha-base.eggb" --workload-driver oha --json >"$WORK/oracle-oha-base.json" 2>&1 \
     && "$EGGBENCH_BIN" run scenarios/oracle-oha-c8.json "$WS/oracle-oha-cand.eggb" --workload-driver oha --json >"$WORK/oracle-oha-cand.json" 2>&1 \
     && python3 "$ORACLE_ASSERT" --run-json "$WORK/oracle-oha-cand.json" \
          --bundle "$WS/oracle-oha-cand.eggb" --expect-zero error_rate \
          --expect-producer oha >"$WORK/oracle-oha-proof.txt" 2>&1 \
     && "$EGGBENCH_BIN" compare "$WS/oracle-oha-base.eggb" "$WS/oracle-oha-cand.eggb" --json >"$WORK/oracle-oha.json" 2>&1 \
-    && verdict PASS "stage-c oha oracle procedure" \
-         "$OHA_VERSION sha256:${OHA_SHA:0:12}; $(head -1 "$WORK/oracle-oha-proof.txt")" \
-    || { verdict STOPPED "stage-c oha oracle procedure" \
-           "$(head -1 "$WORK/oracle-oha-proof.txt" 2>/dev/null || echo "oracle run/compare failed")"; exit 10; }
+    || oracle_ok=0
+  retain "$WORK/oracle-oha-base.json" stage-c-oha-base-run.json
+  retain "$WORK/oracle-oha-cand.json" stage-c-oha-cand-run.json
+  retain "$WORK/oracle-oha-proof.txt" stage-c-oha-proof.txt
+  retain "$WORK/oracle-oha.json" stage-c-oha-compare.json
+  if [ "$oracle_ok" -eq 1 ]; then
+    verdict PASS "stage-c oha oracle procedure" \
+      "$OHA_VERSION sha256:${OHA_SHA:0:12}; $(head -1 "$WORK/oracle-oha-proof.txt")"
+  else
+    verdict STOPPED "stage-c oha oracle procedure" \
+      "$(head -1 "$WORK/oracle-oha-proof.txt" 2>/dev/null || echo "oracle run/compare failed"); see retained stage-c-oha-*"
+    exit 10
+  fi
 else
   verdict NOT-EXECUTED "stage-c oha oracle procedure" \
     "oha not installed; run scripts/qualification/provision-external-oracles.sh oha"
@@ -313,6 +377,7 @@ cd "$RWS" || exit 2
   && verdict PASS "stage-b real profile validates" "qualify validate ok" \
   || { verdict STOPPED "stage-b real profile validates" "validate failed"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
 "$EGGBENCH_BIN" qualify run real-profile.json --output "$RWS/suite" --json >"$WORK/real-run.json" 2>&1
+retain "$WORK/real-run.json" stage-b-real-run.json
 [ $? -eq 0 ] \
   && verdict PASS "stage-b real positive run passes" "$(python3 -c "import json; print(json.load(open('$WORK/real-run.json'))['aggregate_verdict'])")" \
   || { verdict STOPPED "stage-b real positive run passes" "$(head -c 300 "$WORK/real-run.json")"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
@@ -404,6 +469,7 @@ json.dump(perf, open(ws + "/real-perf.profile.json", "w"), indent=2)
 print("real smoke/perf profiles written")
 EOF
 "$EGGBENCH_BIN" qualify run real-smoke.profile.json --output "$RWS/suite-smoke" --json >"$WORK/real-smoke.json" 2>&1
+retain "$WORK/real-smoke.json" stage-c-real-smoke-run.json
 [ $? -eq 0 ] \
   && verdict PASS "stage-c real smoke profile passes" "correctness + small/large proxy, absolute gates" \
   || { verdict STOPPED "stage-c real smoke profile passes" "$(head -c 300 "$WORK/real-smoke.json")"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
@@ -418,22 +484,45 @@ verdict PASS "stage-c real explicit baselines materialized" "8 baseline bundles"
 "$EGGBENCH_BIN" qualify run real-perf.profile.json --output "$RWS/suite-perf" --json >"$WORK/real-perf.json" 2>&1
 perf_rc=$?
 perf_agg="$(python3 -c "import json; print(json.load(open('$WORK/real-perf.json'))['aggregate_verdict'])" 2>/dev/null)"
+retain "$WORK/real-perf.json" stage-c-real-perf-run.json
+retain_suite "$RWS/suite-perf" stage-c-real-perf
 if { [ "$perf_rc" -eq 0 ] || [ "$perf_rc" -eq 7 ]; } && { [ "$perf_agg" = "pass" ] || [ "$perf_agg" = "inconclusive" ]; }; then
   verdict PASS "stage-c real same-source perf pair" "aggregate $perf_agg (Pass/Inconclusive, never Fail)"
 else
-  verdict STOPPED "stage-c real same-source perf pair" "aggregate $perf_agg violates repeatability"
+  verdict STOPPED "stage-c real same-source perf pair" "aggregate $perf_agg violates repeatability; $(perf_pair_diagnosis "$RWS/suite-perf"); see retained stage-c-real-perf-*"
   echo "pass=$pass stopped=$stopped notexec=$notexec"
   exit 10
 fi
 # External-oracle procedure (deviation D4): independent driver, own baseline.
+# Asserted from the evidence like the synthetic stage above, not from the
+# exit status, and retained past $WORK for the same reason.
 if command -v oha >/dev/null 2>&1; then
-  "$EGGBENCH_BIN" run scenarios/oracle-oha-c8-real.json "$RWS/oracle-oha-base.eggb" --workload-driver oha --json >/dev/null 2>&1 \
-    && "$EGGBENCH_BIN" run scenarios/oracle-oha-c8-real.json "$RWS/oracle-oha-cand.eggb" --workload-driver oha --json >/dev/null 2>&1 \
+  OHA_VERSION="$(oha --version 2>&1 | head -1)"
+  OHA_SHA="$(sha256sum "$(command -v oha)" | cut -d' ' -f1)"
+  oracle_ok=1
+  "$EGGBENCH_BIN" run scenarios/oracle-oha-c8-real.json "$RWS/oracle-oha-base.eggb" --workload-driver oha --json >"$WORK/real-oracle-oha-base.json" 2>&1 \
+    && "$EGGBENCH_BIN" run scenarios/oracle-oha-c8-real.json "$RWS/oracle-oha-cand.eggb" --workload-driver oha --json >"$WORK/real-oracle-oha-cand.json" 2>&1 \
+    && python3 "$ORACLE_ASSERT" --run-json "$WORK/real-oracle-oha-cand.json" \
+         --bundle "$RWS/oracle-oha-cand.eggb" --expect-zero error_rate \
+         --expect-producer oha >"$WORK/real-oracle-oha-proof.txt" 2>&1 \
     && "$EGGBENCH_BIN" compare "$RWS/oracle-oha-base.eggb" "$RWS/oracle-oha-cand.eggb" --json >"$WORK/real-oracle-oha.json" 2>&1 \
-    && verdict PASS "stage-c real oha oracle procedure" "independent driver observation" \
-    || { verdict STOPPED "stage-c real oha oracle procedure" "oracle run/compare failed"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
+    || oracle_ok=0
+  retain "$WORK/real-oracle-oha-base.json" stage-c-real-oha-base-run.json
+  retain "$WORK/real-oracle-oha-cand.json" stage-c-real-oha-cand-run.json
+  retain "$WORK/real-oracle-oha-proof.txt" stage-c-real-oha-proof.txt
+  retain "$WORK/real-oracle-oha.json" stage-c-real-oha-compare.json
+  if [ "$oracle_ok" -eq 1 ]; then
+    verdict PASS "stage-c real oha oracle procedure" \
+      "$OHA_VERSION sha256:${OHA_SHA:0:12}; $(head -1 "$WORK/real-oracle-oha-proof.txt")"
+  else
+    verdict STOPPED "stage-c real oha oracle procedure" \
+      "$(head -1 "$WORK/real-oracle-oha-proof.txt" 2>/dev/null || echo "oracle run/compare failed"); see retained stage-c-real-oha-*"
+    echo "pass=$pass stopped=$stopped notexec=$notexec"
+    exit 10
+  fi
 else
-  verdict NOT-EXECUTED "stage-c real oha oracle procedure" "oha not installed"
+  verdict NOT-EXECUTED "stage-c real oha oracle procedure" \
+    "oha not installed; run scripts/qualification/provision-external-oracles.sh oha"
 fi
 if command -v h2load >/dev/null 2>&1; then
   "$EGGBENCH_BIN" run scenarios/oracle-h2load-c8-real.json "$RWS/oracle-h2load-cand.eggb" --workload-driver h2load --json >/dev/null 2>&1 \
