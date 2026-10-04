@@ -2,3 +2,7 @@
 
 # Bounded per-stage driver output retained by the M003 live harness.
 m003-live-diagnostics/
+
+# Pinned external oracles installed by
+# scripts/qualification/provision-external-oracles.sh.
+.oracle-bin/

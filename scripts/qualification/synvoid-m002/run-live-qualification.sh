@@ -43,6 +43,7 @@ POLICY_ID="${POLICY_ID:-synvoid.eggbench-qualification.v1}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
+ORACLE_ASSERT="$REPO/scripts/qualification/assert-oracle-run.py"
 EGGBENCH_BIN="${EGGBENCH_BIN:-$REPO/target/release/eggbench}"
 SYNVOID_REPO="${SYNVOID_REPO:-https://github.com/dbowm91/synvoid.git}"
 
@@ -191,14 +192,27 @@ rm -f "/tmp/fake-synvoid-${PORT}.delay_ms"
   && verdict PASS "stage-c performance-only regression fails" "exit 6 despite correctness Pass" \
   || { verdict STOPPED "stage-c performance-only regression fails" "expected exit 6, got $delayed_rc"; exit 10; }
 # External-oracle procedure (deviation D4): independent driver, own baseline.
+# Asserted from the evidence, not the exit status: the run completed, the
+# absolute gate the scenario declares was observed at zero in every measured
+# trial, and the numbers are attributed to the oracle's own report. The
+# verdict names the oracle version and digest so the evidence says which
+# third-party client produced it.
 if command -v oha >/dev/null 2>&1; then
-  "$EGGBENCH_BIN" run scenarios/oracle-oha-c8.json "$WS/oracle-oha-base.eggb" --workload-driver oha --json >/dev/null 2>&1 \
-    && "$EGGBENCH_BIN" run scenarios/oracle-oha-c8.json "$WS/oracle-oha-cand.eggb" --workload-driver oha --json >/dev/null 2>&1 \
+  OHA_VERSION="$(oha --version 2>&1 | head -1)"
+  OHA_SHA="$(sha256sum "$(command -v oha)" | cut -d' ' -f1)"
+  "$EGGBENCH_BIN" run scenarios/oracle-oha-c8.json "$WS/oracle-oha-base.eggb" --workload-driver oha --json >"$WORK/oracle-oha-base.json" 2>&1 \
+    && "$EGGBENCH_BIN" run scenarios/oracle-oha-c8.json "$WS/oracle-oha-cand.eggb" --workload-driver oha --json >"$WORK/oracle-oha-cand.json" 2>&1 \
+    && python3 "$ORACLE_ASSERT" --run-json "$WORK/oracle-oha-cand.json" \
+         --bundle "$WS/oracle-oha-cand.eggb" --expect-zero error_rate \
+         --expect-producer oha >"$WORK/oracle-oha-proof.txt" 2>&1 \
     && "$EGGBENCH_BIN" compare "$WS/oracle-oha-base.eggb" "$WS/oracle-oha-cand.eggb" --json >"$WORK/oracle-oha.json" 2>&1 \
-    && verdict PASS "stage-c oha oracle procedure" "independent driver observation" \
-    || { verdict STOPPED "stage-c oha oracle procedure" "oracle run/compare failed"; exit 10; }
+    && verdict PASS "stage-c oha oracle procedure" \
+         "$OHA_VERSION sha256:${OHA_SHA:0:12}; $(head -1 "$WORK/oracle-oha-proof.txt")" \
+    || { verdict STOPPED "stage-c oha oracle procedure" \
+           "$(head -1 "$WORK/oracle-oha-proof.txt" 2>/dev/null || echo "oracle run/compare failed")"; exit 10; }
 else
-  verdict NOT-EXECUTED "stage-c oha oracle procedure" "oha not installed"
+  verdict NOT-EXECUTED "stage-c oha oracle procedure" \
+    "oha not installed; run scripts/qualification/provision-external-oracles.sh oha"
 fi
 if command -v h2load >/dev/null 2>&1; then
   "$EGGBENCH_BIN" run scenarios/oracle-h2load-c8.json "$WS/oracle-h2load-cand.eggb" --workload-driver h2load --json >/dev/null 2>&1 \

@@ -101,6 +101,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build Eggbench release binary with all features
         run: cargo build --locked --release --all-features -p eggbench-cli
+      # An absent oracle is reported NOT-EXECUTED so the rest of the evidence
+      # still lands, which quietly means the independent-transport
+      # corroboration is missing on exactly the machines nobody watches. Install
+      # it from a pinned release asset with a verified digest so the claim is
+      # actually exercised and the recorded digest names the bytes that ran.
+      - name: Provision pinned external oracles
+        run: bash scripts/qualification/provision-external-oracles.sh oha
       - name: Run M002a live SynVoid qualification harness
         run: |
           set -u
@@ -130,6 +137,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build Eggbench release binary with all features
         run: cargo build --locked --release --all-features -p eggbench-cli
+      # An absent oracle is reported NOT-EXECUTED so the rest of the evidence
+      # still lands, which quietly means the independent-transport
+      # corroboration is missing on exactly the machines nobody watches. Install
+      # it from a pinned release asset with a verified digest so the claim is
+      # actually exercised and the recorded digest names the bytes that ran.
+      - name: Provision pinned external oracles
+        run: bash scripts/qualification/provision-external-oracles.sh oha
       - name: Run M003c/M003d live qualification harness
         run: |
           set -u

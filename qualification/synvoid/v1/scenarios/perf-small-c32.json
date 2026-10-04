@@ -63,7 +63,7 @@
   "workload": {
     "kind": "finite_count",
     "target": "synvoid",
-    "requests": 2000,
+    "requests": 12000,
     "concurrency": 32
   },
   "trials": {

@@ -196,10 +196,6 @@ impl PerfPair {
 
     /// A passed or inconclusive pair; anything else is a verdict the
     /// scenario's own gates produced.
-    ///
-    /// Only the Linux-gated same-source proof below calls this, so it is
-    /// gated with it rather than left dead on the other hosts.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn accepted(&self) -> bool {
         matches!(self.exit, Some(0 | 7))
     }
@@ -326,6 +322,29 @@ fn expanded_corpus_digest(workspace: &Path) -> String {
         .to_owned()
 }
 
+/// Shrink the proxy performance scenarios inside a temporary workspace copy.
+///
+/// The checked-in v1 policy sizes each proxy scenario so the frozen
+/// statistical allowances are resolvable: with a ~3.4 s window per trial the
+/// unpaired bootstrap interval is narrow enough to decide a 20% p95
+/// regression. Only the same-build repeatability proof needs that statistical
+/// power, and it is the reason the suite costs minutes rather than seconds.
+///
+/// The negative-demonstration tests deliberately do not. A correctness
+/// regression is an absolute gate, a 100 ms throttle is orders of magnitude
+/// past any allowance, and workload drift is detected by identity mismatch;
+/// none of them turns on a bootstrap interval being narrow. Those tests shrink
+/// the workload so the file as a whole stays affordable, and they still prove
+/// exactly what they claim.
+fn shrink_perf_workload(root: &Path, requests: u64) {
+    for scenario in PERF_SCENARIOS {
+        let path = root.join(format!("scenarios/{scenario}.json"));
+        let mut plan = read_json(&path);
+        plan["workload"]["requests"] = Value::from(requests);
+        write_json(&path, &plan);
+    }
+}
+
 #[test]
 fn smoke_profile_passes_with_absolute_gates() {
     let _lock = qualification_test_lock();
@@ -388,16 +407,22 @@ fn smoke_profile_passes_with_absolute_gates() {
     }
 }
 
-// This synthetic Python proxy's performance profile is meaningful on the Linux
-// qualification host only, for a fixture reason that the adjacent-pairing work
-// did not and could not remove: on macOS this proxy stand-in cannot reproduce a
-// same-build pair at any concurrency, while its direct-origin controls pass.
-// The re-enabled cross-host run confirmed that distinct effect, so the gate
-// stays. The baseline-to-candidate gap that *was* a harness defect is fixed for
-// this profile too, and the Linux gate now reflects only the stub's platform
-// behaviour. Real-host repeatability remains owned by the Linux C002
-// qualification.
-#[cfg(target_os = "linux")]
+// The same-source proof runs on every host. It was briefly Linux-gated on the
+// claim that this Python proxy stand-in "cannot reproduce a same-build pair at
+// any concurrency" on macOS, but that was not a fixture property: it was the
+// measurement window being too short to resolve the frozen allowances. At the
+// previous policy the six proxy scenarios ran 0.06 s (c1) to 1.9 s (c32) per
+// trial against a 20% p95 allowance, and interleaved measurement of identical
+// builds on one host found a 77.9% p95 spread at 800 requests per trial — the
+// run-to-run noise was about four times the allowance, so a same-build pair
+// reported a regression roughly a third of the time and macOS failed on
+// `synvoid-benign-small-native-c8`. At 12000 requests per trial every
+// scenario gets a >=3.4 s window and the measured same-build spread falls to
+// 0.2-11.4% against those same frozen allowances, so the gates became
+// decidable instead of being switched off. No allowance, threshold,
+// `min_trials`, or trial count changed; the workload request count is the
+// sample-policy lever the v1 README reserves for exactly this evidence.
+// Real-host repeatability remains owned by the Linux C002 qualification.
 #[test]
 fn perf_same_source_pair_never_fails() {
     let _lock = qualification_test_lock();
@@ -444,6 +469,7 @@ fn correctness_only_regression_fails_suite_despite_perf_pass() {
     let workspace = copy_workspace();
     let root = workspace.path();
     patch_subject_ports(root, free_port());
+    shrink_perf_workload(root, 400);
 
     // Mutate only the owner-authored corpus expectation, then recompute
     // the temporary corpus identity through normal input handling.
@@ -481,6 +507,7 @@ fn performance_only_regression_fails_suite_despite_correctness_pass() {
     let root = workspace.path();
     let port = free_port();
     patch_subject_ports(root, port);
+    shrink_perf_workload(root, 400);
 
     // Qualification-only controlled delay in the subject harness: the
     // scenario plans (and therefore comparison identities) are untouched,
@@ -513,6 +540,7 @@ fn workload_drift_compares_as_incomparable() {
     let workspace = copy_workspace();
     let root = workspace.path();
     patch_subject_ports(root, free_port());
+    shrink_perf_workload(root, 400);
 
     // Candidate intentionally changes workload semantics: the existing
     // profile must become incomparable rather than a performance result. The

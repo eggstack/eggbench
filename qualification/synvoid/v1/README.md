@@ -114,12 +114,44 @@ Scenario inventory: `scenarios/waf-correctness.json`,
 documented external-oracle `run`/`compare` procedure below.
 
 Sample policy (recorded §8 evidence): 7 measured trials (1 warmup),
-200/800/2000 requests per trial at c1/c8/c32, `min_trials` 5. An earlier
-5-trial/400-request policy produced a same-source Fail on loopback
-scheduling noise; the bumped policy yields Pass/Inconclusive with zero
-Fail across repeated same-source pairs on the reference host. Thresholds
-were NOT widened. The live host must repeat same-build repeatability
-qualification; if it violates, M003 revises the policy with evidence.
+12000 requests per trial for the six proxy performance scenarios,
+`min_trials` 5. Thresholds were NOT widened and never have been: throughput
+15%, p95 20%, error_rate absolute 0.
+
+The request count is the sample-policy lever, and it was revised twice with
+measurement rather than opinion. The history matters because both earlier
+policies were too small to resolve the frozen allowances:
+
+- 5 trials / <=400 requests: a same-source `perf-small-c8` Fail with p95
+  degradation 0.67, its interval entirely above the 0.20 threshold.
+- 7 trials / 200-800-2000 requests at c1/c8/c32: reported Pass/Inconclusive on
+  the reference host, so it looked adequate. It was not. Interleaved
+  measurement of *identical builds* on one host, cancelling drift by
+  round-robin, found the p95 of `perf-small-c8` varying by **77.9%** across
+  builds at 800 requests per trial, against a 20% allowance: the run-to-run
+  noise was about four times the gate. The per-trial window was the reason —
+  60 ms at c1 and 0.93 s at c8. A bootstrap interval that wide cannot
+  distinguish an identical build from a regression, so a same-build pair
+  reported a Fail often enough to fail hosted macOS on
+  `synvoid-benign-small-native-c8` and to make the Linux-gating of the
+  same-source proof look like a platform property when it was a measurement
+  defect.
+- 7 trials / 12000 requests per trial: every proxy scenario now gets a
+  >=3.4 s window, and the measured identical-build spread falls to 0.2-11.4%
+  against the same frozen 15%/20% allowances. The gates became decidable
+  instead of being switched off, so a real regression is now detected more
+  readily than before, not less. The direct-origin controls are unchanged:
+  they gate `error_rate` absolutely at 0 and carry no relative gate, so the
+  short-window problem never applied to them.
+
+The residual limit is honest rather than hidden. `compare` is an *unpaired*
+trial bootstrap by design (cross-bundle pairing is unsupported), so its
+interval width is driven by between-trial variance within one arm and shrinks
+only as `1/sqrt(trials)`. On a contended host that variance is large enough
+that no affordable trial count makes a 20% p95 gate fully decidable; such a
+host yields honest `inconclusive` verdicts. The authoritative same-build
+repeatability evidence is therefore produced on the dedicated hosted runners,
+where the load is not the subject under test.
 
 ## Further deviations (M002b)
 

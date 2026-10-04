@@ -62,6 +62,7 @@ EGGSEC_REPO="${EGGSEC_REPO:-https://github.com/eggstack/eggsec.git}"
 RESOLVER="$REPO/scripts/qualification/synvoid-m003/resolve-content-digests.py"
 BUILDER="$HERE/build-real-m003-workspace.py"
 TELEMETRY_ASSERT="$HERE/assert-subject-telemetry.py"
+ORACLE_ASSERT="$REPO/scripts/qualification/assert-oracle-run.py"
 ORIGIN_PY="$HERE/controlled-origin-m003.py"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/m003-live-qual.XXXXXX")"
@@ -592,14 +593,43 @@ else
   verdict NOT-EXECUTED "m003d-3 controlled origin served benign traffic only" "no origin log (scenarios served from proxy cache)"
 fi
 
-# ---- m003d-4: independent oracle body scenario (optional tool) -----------
+# ---- m003d-4: independent oracle body scenario ---------------------------
+# The point of this stage is that the body-bearing correctness outcome also
+# holds when a third-party client, not the harness's own native driver, drives
+# the same case. So the claim is checked from the evidence: the run completed,
+# both absolute gates the scenario declares were observed at zero in every
+# measured trial, and the observations are attributed to the oracle's own
+# report. Checking only the exit status would pass just as happily if the
+# driver silently produced nothing, and the previous wording claimed a
+# base/candidate comparison that this scenario has no gated metric to make.
 if command -v oha >/dev/null 2>&1; then
-  "$EGGBENCH_BIN" run scenarios/body-oha-c8.json "$WORK/oha-base.eggb" --workload-driver oha --json >/dev/null 2>&1 \
-    && "$EGGBENCH_BIN" run scenarios/body-oha-c8.json "$WORK/oha-cand.eggb" --workload-driver oha --json >/dev/null 2>&1 \
-    && verdict PASS "m003d-4 independent oha body scenario" "base + candidate compared" \
-    || verdict STOPPED "m003d-4 independent oha body scenario" "oha run failed"
+  OHA_VERSION="$(oha --version 2>&1 | head -1)"
+  OHA_SHA="$(sha256sum "$(command -v oha)" | cut -d' ' -f1)"
+  OHA_PROOF="unknown"
+  oracle_ok=1
+  for arm in base cand; do
+    "$EGGBENCH_BIN" run scenarios/body-oha-c8.json "$WORK/oha-$arm.eggb" \
+      --workload-driver oha --json >"$WORK/oha-$arm.json" 2>&1 \
+      && python3 "$ORACLE_ASSERT" --run-json "$WORK/oha-$arm.json" \
+           --bundle "$WORK/oha-$arm.eggb" \
+           --expect-zero expected_outcome_mismatch_rate \
+           --expect-zero transport_error_rate \
+           --expect-producer oha >"$WORK/oha-$arm-proof.txt" 2>&1 \
+      || oracle_ok=0
+    retain "$WORK/oha-$arm.json" "m003d-4-oha-$arm-run.json"
+    retain "$WORK/oha-$arm-proof.txt" "m003d-4-oha-$arm-proof.txt"
+  done
+  if [ "$oracle_ok" -eq 1 ]; then
+    OHA_PROOF="$(head -1 "$WORK/oha-cand-proof.txt")"
+    verdict PASS "m003d-4 independent oha body scenario" \
+      "$OHA_VERSION sha256:${OHA_SHA:0:12}; $OHA_PROOF"
+  else
+    verdict STOPPED "m003d-4 independent oha body scenario" \
+      "$(head -1 "$WORK/oha-base-proof.txt" 2>/dev/null || head -c 200 "$WORK/oha-base.json" 2>/dev/null || echo "oracle run failed"); see m003d-4-oha-*-proof.txt"
+  fi
 else
-  verdict NOT-EXECUTED "m003d-4 independent oha body scenario" "oha not installed on this runner"
+  verdict NOT-EXECUTED "m003d-4 independent oha body scenario" \
+    "oha not installed on this runner; run scripts/qualification/provision-external-oracles.sh oha"
 fi
 
 # ---- m003d-5: strict Eggsec load path (security-owner execution) --------
