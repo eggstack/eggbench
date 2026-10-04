@@ -212,8 +212,9 @@ EOF
 # pairs prove orchestration mechanics (plan section 16). A same-source
 # Fail is the section 8 stop condition, not a pass.
 "$EGGBENCH_BIN" qualify run smoke.profile.json --output "$WS/suite-smoke" --json >"$WORK/smoke.json" 2>&1
+smoke_rc=$?
 retain "$WORK/smoke.json" stage-c-smoke-run.json
-[ $? -eq 0 ] \
+[ "$smoke_rc" -eq 0 ] \
   && verdict PASS "stage-c smoke profile passes" "5 scenarios, absolute gates" \
   || { verdict STOPPED "stage-c smoke profile passes" "$(head -c 300 "$WORK/smoke.json")"; exit 10; }
 for scenario in perf-small-c1 perf-small-c8 perf-small-c32 \
@@ -377,8 +378,9 @@ cd "$RWS" || exit 2
   && verdict PASS "stage-b real profile validates" "qualify validate ok" \
   || { verdict STOPPED "stage-b real profile validates" "validate failed"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
 "$EGGBENCH_BIN" qualify run real-profile.json --output "$RWS/suite" --json >"$WORK/real-run.json" 2>&1
+real_rc=$?
 retain "$WORK/real-run.json" stage-b-real-run.json
-[ $? -eq 0 ] \
+[ "$real_rc" -eq 0 ] \
   && verdict PASS "stage-b real positive run passes" "$(python3 -c "import json; print(json.load(open('$WORK/real-run.json'))['aggregate_verdict'])")" \
   || { verdict STOPPED "stage-b real positive run passes" "$(head -c 300 "$WORK/real-run.json")"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
 python3 "$RWS/assert-origin-log.py" "$RWS/corpus.json" 403 "$RWS/origin-requests.log" \
@@ -469,8 +471,9 @@ json.dump(perf, open(ws + "/real-perf.profile.json", "w"), indent=2)
 print("real smoke/perf profiles written")
 EOF
 "$EGGBENCH_BIN" qualify run real-smoke.profile.json --output "$RWS/suite-smoke" --json >"$WORK/real-smoke.json" 2>&1
+real_smoke_rc=$?
 retain "$WORK/real-smoke.json" stage-c-real-smoke-run.json
-[ $? -eq 0 ] \
+[ "$real_smoke_rc" -eq 0 ] \
   && verdict PASS "stage-c real smoke profile passes" "correctness + small/large proxy, absolute gates" \
   || { verdict STOPPED "stage-c real smoke profile passes" "$(head -c 300 "$WORK/real-smoke.json")"; echo "pass=$pass stopped=$stopped notexec=$notexec"; exit 10; }
 mkdir -p "$RWS/baselines"
