@@ -523,7 +523,14 @@ M003 execution status after the profile/qualification pass:
   qualification `37143714261`, both green.
 - The upstream telemetry-population defect was reported to SynVoid and fixed at
   owner `1338ce7b`; the milestone's disposition is terminal.
-- Remaining optional work, not a closure condition: `m003d-4` executes only
-  where `oha` is installed, and the M002b same-source performance proof remains
-  Linux-gated because that Python proxy stand-in cannot reproduce a same-build
-  pair on macOS at any concurrency. Both are recorded in their closure records.
+- Remaining optional work, not a closure condition: none outstanding. Two items
+  previously listed here are now done: `m003d-4` executes on hosted runners via
+  a pinned digest-verified `oha` provisioned by
+  `scripts/qualification/provision-external-oracles.sh`, with its claim asserted
+  from the run evidence rather than the exit status (`973451f`); and the M002b
+  same-source performance proof runs on every host — the Linux gate is removed
+  because the macOS failure was a short-window measurement defect, fixed by
+  sizing all six proxy scenarios to 12000 requests per trial against the frozen
+  allowances (`973451f`), with the M002 harness retaining stage diagnostics
+  past `$WORK` (`a895fb8`). Hosted confirmation of the new revisions is pending
+  the in-flight CI/live runs. Both are recorded in their closure records.

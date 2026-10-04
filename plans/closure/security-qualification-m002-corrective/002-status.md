@@ -280,3 +280,48 @@ Criterion 1 remains the recorded EXCEPTION of §8: C001 is not rewritten as
 closed, its narrow runner-side fix is verified by hosted run `36451730637`,
 and the live-host condition it surfaced is discharged here by C002's real
 same-source proof plus the green `macos-stable` lane in `36640125422`.
+
+## 12. Addendum — 2026-10-04 (sample policy made resolvable; platform gate removed; stage evidence retained)
+
+Three follow-up corrections landed after the terminal evidence above, each
+with its own measurement. No allowance, threshold, `min_trials`, or trial
+count changed anywhere.
+
+1. **Sample policy revised 200–2000 → 12000 requests per trial.** The
+   7-trial / 200-800-2000 policy reported Pass/Inconclusive on the reference
+   host and looked adequate, but interleaved measurement of identical builds
+   on one host (drift cancelled by round-robin) found the p95 of
+   `perf-small-c8` varying by 77.9% across builds at 800 requests per trial
+   against the frozen 20% allowance: run-to-run noise four times the gate.
+   Per-trial windows were 0.06 s (c1) to 1.9 s (c32). At 12000 requests every
+   proxy scenario gets a >=3.4 s window and the identical-build spread falls
+   to 0.2–11.4% against the same frozen 15%/20% allowances, so the gates
+   became decidable instead of being switched off. Direct-origin controls are
+   unchanged (absolute `error_rate` gate only). Recorded in
+   `qualification/synvoid/v1/README.md`. Source: `973451f`.
+
+2. **The Linux-only gate on `perf_same_source_pair_never_fails` is removed.**
+   It was imposed on the claim that the Python proxy stand-in "cannot
+   reproduce a same-build pair on macOS at any concurrency", but that was the
+   short-window measurement defect above, not a fixture property: the macOS
+   failure was on `synvoid-benign-small-native-c8`, the noisiest short-window
+   scenario. The three non-statistical tests in the file shrink the workload
+   to 400 requests in their temp copies (correctness is absolute, the 100 ms
+   throttle is orders past any allowance, drift is identity mismatch), so the
+   file costs ~25 min rather than scaling with the new policy. Local proof:
+   6/6 pass. Hosted four-lane confirmation, especially `macos-stable`, is
+   pending the in-flight CI runs. Source: `973451f`.
+
+3. **M002 harness retains stage evidence past `$WORK`.** The
+   `live-synvoid-linux` failure on `3cc4048` (exit 10, "aggregate invalid"
+   on the real-proxy pair) left nothing to diagnose: `$WORK` was deleted and
+   only the summary log was uploaded — the same deletion defect M003 fixed
+   with its diagnostics dir. The harness now has `retain()`/`retain_suite()`
+   into `m002-live-diagnostics/` (run JSONs, qualification receipts,
+   per-scenario comparisons, oracle runs/proofs), uploaded as a workflow
+   artifact, and STOPPED perf-pair verdicts name the offending
+   scenario/metric, disposition, and reason (`insufficient_trials`,
+   `comparability_mismatch`, `nonpositive_relative_value`,
+   `baseline_required`). Both oha oracle blocks retain before verdicting (a
+   STOPPED oracle previously exited before retaining anything), and the
+   stage-c-real oracle is upgraded to the asserted pattern. Source: `a895fb8`.

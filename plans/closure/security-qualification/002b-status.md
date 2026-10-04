@@ -118,3 +118,13 @@ closure corrective:
   Connection-churn controls and subject telemetry were subsequently delivered
   under M003b and M003c; mixed malicious load and attack-body load remain
   outside the closed M002 scope.
+
+## Addendum — 2026-10-04 (successor reference; historical record unchanged)
+
+The §8 sample policy above is superseded: the six proxy performance scenarios
+now run 12000 requests per trial (gates frozen), the Linux-only gate on the
+same-source proof is removed, and the M002 live harness retains stage
+diagnostics past `$WORK`. Evidence and measurement are recorded in the
+terminal corrective record,
+`plans/closure/security-qualification-m002-corrective/002-status.md` §12;
+the conditional evidence above is preserved exactly as recorded.

@@ -217,3 +217,22 @@ CI run `37143714313` is green on the same revision. `m003d-4` is `NOT-EXECUTED`
 because `oha` is not installed on the hosted runner, which is an external-tool
 availability condition and not a verdict; it remains executed in the local
 harness. Nothing in M003d is outstanding on the Eggbench side.
+
+## Addendum — 2026-10-04 (m003d-4 executes hosted; assertion from evidence)
+
+The `NOT-EXECUTED` above was an external-tool availability condition, and it
+is now removed rather than re-explained. `live-tools.yml` provisions `oha`
+from a pinned release asset (`v1.16.0`, digest-verified, fail-closed) via
+`scripts/qualification/provision-external-oracles.sh`, so `m003d-4` executes
+on the hosted runners instead of reporting `NOT-EXECUTED` there.
+
+The stage's claim is also tightened at the same time. The previous wording
+said "base + candidate compared", but `body-oha-c8` declares only absolute
+correctness gates (`expected_outcome_mismatch_rate`,
+`transport_error_rate`, both 0) with throughput/latency diagnostic, so there
+was no relative comparison to make. The harness now asserts each arm from its
+run JSON and bundle via `scripts/qualification/assert-oracle-run.py`
+(completed, both absolute gates observed at zero in every measured trial,
+observations producer-attributed to `oha`) and records the oracle version and
+binary digest in the verdict. Run and proof JSONs are retained past `$WORK`.
+Source: `973451f`. Hosted confirmation is pending the in-flight live runs.

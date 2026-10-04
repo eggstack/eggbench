@@ -268,3 +268,16 @@ verified (see `plans/closure/security-qualification/003d-status.md`). Overall M0
 closure inherits the same single upstream condition, because the M003 claim
 "subject telemetry participates in measured evidence" cannot be asserted while
 the pinned owner publishes zeros.
+## Addendum — 2026-10-04 (counter-branch regression test committed)
+
+The live-value classification fix (`894fee1` classified by metric kind,
+`b03037a` kept the counter branch reachable after `894fee1`'s early
+`continue` skipped it) had no committed regression test: routine verification
+ran the fixed script but nothing would have caught a reintroduction. That gap
+is now closed by `crates/eggbench-cli/tests/m003_live_value_classification.rs`
+(11 cases through the real `assert-subject-telemetry.py` on synthetic
+bundles): positive gauge, allow-zero health gauge, unclassified strict gauge,
+counter positive/advancing/missing, negative values, dropped-sample count,
+neighbor classification, and the real `m003c-13b` shape. Reintroducing the
+`894fee1` defect fails exactly the 3 counter cases; the fixed script passes
+11/11. Source: `973451f`.
