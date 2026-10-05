@@ -387,7 +387,16 @@ pub fn production_service_adapters() -> ServiceAdapterRegistry {
 /// Build the production workload executor for the resolved driver name.
 ///
 /// The factory lives here, not in `main.rs`, so adapter selection stays
-/// behind the registry seam. Only catalog-registered drivers resolve.
+/// behind the registry seam.
+///
+/// Dispatch is by name, NOT by catalog lookup: a driver reaches its executor
+/// only if this function has an arm for its name. Driver names are shared
+/// `*_DRIVER_NAME` constants rather than literals, so the names themselves
+/// cannot drift apart, but a driver could still be added to the catalog with
+/// no arm here (or an arm with no catalog entry). The test
+/// `every_catalog_workload_driver_has_a_dispatch_arm` in this module asserts
+/// that the two sets agree.
+///
 /// External-process drivers resolve their binary synchronously here so a
 /// missing binary fails before managed startup; version probing runs in
 /// `run` preflight with executors self-probing on first execution.
@@ -1001,5 +1010,46 @@ mod tests {
         let driver = descriptor.to_descriptor();
         assert_eq!(driver.name.as_str(), "fake-load");
         assert_eq!(driver.category, DriverCategory::Workload);
+    }
+
+    /// Every workload driver the production catalog registers must be
+    /// dispatchable, and every dispatchable name must be registered.
+    ///
+    /// The two inventories are maintained separately: the catalog in
+    /// `eggbench-drivers` and the arm list in
+    /// `production_workload_executor`. They currently agree exactly, but
+    /// nothing enforced that, so this test is the enforcement.
+    ///
+    /// An arm that exists but whose binary is missing still fails — on binary
+    /// resolution, not on dispatch — so the assertion distinguishes the two
+    /// by the specific "no production executor" message.
+    #[test]
+    fn every_catalog_workload_driver_has_a_dispatch_arm() {
+        const NO_EXECUTOR: &str = "no production executor for workload driver";
+        let catalog = eggbench_drivers::production_catalog();
+        let mut registered: Vec<String> = catalog
+            .descriptors()
+            .iter()
+            .filter(|descriptor| descriptor.category == DriverCategory::Workload)
+            .map(|descriptor| descriptor.name.as_str().to_owned())
+            .collect();
+        registered.sort();
+
+        assert!(
+            !registered.is_empty(),
+            "production catalog registers no workload driver"
+        );
+
+        for name in &registered {
+            let driver = Name::new(name.as_str()).expect("catalog name is valid");
+            // A resolved plan is not supplied: some arms need one, and their
+            // error is about the workload shape, not about dispatch.
+            if let Err(reason) = production_workload_executor(&driver, None) {
+                assert!(
+                    !reason.contains(NO_EXECUTOR),
+                    "catalog registers workload driver {name} but no dispatch arm exists: {reason}"
+                );
+            }
+        }
     }
 }

@@ -91,6 +91,13 @@ pub enum MissingReason {
     /// No raw observation was supplied for the requested metric.
     SourceNotProvided,
     /// The driver does not support the requested metric.
+    ///
+    /// Reserved: `normalize_trial_metrics` currently emits only
+    /// [`Self::SourceNotProvided`] and [`Self::TrialNotCompleted`]. A driver
+    /// that cannot supply a requested metric is handled at the producing
+    /// adapter, not here, so this variant is part of the `TrialMetrics` v1
+    /// vocabulary but is not yet constructed. Retained rather than deleted so
+    /// the serialized vocabulary does not churn if a normalizer path is added.
     UnsupportedByDriver,
     /// The trial did not complete, so no metric evidence is claimed.
     TrialNotCompleted,
@@ -193,6 +200,12 @@ pub struct HistogramReference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
     /// Optional link from a percentile scalar to its source histogram.
+    ///
+    /// Reserved: the normalizer always writes `None` (raw histogram input
+    /// carries no back-reference), and no producer populates it. The field is
+    /// `Option` with `skip_serializing_if`, so it is absent from serialized
+    /// output and costs nothing; it is retained so a producer that can supply
+    /// the link does not require a `TrialMetrics` v2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_metric: Option<Name>,
 }

@@ -126,7 +126,6 @@ impl ArtifactPath {
                     || part.ends_with('.')
                     || is_windows_device_name(part)
             })
-            || segments.first().is_some_and(|part| part.ends_with(':'))
             || value.eq_ignore_ascii_case("manifest.json")
         {
             return Err(BundleError::UnsafeArtifactPath(value));
@@ -379,7 +378,11 @@ pub struct BundleManifest {
     pub schema_version: SchemaVersion,
     /// Unique run identity.
     pub run_id: RunId,
-    /// Lifecycle outcome. Missing only in the normalized view of ambiguous v1 evidence.
+    /// Lifecycle outcome. Always present in a v2 manifest: the normalized
+    /// view of legacy v1 evidence assigns it in every arm, and validation
+    /// rejects an absent value. The `Option` is retained so the type can
+    /// round-trip a hand-written manifest that omits the field long enough to
+    /// report the omission as a validation error.
     pub execution_status: Option<ExecutionStatus>,
     /// Comparison outcome; absent when comparison was not performed.
     pub comparison_verdict: Option<ComparisonVerdict>,
@@ -1274,9 +1277,15 @@ impl BundleReader {
         if !descriptor.artifacts.contains(&expected) {
             return Ok(None);
         }
-        let mut file = self.open_artifact(&expected)?;
+        let file = self.open_artifact(&expected)?;
+        // Bound the read, not just the result: `read_to_end` alone would let
+        // an artifact larger than the cap drive an allocation of that size
+        // before the bound below could reject it. Declared sizes are
+        // validated, so the only way to exceed the cap is actual bytes on
+        // disk in a shared or imported bundle.
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
+        file.take(MAX_ARTIFACT_BYTES + 1)
+            .read_to_end(&mut bytes)
             .map_err(|error| io_error(expected.to_path_buf(), error))?;
         if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
             return Err(BundleError::BoundExceeded("trial metrics bytes"));
@@ -1308,6 +1317,31 @@ impl BundleReader {
         }
         let relative = path.to_path_buf();
         secure_open(&self.root, &relative)
+    }
+
+    /// Re-read the exact manifest bytes this bundle was opened from.
+    ///
+    /// Consumers that must bind to the *bytes* — for example to derive a
+    /// bundle identity digest — need the serialized form, not the parsed
+    /// manifest. This read is bounded by [`MAX_MANIFEST_BYTES`] and goes
+    /// through the same no-follow path resolution as every other artifact, so
+    /// it cannot be redirected outside the bundle and cannot exceed the cap
+    /// the reader validated at open time.
+    ///
+    /// # Errors
+    /// Returns [`BundleError::BoundExceeded`] if the manifest exceeds the
+    /// cap, or an I/O/symlink error if it cannot be read securely.
+    pub fn manifest_bytes(&self) -> Result<Vec<u8>, BundleError> {
+        let manifest_path = self.root.join("manifest.json");
+        let file = secure_open(&self.root, Path::new("manifest.json"))?;
+        let mut bytes = Vec::new();
+        file.take(MAX_MANIFEST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| io_error(manifest_path, error))?;
+        if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+            return Err(BundleError::BoundExceeded("manifest bytes"));
+        }
+        Ok(bytes)
     }
 
     fn validate_paths(&self) -> Result<(), BundleError> {

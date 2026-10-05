@@ -7,13 +7,13 @@ use eggbench_core::{
     ResolvedPairedArm, ResolvedPairedDesign, ResolvedPlan, RunId, Sensitivity, Service,
     ServiceKind, Subject, TrialArm, TrialExecutionResult, TrialPolicy, Workload,
 };
-use eggbench_runner::test_support::FakeWorkload;
+use eggbench_runner::test_support::{FakeTelemetryCollector, FakeTelemetryHandle, FakeWorkload};
 use eggbench_runner::{
     CorrectnessRegistry, DiagnosticRegistry, DrainContext, FailureCategory, InvocationContext,
     InvocationKind, LocalSession, MapSecretProvider, OrchestrationError, PhaseEvent, PhaseKind,
     PlatformAdapter, PlatformSupport, ResetContext, ResetHook, ResetRegistry, RunEvidenceArtifact,
-    RunnerOptions, ServiceAdapterRegistry, TelemetryRegistry, UnixPlatform, WorkloadArtifact,
-    WorkloadExecutor, WorkloadOutput, execute_run,
+    RunnerOptions, ServiceAdapterRegistry, TelemetryOutput, TelemetryRegistry, UnixPlatform,
+    WorkloadArtifact, WorkloadExecutor, WorkloadOutput, execute_run,
 };
 use std::{
     collections::BTreeMap,
@@ -550,6 +550,107 @@ async fn schedules_warmup_trials_reset_cooldown_and_finalizes_separate_evidence(
     assert!(
         second.measurement_start_offset_ns
             > json.measurement_start_offset_ns + json.measurement_elapsed_ns
+    );
+}
+
+#[tokio::test]
+async fn maximal_phase_shape_stays_within_the_reserved_phase_bound() {
+    // One shape that exercises every source of phase events: a warmup, three
+    // measured trials, a registered reset capability (so Reset fires between
+    // trials), a preflight-active telemetry collector (so the second Drain
+    // fires), one diagnostic execution, and one correctness execution.
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    resolved.trials.measured = PositiveCount::new(3).unwrap();
+    resolved.trials.warmup = 1;
+    resolved.trials.reset = ResetPolicy::Reference {
+        reference: name("reset-app"),
+    };
+    resolved
+        .trials
+        .timeouts
+        .insert(name("reset"), DurationMs::new(500).unwrap());
+    resolved.telemetry = vec![eggbench_core::TelemetryRequest {
+        source: name("fake-telemetry"),
+        fields: Vec::new(),
+        required: true,
+    }];
+    resolved.diagnostics = vec![diagnostic_request(
+        "pre-check",
+        eggbench_core::DiagnosticPhase::PreWorkload,
+        true,
+    )];
+    resolved.security_checks = vec![security_request("waf-sqli")];
+
+    let targets = Arc::new(Mutex::new(Vec::new()));
+    let mut resets = ResetRegistry::default();
+    resets.register(name("reset-app"), Arc::new(FakeReset(Arc::clone(&targets))));
+    let mut telemetry = TelemetryRegistry::new();
+    let (handle, proxy) = FakeTelemetryHandle::wrap(FakeTelemetryCollector::new(
+        "fake-telemetry",
+        TelemetryOutput::default(),
+    ));
+    telemetry.register(proxy).expect("register fake");
+    let mut diagnostics = diagnostic_registry_for(&[], &[]);
+    let mut correctness = correctness_registry_for(&[], &[]);
+
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &resets,
+        &mut telemetry,
+        &mut diagnostics,
+        &mut correctness,
+        writer_with_bounds(temp.path(), 128, 8 * 1024 * 1024, 64 * 1024 * 1024),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.execution_status, ExecutionStatus::Completed);
+    // The collector was preflight-active, which is what adds the second Drain.
+    assert_eq!(handle.preflights().await, 1);
+    assert_eq!(handle.drains().await, 1);
+    let kinds = phase_kinds(&outcome);
+    // The maximal shape: fixed phases (readiness, workload Drain, telemetry
+    // Drain, teardown, finalization) plus one warmup, three measured trials,
+    // two inter-trial Reset/Cooldown pairs, one diagnostic, one correctness.
+    assert_eq!(
+        kinds,
+        vec![
+            PhaseKind::StartupReadiness,
+            PhaseKind::DiagnosticsPre,
+            PhaseKind::CorrectnessChecks,
+            PhaseKind::Warmup,
+            PhaseKind::MeasuredTrial,
+            PhaseKind::Reset,
+            PhaseKind::Cooldown,
+            PhaseKind::MeasuredTrial,
+            PhaseKind::Reset,
+            PhaseKind::Cooldown,
+            PhaseKind::MeasuredTrial,
+            PhaseKind::Drain,
+            PhaseKind::Drain,
+            PhaseKind::Teardown,
+            PhaseKind::Finalization,
+        ]
+    );
+    // `execute_run_with_diagnostics` reserves
+    // `warmups + 3 * trials + FIXED_PHASE_EVENTS + diagnostics + correctness`
+    // and fails preflight when the recorded phases would exceed it, so a
+    // successful run already proves the count fits. Assert the arithmetic
+    // anyway so a bound regression cannot pass by leaving room to spare.
+    let (warmups, trials, fixed, diagnostic_requests, correctness_requests) =
+        (1_usize, 3_usize, 5_usize, 1_usize, 1_usize);
+    let reserved = warmups + (3 * trials) + fixed + diagnostic_requests + correctness_requests;
+    assert_eq!(kinds.len(), 15);
+    assert!(
+        kinds.len() <= reserved,
+        "{} recorded phases exceed the reserved bound {reserved}",
+        kinds.len()
     );
 }
 
@@ -2067,8 +2168,23 @@ fn diagnostic_registry_for(negative_ids: &[&str], fail_ids: &[&str]) -> Diagnost
     fake.negative_ids = negative_ids.iter().map(|id| (*id).to_owned()).collect();
     fake.fail_ids = fail_ids.iter().map(|id| (*id).to_owned()).collect();
     let mut registry = DiagnosticRegistry::new();
-    registry.register(Box::new(fake));
+    registry.register(Box::new(fake)).expect("register fake");
     registry
+}
+
+#[test]
+fn duplicate_diagnostic_source_registration_rejected() {
+    let mut registry = DiagnosticRegistry::new();
+    registry
+        .register(Box::new(FakeDiagnosticExecutor::new("eggprobe")))
+        .expect("first");
+    let error = registry
+        .register(Box::new(FakeDiagnosticExecutor::new("eggprobe")))
+        .expect_err("duplicate source must be rejected");
+    assert!(
+        error.contains("eggprobe"),
+        "error names the source: {error}"
+    );
 }
 
 fn phase_kinds(outcome: &eggbench_runner::RunOutcome) -> Vec<PhaseKind> {
@@ -2245,6 +2361,51 @@ async fn optional_pre_negative_continues_with_warning_evidence() {
     assert!(!workload.invocations.is_empty(), "workload continued");
     let index = read_diagnostics_index(&outcome);
     assert_eq!(index["executions"][0]["disposition"], "negative");
+}
+
+#[tokio::test]
+async fn diagnostic_operational_failure_is_not_reported_as_a_workload_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut resolved = plan();
+    // The first request supplies producer provenance for the run-level index;
+    // the second executor returns an operational failure, which is the path
+    // under test.
+    resolved.diagnostics = vec![
+        diagnostic_request("pre-check-ok", DiagnosticPhase::PreWorkload, true),
+        diagnostic_request("pre-check-fail", DiagnosticPhase::PreWorkload, true),
+    ];
+    let mut session = LocalSession::prepare(&resolved, runner_options(temp.path())).unwrap();
+    let mut workload = FakeWorkload::default();
+    let mut diagnostics = diagnostic_registry_for(&[], &["pre-check-fail"]);
+    let outcome = execute_run_with_diagnostics(
+        &mut session,
+        &resolved,
+        &mut workload,
+        &ResetRegistry::default(),
+        &mut TelemetryRegistry::new(),
+        &mut diagnostics,
+        &mut CorrectnessRegistry::new(),
+        writer(temp.path()),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.execution_status, ExecutionStatus::Invalid);
+    // A diagnostic executor failure is a diagnostic failure: the workload never
+    // ran, so claiming `WorkloadFailed` would describe evidence that does not
+    // exist.
+    assert_eq!(
+        outcome.primary_failure,
+        Some(FailureCategory::DiagnosticFailed)
+    );
+    assert!(workload.invocations.is_empty(), "no workload began");
+    // The category is serialized verbatim into the staged diagnostic index.
+    let index = read_diagnostics_index(&outcome);
+    let executions = index["executions"].as_array().unwrap();
+    assert_eq!(executions.len(), 2);
+    assert_eq!(executions[1]["id"], "pre-check-fail");
+    assert_eq!(executions[1]["disposition"], "failed");
+    assert_eq!(executions[1]["report_status"], "executor_diagnosticfailed");
 }
 
 #[tokio::test]
@@ -2460,8 +2621,23 @@ fn correctness_registry_for(fail_ids: &[&str], invalid_ids: &[&str]) -> M004aCor
     fake.fail_ids = fail_ids.iter().map(|id| (*id).to_owned()).collect();
     fake.invalid_ids = invalid_ids.iter().map(|id| (*id).to_owned()).collect();
     let mut registry = M004aCorrectnessRegistry::new();
-    registry.register(Box::new(fake));
+    registry.register(Box::new(fake)).expect("register fake");
     registry
+}
+
+#[test]
+fn duplicate_correctness_source_registration_rejected() {
+    let mut registry = M004aCorrectnessRegistry::new();
+    registry
+        .register(Box::new(FakeCorrectnessExecutor::new("eggsec-waf")))
+        .expect("first");
+    let error = registry
+        .register(Box::new(FakeCorrectnessExecutor::new("eggsec-waf")))
+        .expect_err("duplicate source must be rejected");
+    assert!(
+        error.contains("eggsec-waf"),
+        "error names the source: {error}"
+    );
 }
 
 fn read_security_index(outcome: &eggbench_runner::RunOutcome) -> serde_json::Value {

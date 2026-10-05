@@ -106,9 +106,11 @@ writes normalized `TrialMetrics` itself. See
 ## Post-start cleanup contract
 
 Every terminal exit from `execute_run` that follows a successful managed
-startup routes through one cleanup boundary: workload drain is attempted if
-the executor was reached, and `LocalSession::shutdown` is attempted whenever
-managed startup created owned processes. Any error encountered during
+startup routes through one cleanup boundary: workload drain is unconditional
+once the tail is reached — the workload adapter owns its cleanup hook and is
+expected to be idempotent when no invocation was entered — and
+`LocalSession::shutdown` is attempted whenever managed startup created owned
+processes. Any error encountered during
 evidence staging accumulates as the primary cause and is preserved across
 the cleanup tail. Drain or teardown failures observed during that tail are
 attached as secondary cleanup diagnostics on the returned

@@ -122,6 +122,6 @@ mod tests {
     }
 
     fn eggbench_test_capture(bytes: &[u8]) -> crate::external::command::CapturedStream {
-        crate::external::command::CapturedStream::collect(bytes.to_vec(), bytes.len() as u64, 65536)
+        crate::external::command::CapturedStream::from_parts(bytes.to_vec(), bytes.len() as u64)
     }
 }

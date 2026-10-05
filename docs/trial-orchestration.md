@@ -29,8 +29,10 @@ trial 1. No reset or cooldown follows the final trial.
 Every code path that reaches the post-experimental tail — workload/reset
 failure, cancellation, evidence-staging failure — runs the same drain and
 teardown sequence before any evidence/finalization disposition is returned.
-Workload drain is attempted whenever the executor was reached, and managed
-`LocalSession::shutdown` is attempted whenever startup created owned processes.
+Workload drain is **unconditional** once the cleanup tail is reached: the
+workload adapter is the canonical owner of its cleanup hook and is expected to
+be idempotent when no invocation was entered. Managed `LocalSession::shutdown`
+is attempted whenever startup created owned processes.
 A drain or teardown failure is reported as secondary cleanup diagnostics; it
 never replaces the primary failure cause.
 
@@ -45,9 +47,9 @@ evidence stores run-relative nanosecond offsets and durations, never a raw
 clock value.
 
 One completed repetition receives one positive `TrialId`. Its
-`TrialExecutionResult` schema v1 stores the ID, measurement offset and
-duration, terminal execution status, and an optional typed redaction-safe
-failure category. It carries no normalized metrics or comparison verdict.
+`TrialExecutionResult` schema v2 stores the ID, measurement offset,
+duration, arm and pair identity, terminal execution status, and an optional
+typed redaction-safe failure category. It carries no normalized metrics or comparison verdict.
 Warmups have their own ordinal namespace and `warmups/NNN/result.json`
 artifacts with a distinct role; they never appear in `manifest.trials`.
 
@@ -83,6 +85,7 @@ M002 recognizes exactly these `TrialPolicy.timeouts` names:
 | `warmup` | Optional warmup bound; defaults to `measurement` |
 | `reset` | Required when reset policy is not `none` |
 | `drain` | Required independent workload cleanup bound |
+| `telemetry` | Optional telemetry collector bound; defaults to `measurement` |
 
 Unknown keys fail preflight before startup. `cooldown_ms` bounds cooldown
 directly. Workload `duration_ms` remains workload intent and does not replace

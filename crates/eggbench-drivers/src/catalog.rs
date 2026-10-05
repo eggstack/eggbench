@@ -1,15 +1,22 @@
 //! Production driver-catalog ownership.
 //!
-//! The catalog is the authoritative production driver inventory. With the
-//! `eggstack-http` feature it registers the `EggServe` controlled origin
-//! (`eggserve-origin`) and the `Eggfetch` native HTTP workload
-//! (`eggfetch-http`); with the `gregg` feature it registers the `Gregg`
-//! host-telemetry driver (`gregg`). The external-process oracles (`oha`,
-//! `h2load`, `iperf3`), the `EggReplay` semantic workload
-//! (`eggreplay-semantic`), the `Eggprobe` pre/post diagnostic driver
-//! (`eggprobe`), and the `Eggsec` strict-scope WAF correctness driver
-//! (`eggsec-waf`) register unconditionally. Without features and
-//! without installed tools only the external descriptors remain.
+//! The catalog is the authoritative production driver inventory.
+//!
+//! Seven external-process drivers register unconditionally: the `oha`,
+//! `h2load`, and `iperf3` traffic generators, the `EggReplay` semantic
+//! workload (`eggreplay-semantic`), the `Eggprobe` pre/post diagnostic
+//! driver (`eggprobe`), and the `Eggsec` strict-scope WAF correctness
+//! (`eggsec-waf`) and WAF-load (`eggsec-load`) drivers. They are
+//! unconditional because a missing binary is a resolution/preflight
+//! failure, not a link-time one.
+//!
+//! Feature-gated registrations: `eggstack-http` adds the `EggServe`
+//! controlled origin (`eggserve-origin`), the `Eggfetch` native HTTP
+//! workload (`eggfetch-http`), and the fixed HTTP corpus correctness driver
+//! (`eggbench-http-corpus`); `eggstack-path` implies `eggstack-http` and adds
+//! the listener-free `eggress-route` and `eggchaos-stream` path drivers;
+//! `gregg` and `prometheus-http` each add one host-telemetry descriptor.
+//! Without any feature only the seven external descriptors remain.
 //! Qualification fakes remain test/qualification-only and are never linked
 //! through this catalog.
 
@@ -116,6 +123,40 @@ impl DriverCatalog {
             .find(|d| d.category == DriverCategory::Correctness && d.name == *name)
     }
 
+    /// Look up a network-path route adapter by canonical name.
+    #[must_use]
+    pub fn route(&self, name: &Name) -> Option<&DriverDescriptor> {
+        self.descriptors
+            .iter()
+            .find(|d| d.category == DriverCategory::Route && d.name == *name)
+    }
+
+    /// Look up a network-path fault adapter by canonical name.
+    #[must_use]
+    pub fn fault(&self, name: &Name) -> Option<&DriverDescriptor> {
+        self.descriptors
+            .iter()
+            .find(|d| d.category == DriverCategory::Fault && d.name == *name)
+    }
+
+    /// Look up an execution-provider adapter by canonical name.
+    ///
+    /// No production driver is registered in this category yet (ADR-0005
+    /// defers the remote/distributed provider boundary). The accessor exists
+    /// so the catalog can serve every `DriverCategory` it may hold.
+    #[must_use]
+    pub fn execution_provider(&self, name: &Name) -> Option<&DriverDescriptor> {
+        self.descriptors
+            .iter()
+            .find(|d| d.category == DriverCategory::ExecutionProvider && d.name == *name)
+    }
+
+    /// Look up any registered driver by canonical name, regardless of category.
+    #[must_use]
+    pub fn by_name(&self, name: &Name) -> Option<&DriverDescriptor> {
+        self.descriptors.iter().find(|d| d.name == *name)
+    }
+
     /// Number of registered production drivers.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -138,6 +179,91 @@ pub fn production_catalog() -> DriverCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every category the catalog registers must be reachable through an
+    /// accessor of the same name.
+    ///
+    /// The catalog registers `eggress-route` as `Route` and `eggchaos-stream`
+    /// as `Fault`, but the accessors were originally only present for the
+    /// five categories the CLI happened to need, so those two registrations
+    /// were reachable only by scanning `descriptors()`. `by_name` also gives
+    /// callers a category-independent lookup.
+    #[test]
+    fn every_registered_category_is_reachable_through_its_accessor() {
+        let catalog = production_catalog();
+        for descriptor in catalog.descriptors() {
+            let found = match descriptor.category {
+                DriverCategory::Workload => catalog.workload(&descriptor.name),
+                DriverCategory::Service => catalog.service(&descriptor.name),
+                DriverCategory::Telemetry => catalog.telemetry(&descriptor.name),
+                DriverCategory::Diagnostic => catalog.diagnostic(&descriptor.name),
+                DriverCategory::Correctness => catalog.correctness(&descriptor.name),
+                DriverCategory::Route => catalog.route(&descriptor.name),
+                DriverCategory::Fault => catalog.fault(&descriptor.name),
+                DriverCategory::ExecutionProvider => catalog.execution_provider(&descriptor.name),
+            };
+            assert!(
+                found.is_some(),
+                "no accessor resolves registered {:?} driver {}",
+                descriptor.category,
+                descriptor.name
+            );
+            // A category accessor must not resolve another category's driver.
+            for other in catalog.descriptors() {
+                if other.category != descriptor.category {
+                    assert_ne!(
+                        catalog.by_name(&descriptor.name).map(|d| d.category),
+                        Some(other.category),
+                        "{} resolved through the wrong accessor",
+                        descriptor.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn by_name_resolves_any_category_and_rejects_unknown_names() {
+        let catalog = production_catalog();
+        let known = catalog
+            .descriptors()
+            .first()
+            .cloned()
+            .expect("catalog is never empty");
+        let resolved = catalog.by_name(&known.name).expect("known name resolves");
+        assert_eq!(resolved.name, known.name);
+        assert_eq!(resolved.category, known.category);
+        assert!(
+            catalog
+                .by_name(&Name::new("no-such-driver").unwrap())
+                .is_none()
+        );
+    }
+
+    #[cfg(feature = "eggstack-path")]
+    #[test]
+    fn route_and_fault_descriptors_resolve_under_the_path_feature() {
+        let catalog = production_catalog();
+        let route = catalog
+            .route(&Name::new("eggress-route").unwrap())
+            .expect("eggress-route registered as Route");
+        assert_eq!(route.category, DriverCategory::Route);
+        let fault = catalog
+            .fault(&Name::new("eggchaos-stream").unwrap())
+            .expect("eggchaos-stream registered as Fault");
+        assert_eq!(fault.category, DriverCategory::Fault);
+        // Cross-category lookup must not resolve.
+        assert!(
+            catalog
+                .fault(&Name::new("eggress-route").unwrap())
+                .is_none()
+        );
+        assert!(
+            catalog
+                .route(&Name::new("eggchaos-stream").unwrap())
+                .is_none()
+        );
+    }
 
     #[test]
     fn production_catalog_matches_feature() {

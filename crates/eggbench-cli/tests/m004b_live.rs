@@ -324,10 +324,12 @@ async fn case_b_security_fail_with_performance_pass_combines_to_fail() {
     let eggsec_executable = eggbench_drivers::EggsecWafExecutor::resolve()
         .expect("eggsec resolves when the binary is installed");
     let mut correctness = CorrectnessRegistry::new();
-    correctness.register(Box::new(EggsecWafExecutor::from_resolved(
-        eggsec_executable,
-        temp.path().join("scope"),
-    )));
+    correctness
+        .register(Box::new(EggsecWafExecutor::from_resolved(
+            eggsec_executable,
+            temp.path().join("scope"),
+        )))
+        .expect("register eggsec correctness executor");
     let mut telemetry = TelemetryRegistry::new();
     let cancel = CancellationToken::new();
     let outcome = execute_run_with_diagnostics(

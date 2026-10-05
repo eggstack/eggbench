@@ -5,9 +5,13 @@
 //! post-workload after drain/before teardown. They are distinct from repeated
 //! trial telemetry and from workload execution.
 //!
-//! This module is sibling-neutral: no Eggprobe types cross here. Executors
-//! receive a resolved [`DiagnosticContext`] and return a [`DiagnosticOutput`]
-//! with bounded raw report bytes plus typed disposition/provenance.
+//! No sibling *types* cross here: executors receive a resolved
+//! [`DiagnosticContext`] and return a [`DiagnosticOutput`] with bounded raw
+//! report bytes plus typed disposition/provenance. Sibling *evidence
+//! vocabulary* does, deliberately — [`DiagnosticsIndex::validate_contract`]
+//! pins the recorded driver and machine schema so a bundle cannot claim a
+//! diagnostic contract the producer did not honour. Those pins are
+//! duplicated from `eggbench-drivers`; keep them in step.
 
 use eggbench_core::{DiagnosticPhase, RunId};
 use std::collections::BTreeMap;
@@ -223,12 +227,18 @@ impl DiagnosticRegistry {
         Self::default()
     }
 
-    /// Register an executor for its source label.
-    pub fn register(&mut self, executor: Box<dyn DiagnosticExecutor>) {
-        self.executors.insert(
-            executor.source().to_owned(),
-            Arc::new(tokio::sync::Mutex::new(executor)),
-        );
+    /// Register an executor for its source label. Duplicate sources are rejected.
+    ///
+    /// # Errors
+    /// Returns a human-readable reason when the source is already registered.
+    pub fn register(&mut self, executor: Box<dyn DiagnosticExecutor>) -> Result<(), String> {
+        let source = executor.source().to_owned();
+        if self.executors.contains_key(&source) {
+            return Err(format!("duplicate diagnostic executor {source}"));
+        }
+        self.executors
+            .insert(source, Arc::new(tokio::sync::Mutex::new(executor)));
+        Ok(())
     }
 
     /// Look up an executor by source label.
@@ -309,7 +319,7 @@ impl DiagnosticExecutor for FakeDiagnosticExecutor {
             self.executed.push(context.diagnostic_id.clone());
             self.phases.push(context.phase);
             if self.fail_ids.contains(&context.diagnostic_id) {
-                return Err(crate::orchestration::FailureCategory::WorkloadFailed);
+                return Err(crate::orchestration::FailureCategory::DiagnosticFailed);
             }
             let negative = self.negative_ids.contains(&context.diagnostic_id);
             let report = serde_json::json!({

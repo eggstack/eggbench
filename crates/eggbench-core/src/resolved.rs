@@ -615,7 +615,13 @@ pub fn resolve_plan(
             for telemetry in &plan.telemetry {
                 // The generic Prometheus collector derives fields from a
                 // workspace-pinned mapping loaded by the CLI. Its descriptor
-                // cannot enumerate owner-defined output metric names.
+                // cannot enumerate owner-defined output metric names, so a
+                // `required: true` field cannot be checked here. Resolution
+                // and `doctor` therefore accept the plan; a field the mapping
+                // does not declare is rejected later, when `run` constructs
+                // the collector (`CapabilityPreflight`, category
+                // `telemetry`). `doctor` does not construct the collector and
+                // so does not see that rejection. Tracked as a follow-up.
                 if telemetry.source.as_str() == "prometheus-http" {
                     continue;
                 }

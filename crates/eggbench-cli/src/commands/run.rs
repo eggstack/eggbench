@@ -2,8 +2,18 @@
 //!
 //! The command pipeline is:
 //! `parse → validate → resolve → doctor/preflight → collect environment +
-//! subject snapshot → prepare BundleWriter → LocalSession::prepare →
-//! WorkloadExecutor/reset hooks → execute_run → machine/human result`.
+//! subject snapshot → LocalSession::prepare → prepare BundleWriter →
+//! WorkloadExecutor/reset hooks → execute_run_with_diagnostics →
+//! machine/human result`.
+//!
+//! `LocalSession::prepare` precedes `prepare_bundle` because preparing the
+//! session starts no process; it resolves the spawn plan and registers
+//! adapters only. Bundling precedes execution so a staging failure cannot
+//! leave a managed process running.
+//!
+//! The CLI calls `execute_run_with_diagnostics`, not `execute_run`: the
+//! former is the entry point that also runs the diagnostic and correctness
+//! seams. `execute_run` remains available for callers that need neither.
 //!
 //! Production `eggbench` resolves against the production catalog: without
 //! installed external tools or the `eggstack-http` feature, resolution or
@@ -198,9 +208,11 @@ pub async fn run(
         let preflight_cancel = CancellationToken::new();
         match eggbench_drivers::preflight_eggprobe(&preflight_cancel).await {
             Ok((executable, probed, _proof)) => {
-                diagnostic_registry.register(Box::new(
+                if let Some(failure) = registration_failure(diagnostic_registry.register(Box::new(
                     eggbench_drivers::EggProbeExecutor::from_resolved(executable, probed.version),
-                ));
+                ))) {
+                    return Ok(PresentedCommandResult::failure("run", &failure));
+                }
             }
             Err(error) => {
                 let detail = error.to_string();
@@ -226,12 +238,14 @@ pub async fn run(
         let preflight_cancel = CancellationToken::new();
         match eggbench_drivers::preflight_eggsec(&preflight_cancel).await {
             Ok((executable, probed)) => {
-                correctness_registry.register(Box::new(
-                    eggbench_drivers::EggsecWafExecutor::from_resolved(
+                if let Some(failure) = registration_failure(correctness_registry.register(
+                    Box::new(eggbench_drivers::EggsecWafExecutor::from_resolved(
                         executable,
                         security_scope_dir.clone(),
-                    ),
-                ));
+                    )),
+                )) {
+                    return Ok(PresentedCommandResult::failure("run", &failure));
+                }
                 let _ = probed;
             }
             Err(error) => {
@@ -250,7 +264,11 @@ pub async fn run(
     }
     if !resolved.http_corpus_checks.is_empty() {
         #[cfg(feature = "eggstack-http")]
-        correctness_registry.register(Box::new(eggbench_drivers::HttpCorpusExecutor));
+        if let Some(failure) = registration_failure(
+            correctness_registry.register(Box::new(eggbench_drivers::HttpCorpusExecutor)),
+        ) {
+            return Ok(PresentedCommandResult::failure("run", &failure));
+        }
         #[cfg(not(feature = "eggstack-http"))]
         {
             let failure = CliFailure::new(
@@ -683,6 +701,24 @@ fn failure_from_runner_error(error: eggbench_runner::RunnerError) -> CliFailure 
         RunnerError::ProcessExitedEarly { .. } => "process_exited_early",
     };
     CliFailure::new(category, error.to_string(), ExitCode::CapabilityPreflight)
+}
+
+/// Map a rejected driver registration to a preflight failure.
+///
+/// The production CLI registers each diagnostic and correctness source at
+/// most once, so a duplicate is a wiring defect rather than input data. It is
+/// surfaced instead of silently keeping the second executor: registration
+/// captures the resolved executable path and the preflight proof, and
+/// overwriting would discard the first executor's with nothing in the
+/// evidence recording the replacement.
+fn registration_failure(result: Result<(), String>) -> Option<CliFailure> {
+    result.err().map(|detail| {
+        CliFailure::new(
+            "driver_registration_conflict",
+            detail,
+            ExitCode::CapabilityPreflight,
+        )
+    })
 }
 
 fn failure_from_bundle_error(error: eggbench_core::BundleError) -> CliFailure {

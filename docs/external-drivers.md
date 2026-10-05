@@ -24,8 +24,9 @@ binary and reports the outcome (`pass`, `unsupported-contract`,
 `probe-failed`, `missing-binary`); without requested diagnostics no process
 is spawned. `run` always handshakes before managed startup.
 
-Feature policy: `default = []`, `external-command = [...]` (substrate only).
-Default builds contain no protocol client/server dependency.
+Feature policy: `default = []`. The external command substrate is
+unconditional and is not feature-gated. Default builds contain no protocol
+client/server dependency.
 
 ## Resolution policy
 
@@ -45,11 +46,16 @@ Default builds contain no protocol client/server dependency.
   signature.
 - argv metacharacters stay literal; environment is `env_clear` plus explicit
   driver variables only (deterministic `LC_ALL=C`/`LANG=C` for probes).
-  Secrets never appear in `Debug`/error output.
+  Tool stdout/stderr and full URLs never enter a *stored* `DriverError`, so
+  errors are safe to surface. This does **not** extend to `Debug`: the
+  command-spec type holding argv and environment derives `Debug` and renders
+  them verbatim, so a spec must never be debug-logged.
 
 ## Execution
 
-- argv[0] is the resolved path; no shell, no glob, no inherited cwd.
+- argv[0] is the resolved path; no shell and no glob. A spec that requests no
+  working directory leaves the child inheriting the parent's, so a spec that
+  depends on a specific cwd must state one.
 - stdout/stderr are drained concurrently with independent caps; draining
   continues after the cap so children cannot block on a full pipe.
   Truncation is explicit (`truncated`, retained/dropped/total counters).

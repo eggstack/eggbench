@@ -22,7 +22,7 @@ The external-process oracles (`oha`, `h2load`, `iperf3`) do not advertise `Netwo
 
 ## ResolvedPlan compatibility
 
-New resolutions use **ResolvedPlan schema v3**. It retains the source plan version, selected workload/service/route/fault descriptors, exact upstream versions, normalized intent, seed, warnings, and optional resolved network-path provenance. ResolvedPlan v1 and v2 remain accepted on read for legacy bundles and are not rewritten. Unknown fields and unknown capability variants require an explicit compatibility decision; concrete adapter and upstream versions remain in every resolved snapshot.
+New resolutions use **ResolvedPlan schema v6**. It retains the source plan version, selected workload/service/route/fault descriptors, exact upstream versions, normalized intent, seed, warnings, and optional resolved network-path provenance. ResolvedPlan v1 through v5 remain accepted on read for legacy bundles and are not rewritten. Unknown fields and unknown capability variants require an explicit compatibility decision; concrete adapter and upstream versions remain in every resolved snapshot.
 
 A resolved network path records the route request, selected route descriptor, `route-first-fault-second-v1` semantics, and—when configured—the ordered fault request, selected fault descriptor, and `splitmix64-v1` RNG identity. It is not a callable runtime object and contains no credentials or runtime handles.
 

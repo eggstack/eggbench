@@ -94,7 +94,7 @@ paired bundle under `eggbench.trial-bootstrap-paired.v1`:
 - the unpaired `compare` of a paired bundle is invalid per metric with
   the stable reason `paired_evidence_requires_paired_comparison`.
 
-The receipt (schema v2) records both bundle identities (identical),
+The receipt (schema v4) records both bundle identities (identical),
 comparability (matching by construction — one plan, one testbed), and a
 `paired` section: schedule, declared pairs, arm services and subjects,
 per-metric complete/excluded pairs, per-pair oriented effects in execution

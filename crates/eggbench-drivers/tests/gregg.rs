@@ -268,7 +268,7 @@ async fn preflight_rejects_warming_daemon() {
         .preflight(preflight_context())
         .await
         .expect_err("warming fails preflight");
-    assert_eq!(error.category, "health_unavailable");
+    assert_eq!(error.category(), "health_unavailable");
 }
 
 #[tokio::test]
@@ -278,7 +278,7 @@ async fn preflight_rejects_unreachable_daemon() {
         .preflight(preflight_context())
         .await
         .expect_err("refused connection fails");
-    assert_eq!(error.category, "health_unavailable");
+    assert_eq!(error.category(), "health_unavailable");
 }
 
 #[tokio::test]
@@ -295,7 +295,7 @@ async fn preflight_rejects_malformed_and_wrong_schema() {
         .preflight(preflight_context())
         .await
         .expect_err("malformed health fails");
-    assert_eq!(error.category, "schema_unsupported");
+    assert_eq!(error.category(), "schema_unsupported");
 
     // Valid JSON with wrong schema version on status.
     let mut payload = status_payload(1000, 10.0, 1_000, false);
@@ -314,7 +314,7 @@ async fn preflight_rejects_malformed_and_wrong_schema() {
         .preflight(preflight_context())
         .await
         .expect_err("wrong schema fails");
-    assert_eq!(error.category, "schema_unsupported");
+    assert_eq!(error.category(), "schema_unsupported");
 }
 
 #[tokio::test]
@@ -593,7 +593,7 @@ async fn cancellation_still_returns_captured_samples() {
         .stop_trial(trial_context(1))
         .await
         .expect_err("second stop fails");
-    assert_eq!(error.category, "polling_failed");
+    assert_eq!(error.category(), "polling_failed");
 }
 
 #[test]

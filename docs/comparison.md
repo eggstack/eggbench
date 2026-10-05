@@ -58,7 +58,7 @@ A candidate of `[101 × 7]` degrades `0.01 ≤ 0.05` and passes. This example as
 
 ## Policy v2: paired (`eggbench.trial-bootstrap-paired.v1`)
 
-`eggbench compare --paired <bundle.eggb>` compares the two arms of one paired bundle; see [`paired-experiments.md`](paired-experiments.md) for the schedule and drift methodology. Pairs are the resampling unit, absolute gates are invalid over paired evidence, and unpaired comparison of a paired bundle is invalid with a stable reason. Receipts use schema v2; schema-v1 unpaired receipts remain unchanged.
+`eggbench compare --paired <bundle.eggb>` compares the two arms of one paired bundle; see [`paired-experiments.md`](paired-experiments.md) for the schedule and drift methodology. Pairs are the resampling unit, absolute gates are invalid over paired evidence, and unpaired comparison of a paired bundle is invalid with a stable reason. Receipts use schema v4; schema-v1 and schema-v2 receipts remain readable, and a schema-v1 receipt keeps its metric-only aggregate meaning.
 
 Paired experiments cannot declare `network_path`: the plan is rejected before startup because both arms remain live while one run-scoped Eggfetch client/pool can reuse physical connections. Use an explicit schema-v3 path only for an unpaired native Eggfetch experiment; compare only bundles whose path identity matches under the policy above.
 

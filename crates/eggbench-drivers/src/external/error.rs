@@ -33,6 +33,12 @@ pub enum ErrorCategory {
     /// Tool exited nonzero.
     NonzeroExit,
     /// Output exceeded the configured bound.
+    ///
+    /// Reserved: truncation is currently reported on the outcome as the
+    /// `truncated` flag plus retained/dropped/total counters rather than as an
+    /// error category, so a truncated-but-completed invocation is a success.
+    /// Retained so the category exists if a tool adapter ever needs to fail
+    /// closed on truncation instead.
     OutputTruncated,
     /// Output parsing failed.
     ParseFailed,

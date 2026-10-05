@@ -39,6 +39,24 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 const MAX_PHASE_EVENTS: usize = 10_000;
+/// Net phase events reserved outside the per-trial and per-request terms.
+///
+/// Five phases are recorded outside any per-trial term: `StartupReadiness`,
+/// the workload `Drain`, the telemetry `Drain` (recorded only when a
+/// collector is preflight-active), `Teardown`, and `Finalization`. The
+/// `3 * trials` term counts T measured trials plus T-1 inter-trial
+/// Reset/Cooldown pairs as `3T`, so it already carries two more than the
+/// `3T - 2` those actually produce. Netting that surplus against the five
+/// fixed events gives `3`.
+///
+/// The value is exact rather than generous on purpose. `phase_bound` sizes
+/// the `trials/NNN/phase-NNN.json` artifact-size floor
+/// ([`preflight_evidence_capacity`]), and a bound larger than the events
+/// actually recorded raises that floor, so over-reserving would reject
+/// plans that fit. Under-reserving is the original defect: the floor is
+/// computed short, and staging fails at the end of the run after all
+/// measurement work has completed.
+const FIXED_PHASE_EVENTS: usize = 3;
 const MAX_WORKLOAD_ARTIFACTS_PER_INVOCATION: usize = 256;
 const NETWORK_PATH_EVIDENCE_BYTE_BOUND: u64 = 128 * 1024;
 const TRIAL_RESULT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
@@ -696,8 +714,6 @@ struct RunState {
     started: Vec<String>,
     /// Whether managed startup created at least one owned process.
     services_started: bool,
-    /// Whether the workload executor was entered for any invocation.
-    workload_entered: bool,
     /// Primary evidence-staging failure encountered during the experimental phase,
     /// if any. Preserved across the mandatory cleanup tail.
     staging_error: Option<BundleError>,
@@ -719,7 +735,6 @@ impl RunState {
             correctness: Vec::new(),
             started: Vec::new(),
             services_started: false,
-            workload_entered: false,
             telemetry_preflight_failure: None,
             staging_error: None,
         }
@@ -809,7 +824,7 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
             usize::try_from(trial_count).ok().and_then(|trials| {
                 warmups
                     .checked_add(trials.checked_mul(3)?)?
-                    .checked_add(2)?
+                    .checked_add(FIXED_PHASE_EVENTS)?
                     .checked_add(diagnostic_executions)?
                     .checked_add(correctness_executions)
             })
@@ -1037,7 +1052,6 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
             .await
             {
                 InvocationResult::Completed(output, elapsed, _) => {
-                    state.workload_entered = true;
                     match stage_warmup(&mut state.writer, ordinal, elapsed, None, output) {
                         Ok(()) => {
                             finish_phase(
@@ -1063,7 +1077,6 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
                     }
                 }
                 InvocationResult::Failure(category, elapsed, _) => {
-                    state.workload_entered = true;
                     let category = workload_failure(category);
                     state.status = status_for(category);
                     state.primary_failure = Some(category);
@@ -1198,7 +1211,6 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
             {
                 InvocationResult::Completed(output, elapsed, start_offset_ns) => {
                     let measurement_elapsed = output.measurement_elapsed.unwrap_or(elapsed);
-                    state.workload_entered = true;
                     // Telemetry closes after the captured elapsed, even on
                     // later failure paths below.
                     let (telemetry_outputs, telemetry_cleanup) = stop_trial_telemetry(
@@ -1307,7 +1319,6 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
                     }
                 }
                 InvocationResult::Failure(category, elapsed, start_offset_ns) => {
-                    state.workload_entered = true;
                     // Telemetry still closes after workload failure or
                     // cancellation when its window opened; stop failures
                     // attach as cleanup without rewriting the primary cause.
@@ -1443,8 +1454,8 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
 
     // ===========================================================
     // Mandatory cleanup tail. Every code path that reaches here
-    // runs workload drain (if entered) and managed-service
-    // teardown (if startup created processes) before any
+    // runs the unconditional workload drain and managed-service
+    // teardown (when startup created processes) before any
     // evidence/finalization disposition.
     // ===========================================================
 

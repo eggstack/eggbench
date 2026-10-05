@@ -84,9 +84,12 @@ One snapshot immediately after start, cadenced polling (never faster than
 250 ms), one final snapshot at stop within budget. Identical
 `observed_at_unix_ms` snapshots deduplicate. At most 256 snapshots and
 256 KiB of raw series bytes are retained per trial; aggregation always
-runs over exactly the retained set, overflow counts as dropped samples
-plus a warning, and truncation marks affected metrics invalid (NaN) rather
-than inventing values.
+runs over exactly the retained set, and overflow counts as dropped samples
+plus a warning. Truncation evicts the OLDEST retained samples to stay within
+the budget: affected metrics are simply absent from the retained set and a
+`dropped_samples` counter records the loss. It does not mark them invalid
+(NaN) and does not invent values. A consumer that needs to distinguish
+"truncated" from "never reported" must read the counter.
 
 ## Metrics
 
@@ -117,5 +120,6 @@ Per measured trial: `trials/NNN/telemetry/00-00-gregg.ndjson` (exact
 retained wire lines) and `trials/NNN/telemetry/00-01-gregg-provenance.json`
 (endpoint host/port, paths, wire schema, exact crate versions, system
 identity, cadence, sample/drop/error counts, no credentials).
-Interference accounting (poll interval, sample count, response bytes) is
-part of the provenance artifact; cadence tests bound the poll count.
+Interference accounting (poll interval and sample count) is part of the
+provenance artifact; cadence tests bound the poll count. Response byte counts
+are **not** recorded by the collector, so they are not part of the artifact.

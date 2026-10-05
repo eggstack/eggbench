@@ -1,8 +1,9 @@
 # SynVoid qualification profile v1 (M002a, synthetic routine scope)
 
-Status: routine scope implemented and locally verified. Live SynVoid
-qualification remains a named condition (upstream SynVoid asset contract
-open; see closure `plans/closure/security-qualification/002a-status.md`).
+Status: routine scope implemented and locally verified. The upstream SynVoid
+asset contract is CLOSED (see `upstream-manifest.md`); live SynVoid
+qualification remains a named condition tracked in closure
+`plans/closure/security-qualification/002a-status.md`.
 
 ## Ownership
 

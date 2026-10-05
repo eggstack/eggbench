@@ -28,9 +28,10 @@
 use crate::{
     ArtifactPath, ArtifactRecord, ArtifactRole, BundleError, BundleReader, DiagnosticPhase,
     DiagnosticProbe, DriverCategory, EnvironmentFieldClass, EnvironmentFingerprint,
-    EnvironmentPolicy, Gate, MetricDirection, MetricIntent, MetricRequest, Name, ObservationState,
-    ResolvedPlan, RunId, SchemaVersion, Subject, TrialArm, TrialExecutionResult,
-    TrialExecutionStatus, TrialId, TrialMetrics, Workload, validate_resolved_plan_bytes,
+    EnvironmentPolicy, Gate, MetricDirection, MetricIntent, MetricRequest, Name,
+    NormalizedObservation, ObservationState, ResolvedPlan, RunId, SchemaVersion, Subject, TrialArm,
+    TrialExecutionResult, TrialExecutionStatus, TrialId, TrialMetrics, Workload,
+    validate_resolved_plan_bytes,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -99,8 +100,37 @@ pub const STATISTICAL_METHOD_V1: &str = "unpaired-trial-bootstrap-percentile-95"
 /// Statistical method label recorded in paired receipts.
 pub const STATISTICAL_METHOD_V2: &str = "paired-trial-bootstrap-percentile-95";
 
-/// Normalization method label expected from trial evidence (informational).
+/// Upper bound on evaluated metrics recorded in one comparison receipt.
+///
+/// A resolved metric set is not itself bounded, so comparison must not let
+/// a bundle with an unbounded metric set produce a receipt that looks
+/// complete. Exceeding the bound truncates *and* records a warning; see
+/// [`push_metric_truncation_warning`].
 const MAX_RECEIPT_METRICS: usize = 256;
+
+/// Record that metric evaluation stopped at [`MAX_RECEIPT_METRICS`].
+///
+/// A receipt that silently drops metrics is indistinguishable from a receipt
+/// for a smaller plan, so truncation must be self-describing. The warning is
+/// advisory: the comparison still runs and still reaches a verdict, which is
+/// what "truncate" means here.
+fn push_metric_truncation_warning(
+    warnings: &mut Vec<ComparisonWarning>,
+    total: usize,
+    retained: usize,
+) {
+    if total <= MAX_RECEIPT_METRICS {
+        return;
+    }
+    warnings.push(ComparisonWarning {
+        category: "metric_receipt_truncated".to_owned(),
+        detail: format!(
+            "{total} resolved metrics exceed the {MAX_RECEIPT_METRICS}-metric receipt bound; \
+             {retained} evaluated, {} omitted",
+            total - retained
+        ),
+    });
+}
 
 /// Fail-closed comparison errors.
 #[derive(Debug, Error)]
@@ -467,6 +497,13 @@ pub struct ComparisonReceipt {
     /// Comparison policy identifier.
     pub policy_id: String,
     /// Eggbench build version that produced the receipt.
+    ///
+    /// This is a BUILD version, not a policy or schema version, and it is the
+    /// one receipt field that varies with the binary rather than the input.
+    /// Two receipts over identical bundles, policy, and seed are therefore
+    /// byte-identical only for a fixed build: a release rebuild changes this
+    /// field and the receipt digest with it. Reproducibility claims are
+    /// therefore scoped to a fixed build version.
     pub created_by_version: String,
     /// Candidate bundle identity.
     pub candidate_identity: BundleIdentity,
@@ -511,7 +548,7 @@ pub struct ComparisonReceipt {
     pub warnings: Vec<ComparisonWarning>,
 }
 
-/// Paired-design evidence for one paired comparison (receipt schema v2).
+/// Paired-design evidence for one paired comparison (receipt schema v4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairedComparisonSection {
@@ -2062,7 +2099,7 @@ fn load_security_evidence_identity(
 
 /// Parse and validate a standalone comparison receipt.
 ///
-/// Accepts schema v1, v2, and v3; unknown schema versions and unknown
+/// Accepts schema v1 through v4; unknown schema versions and unknown
 /// fields fail closed. Historical v1/v2 receipts keep their metric-only
 /// aggregate meaning; v3 and v4 receipts carry the explicit performance-only
 /// verdict plus the independent correctness section.
@@ -2263,18 +2300,6 @@ fn unpaired_policy_id(
     }
 }
 
-/// Compare one candidate against an optional baseline under policy v1.
-///
-/// Never modifies either bundle. Deterministic for fixed inputs, policy, and
-/// seed: metric iteration is name-ordered and resampling uses a documented
-/// deterministic RNG.
-///
-/// # Panics
-/// Panics only on internal policy invariants (a declared relative gate
-/// without a threshold, or a metric name lost between collection and
-/// evaluation); these indicate a programming defect, never input data.
-#[allow(clippy::too_many_lines)] // One auditable policy pass over all metrics.
-#[must_use]
 /// Build the independent correctness section for one candidate input.
 ///
 /// Returns `None` when the candidate declares no security checks. The
@@ -2297,17 +2322,25 @@ fn correctness_section(candidate: &ComparisonInput) -> Option<CorrectnessCompari
     })
 }
 
-/// Compare a candidate bundle against an optional baseline.
+/// Compare a candidate bundle against an optional baseline under policy v1.
 ///
-/// Emits a schema-v3 receipt: the metric-only `performance_verdict`, the
+/// Never modifies either bundle. Deterministic for fixed inputs, policy, and
+/// seed: metric iteration is name-ordered and resampling uses a documented
+/// deterministic RNG.
+///
+/// Emits a schema-v4 receipt: the metric-only `performance_verdict`, the
 /// independent `correctness` section (when the candidate declares security
 /// checks), and the conservative combined `aggregate_verdict`. Security
 /// results never enter `TrialMetrics` and never become metric samples.
 ///
+/// When the resolved metric set exceeds the receipt bound, evaluation
+/// truncates and records a `metric_receipt_truncated` warning so the receipt
+/// is self-describing rather than silently incomplete.
+///
 /// # Panics
-/// Panics only on the internal invariant that every metric name collected
-/// from the plan resolves back to its request; this indicates a programming
-/// defect, never input data.
+/// Panics only on internal policy invariants (a declared relative gate
+/// without a threshold, or a metric name lost between collection and
+/// evaluation); these indicate a programming defect, never input data.
 #[allow(clippy::too_many_lines)] // One auditable unpaired policy pass, as for v2.
 #[must_use]
 pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> ComparisonReceipt {
@@ -2365,7 +2398,8 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
             detail: "candidate bundle contains paired trials; use paired comparison".to_owned(),
         });
     }
-    let mut metrics = Vec::with_capacity(metric_names.len().min(MAX_RECEIPT_METRICS));
+    let total_metrics = metric_names.len();
+    let mut metrics = Vec::with_capacity(total_metrics.min(MAX_RECEIPT_METRICS));
     for name in metric_names {
         let request_metric = candidate
             .resolved
@@ -2394,6 +2428,7 @@ pub fn compare(request: &ComparisonRequest<'_>, options: &ComparisonOptions) -> 
             break;
         }
     }
+    push_metric_truncation_warning(&mut warnings, total_metrics, metrics.len());
     let performance_verdict = aggregate(&metrics);
     let correctness = correctness_section(candidate);
     let correctness_aggregate = correctness
@@ -2530,8 +2565,9 @@ pub fn compare_paired(
     for metric in &input.resolved.metrics {
         metric_names.insert(&metric.name);
     }
-    let mut metrics = Vec::with_capacity(metric_names.len().min(MAX_RECEIPT_METRICS));
-    let mut paired_metrics = Vec::with_capacity(metric_names.len().min(MAX_RECEIPT_METRICS));
+    let total_metrics = metric_names.len();
+    let mut metrics = Vec::with_capacity(total_metrics.min(MAX_RECEIPT_METRICS));
+    let mut paired_metrics = Vec::with_capacity(total_metrics.min(MAX_RECEIPT_METRICS));
     for name in metric_names {
         let request_metric = input
             .resolved
@@ -2562,6 +2598,7 @@ pub fn compare_paired(
             break;
         }
     }
+    push_metric_truncation_warning(&mut warnings, total_metrics, metrics.len());
     let performance_verdict = aggregate(&metrics);
     // Security checks cannot appear in a paired bundle: plan validation
     // rejects the composition and the loader fails closed, so paired
@@ -3704,11 +3741,20 @@ fn evaluate_relative(
     }
 }
 
+/// Reason recorded for a descriptively-compared, non-strict metric.
+///
+/// The only caller invokes this in the `else` branch of a
+/// `policy == StrictSameTestbed` test, so the strict arm is unreachable and
+/// the `_` arm is the exhaustive form. Strict mismatch sets its own
+/// `comparability_mismatch` reason and invalidates the primary gate directly
+/// instead of routing through here.
 fn descriptive_reason(policy: EnvironmentPolicy) -> String {
     match policy {
         EnvironmentPolicy::CrossTestbedDescriptive => "cross_testbed_descriptive".to_owned(),
         EnvironmentPolicy::WarnOnMismatch => "comparability_mismatch_descriptive".to_owned(),
-        EnvironmentPolicy::StrictSameTestbed => "comparability_mismatch".to_owned(),
+        EnvironmentPolicy::StrictSameTestbed => {
+            unreachable!("strict mismatch is classified before descriptive_reason is called")
+        }
     }
 }
 
@@ -3751,11 +3797,28 @@ fn evaluate_absolute(
     });
 }
 
-/// Check baseline metric semantics agree with the candidate request.
+/// Check baseline metric semantics are coherent with the request and with
+/// each other.
+///
+/// Two distinct properties must hold before trial-level inference over the
+/// baseline is meaningful:
+///
+/// 1. Every baseline trial that carries the metric agrees with the candidate
+///    request on `unit` and `direction`.
+/// 2. Every such trial agrees with the others on the full semantic identity,
+///    including `aggregation` — which is where a percentile metric's basis
+///    points live (`Aggregation::Percentile`). A baseline whose trials
+///    describe the metric differently is not one population, and a bootstrap
+///    across it would report a spread that no single trial produced.
+///
+/// Failing either property rejects the comparison. Inference cannot repair a
+/// semantically incoherent baseline, and preferring one trial's semantics
+/// would silently change what was measured.
 fn check_metric_semantics(
     request: &MetricRequest,
     baseline: &ComparisonInput,
 ) -> Result<(), String> {
+    let mut reference: Option<&NormalizedObservation> = None;
     for trial in &baseline.trials {
         let Some(metrics) = &trial.metrics else {
             continue;
@@ -3770,10 +3833,23 @@ fn check_metric_semantics(
         if observation.unit != request.unit || observation.direction != request.direction {
             return Err("metric_semantics_mismatch".to_owned());
         }
-        return Ok(());
+        match reference {
+            None => reference = Some(observation),
+            Some(first)
+                if observation.unit != first.unit
+                    || observation.direction != first.direction
+                    || observation.aggregation != first.aggregation =>
+            {
+                return Err("baseline_metric_semantics_divergent".to_owned());
+            }
+            Some(_) => {}
+        }
     }
     // No baseline trial carries this metric at all.
-    Err("baseline_metric_absent".to_owned())
+    if reference.is_none() {
+        return Err("baseline_metric_absent".to_owned());
+    }
+    Ok(())
 }
 /// Select valid trial-level scalars for one metric.
 ///
@@ -4085,26 +4161,13 @@ fn aggregate(metrics: &[MetricComparison]) -> Option<AggregateVerdict> {
         None
     }
 }
-/// Upper bound for manifest bytes read during comparison input loading.
-const MAX_COMPARISON_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
-
 fn read_manifest_bytes(reader: &BundleReader) -> Result<Vec<u8>, ComparisonError> {
-    let path = reader.root().join("manifest.json");
-    let file = std::fs::File::open(&path).map_err(|error| BundleError::Io {
-        path: path.clone(),
-        source: error,
-    })?;
-    let mut bytes = Vec::new();
-    file.take(MAX_COMPARISON_MANIFEST_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| BundleError::Io {
-            path: path.clone(),
-            source: error,
-        })?;
-    if bytes.len() as u64 > MAX_COMPARISON_MANIFEST_BYTES {
-        return Err(BundleError::BoundExceeded("manifest bytes").into());
-    }
-    Ok(bytes)
+    // Bundle identity binds to the exact manifest bytes, so the serialized
+    // form must be read rather than re-serialized from the parsed struct. The
+    // read goes through the reader so it inherits the reader's no-follow path
+    // resolution and manifest byte cap; a plain `File::open` on a joined path
+    // would follow a replaced component and apply a different cap.
+    Ok(reader.manifest_bytes()?)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -4421,6 +4484,87 @@ mod tests {
             }),
         };
         compare(&request, &ComparisonOptions::default())
+    }
+
+    /// A baseline whose trials disagree about what the metric MEANS must be
+    /// rejected, not inferred over.
+    ///
+    /// The regression this guards is a first-wins semantics check: a baseline
+    /// whose first trial agreed with the request was accepted regardless of
+    /// what its later trials claimed, so a bundle that reported p50 in trial 1
+    /// and p99.9 in trial 7 compared as one population.
+    #[test]
+    fn baseline_trials_with_divergent_metric_semantics_are_rejected() {
+        let metric = latency_request(statistical_gate(500));
+        let mut baseline = input_with_values(
+            &"bb".repeat(32),
+            metric.clone(),
+            EnvironmentPolicy::StrictSameTestbed,
+            &[0.0; 7],
+            standard_environment(),
+        );
+        // First trial keeps Aggregation::Direct (as trial_metrics_for builds);
+        // a later trial claims a different aggregation for the same metric.
+        let last = baseline.trials.len() - 1;
+        let observation = baseline.trials[last]
+            .metrics
+            .as_mut()
+            .expect("trial metrics")
+            .observations
+            .iter_mut()
+            .find(|observation| observation.name == metric.name)
+            .expect("latency_p99 observation");
+        observation.aggregation = Aggregation::Percentile {
+            basis_points: 9_900,
+        };
+
+        assert_eq!(
+            check_metric_semantics(&metric, &baseline),
+            Err("baseline_metric_semantics_divergent".to_owned())
+        );
+    }
+
+    /// A coherent baseline still passes the strengthened check.
+    #[test]
+    fn baseline_trials_with_coherent_metric_semantics_are_accepted() {
+        let metric = latency_request(statistical_gate(500));
+        let baseline = input_with_values(
+            &"bb".repeat(32),
+            metric.clone(),
+            EnvironmentPolicy::StrictSameTestbed,
+            &[0.0; 7],
+            standard_environment(),
+        );
+        assert_eq!(check_metric_semantics(&metric, &baseline), Ok(()));
+    }
+
+    /// Truncating the metric set must be visible in the receipt.
+    ///
+    /// The regression is silence: a resolved metric set larger than the
+    /// receipt bound was truncated with no warning, producing a receipt
+    /// indistinguishable from one for a smaller plan.
+    #[test]
+    fn metric_truncation_is_recorded_as_a_receipt_warning() {
+        let over_budget = MAX_RECEIPT_METRICS + 10;
+        let mut warnings = Vec::new();
+        push_metric_truncation_warning(&mut warnings, over_budget, MAX_RECEIPT_METRICS);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].category, "metric_receipt_truncated");
+        let detail = &warnings[0].detail;
+        assert!(detail.contains(&over_budget.to_string()), "{detail}");
+        assert!(detail.contains("266"), "omitted count: {detail}");
+        assert!(detail.contains("256 evaluated"), "{detail}");
+    }
+
+    /// A metric set within the bound must not produce a truncation warning.
+    #[test]
+    fn metric_set_within_bound_emits_no_truncation_warning() {
+        let mut warnings = Vec::new();
+        push_metric_truncation_warning(&mut warnings, MAX_RECEIPT_METRICS, MAX_RECEIPT_METRICS);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let mut warnings = Vec::new();
+        push_metric_truncation_warning(&mut warnings, 3, 3);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     fn attach_network_path(resolved: &mut ResolvedPlan, proxy: bool, faults: bool) {

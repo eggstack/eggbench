@@ -59,12 +59,16 @@ pub struct TelemetryCapability {
 }
 
 /// Stable telemetry error category plus bounded human detail.
+///
+/// The fields are private so [`TelemetryError::new`] stays the only
+/// constructor: the [`MAX_TELEMETRY_DETAIL_LEN`] bound cannot be bypassed by a
+/// struct literal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TelemetryError {
     /// Stable category (for example `health_unavailable`).
-    pub category: &'static str,
+    category: &'static str,
     /// Bounded redaction-safe detail.
-    pub detail: String,
+    detail: String,
 }
 
 impl TelemetryError {
@@ -75,6 +79,18 @@ impl TelemetryError {
             category,
             detail: detail.chars().take(MAX_TELEMETRY_DETAIL_LEN).collect(),
         }
+    }
+
+    /// Stable category this error was built with.
+    #[must_use]
+    pub fn category(&self) -> &'static str {
+        self.category
+    }
+
+    /// Bounded detail retained by [`TelemetryError::new`].
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
     }
 }
 
@@ -474,5 +490,24 @@ impl TelemetryCollector for HandleProxy {
 
     fn drain(&mut self, context: DrainContext) -> TelemetryFuture<'_, Result<(), TelemetryError>> {
         Box::pin(async move { self.handle.inner.lock().await.drain(context).await })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_error_detail_truncates_at_evidence_bound() {
+        let error = TelemetryError::new("polling_failed", "x".repeat(10_000));
+        assert_eq!(error.detail().chars().count(), MAX_TELEMETRY_DETAIL_LEN);
+        assert_eq!(error.detail(), "x".repeat(MAX_TELEMETRY_DETAIL_LEN));
+        assert_eq!(error.category(), "polling_failed");
+    }
+
+    #[test]
+    fn telemetry_error_detail_keeps_short_text_verbatim() {
+        let error = TelemetryError::new("health_unavailable", "injected preflight failure");
+        assert_eq!(error.detail(), "injected preflight failure");
     }
 }

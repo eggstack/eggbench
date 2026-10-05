@@ -210,6 +210,14 @@ documents it and at the source line to check, so a reviewer can confirm or
 dismiss any of them independently. No source or pre-existing doc was edited
 as part of writing this directory.
 
+Every row was subsequently re-verified against source and dispositioned by
+`plans/subsystems/architecture-deep-dive-corrective-addendum.md`. That pass
+resolved the documentation rows, the evidence-integrity findings, and the
+unreachable-observability findings; the remainder are recorded as
+decision-gated follow-ups in its C003 table. Three audit claims did not
+survive verification and are listed at the end of each table rather than
+silently dropped.
+
 **Pre-existing documents that contradict the code.** `docs/` and the four
 crate-level `architecture/` files are the canonical contracts, so these
 matter: a reader following them would build a wrong model.
@@ -254,6 +262,47 @@ in full, with surrounding context, in the linked deep dive's *Review focus*.
 | Orchestration | The phase-event count bound is one short in the maximal configuration (reset plus cooldown plus an active collector) | [runner-orchestration.md](runner-orchestration.md) |
 | Provisioning | `OHA_SHA256_aarch64` is empty, so `provision-external-oracles.sh` is x86_64-only and cannot provision aarch64 or the Windows lane | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 | Qualification | The live-tools negative control accepts any nonzero exit as "rejected" without checking the reason, so an unrelated crash would pass | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
+
+### Disposition of the audit findings
+
+`13eb443` recorded these as open leads. The corrective pass
+(`plans/subsystems/architecture-deep-dive-corrective-addendum.md`,
+milestones C001/C002) closed the following classes, and the deep dives'
+*Review focus* sections are now the historical record of the finding rather
+than a live to-do list:
+
+- **Documentation drift** — every "pre-existing documents that contradict the
+  code" row above is corrected. Schema versions, readable ranges, the driver
+  registration set, the unconditional-drain contract, the timeout allowlist,
+  the external-substrate error and cwd semantics, the Prometheus retention
+  model, and the manifest field-tolerance description all now match the code.
+- **Silent evidence loss** — comparison records a `metric_receipt_truncated`
+  warning instead of truncating quietly; per-trial metric semantics are now
+  checked across the whole baseline rather than first-wins; `trial_metrics`
+  bounds its read before allocating; the comparison manifest re-read now
+  inherits the reader's no-follow resolution and byte cap.
+- **Unreachable observability** — `cancelled`/`timed_out` derive from the real
+  deadline outcome, `cleanup_notes` are computed before the early returns,
+  `join_pipes` fails closed instead of returning empty output, `CapturedStream::collect`'s
+  dead `limit` parameter is gone, `workload_entered` is removed, and both
+  correctness/diagnostic registries reject a duplicate registration.
+- **Loud-by-omission** — the phase-event reservation is now the exact
+  required count rather than one short, `FakeDiagnosticExecutor` reports
+  `DiagnosticFailed`, and `TelemetryError` can no longer be built past its
+  documented bound.
+
+Three claims did not survive verification and were **not** acted on:
+`docs/equivalence.md` never existed and the `ComparisonReceipt` field
+strictness it was said to contradict is already in place; the catalog and CLI
+dispatch driver-name sets are identical (only the comment was wrong, and a
+guard test now keeps them equal); and the histogram/scalar
+unresolvable-reference asymmetry is a stated design decision at
+`metrics.rs:1028`.
+
+The remainder are decision-gated and enumerated as C003-a through C003-o in
+the addendum. The most consequential are the `doctor`/`run` disagreement for
+`prometheus-http` fields (C003-d), stale `finalize-lock` reporting
+(C003-a), and whether the v2 manifest should be a closed contract (C003-b).
 
 ## 5. Feature matrix
 

@@ -1486,7 +1486,7 @@ mod tests {
             timeout: Duration::from_secs(2),
         };
         assert_eq!(
-            required.preflight(preflight).await.unwrap_err().category,
+            required.preflight(preflight).await.unwrap_err().category(),
             "required_metric_missing"
         );
 
@@ -1562,7 +1562,7 @@ mod tests {
                 .stop_trial(trial_context(1))
                 .await
                 .unwrap_err()
-                .category,
+                .category(),
             "polling_failed"
         );
         server.abort();
@@ -1581,7 +1581,7 @@ mod tests {
                 .preflight(preflight_context())
                 .await
                 .unwrap_err()
-                .category,
+                .category(),
             "sample_type_mismatch"
         );
         server.abort();
@@ -1601,7 +1601,7 @@ mod tests {
         *body.lock().unwrap() = gauge_and_counter_body("1", 2);
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(
-            collector.stop_trial(trial).await.unwrap_err().category,
+            collector.stop_trial(trial).await.unwrap_err().category(),
             "required_metric_invalid"
         );
         server.abort();
@@ -1620,7 +1620,7 @@ mod tests {
             "# TYPE subject_requests_total counter\nsubject_requests_total 4\n".to_owned();
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(
-            collector.stop_trial(trial).await.unwrap_err().category,
+            collector.stop_trial(trial).await.unwrap_err().category(),
             "required_metric_invalid"
         );
         server.abort();

@@ -108,5 +108,8 @@ Every trial stages `stdout.raw`, `stderr.raw`, and `command-metadata.json`
 parser id) plus the tool status diagnostic where applicable. Exact binary
 path, SHA-256, and probed version are therefore in every trial; no
 credential, shell string, or full environment enters evidence. Cancellation
-and trial timeouts propagate through the substrate; partial stdout is
-still staged when the runner retains the invocation.
+and trial timeouts propagate through the substrate and fail the invocation:
+a cancelled or timed-out external execution produces **no** raw artifact, and
+partial stdout is not staged. Raw artifacts are staged only for invocations
+that complete, so an interrupted run is evidenced by its phase record and
+diagnostics rather than by a truncated tool report.

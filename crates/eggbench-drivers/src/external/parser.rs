@@ -21,6 +21,12 @@ pub struct ParsedExternalOutput {
 }
 
 /// Parser failure categories.
+///
+/// Reserved taxonomy: [`ExternalOutputParser::parse`] currently returns
+/// `DriverError` rather than this type, so the variants are declared and
+/// re-exported but never constructed. Each maps onto a `DriverError`
+/// category with the same meaning. Retained so an adapter can move to the
+/// narrower type without a breaking removal from the public surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExternalParseError {
     /// Tool version is unsupported.
@@ -140,11 +146,10 @@ mod tests {
         if truncated {
             let keep = retained.len().saturating_sub(1);
             let kept = retained[..keep].to_vec();
-            return CapturedStream::collect(kept, keep as u64 + 101, keep as u64);
+            return CapturedStream::from_parts(kept, keep as u64 + 101);
         }
         let total = retained.len() as u64;
-        let limit = total.max(1);
-        CapturedStream::collect(retained, total, limit)
+        CapturedStream::from_parts(retained, total)
     }
 
     fn dummy_exe() -> ResolvedExecutable {

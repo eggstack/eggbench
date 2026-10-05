@@ -15,7 +15,10 @@
 //!   follows the existing phase-failure taxonomy (invalid/failed), with
 //!   mandatory cleanup through the common tail.
 //!
-//! This module is sibling-neutral: no Eggsec types cross here. Executors
+//! No sibling *types* cross here. Sibling *evidence vocabulary* does:
+//! [`security_operation_label`] and the WAF family/budget vocabulary are
+//! written into the correctness evidence, so they are part of the contract
+//! rather than an implementation detail of one adapter. Executors
 //! receive a resolved [`CorrectnessContext`] and return a
 //! [`CorrectnessOutput`] carrying the sanitized typed result plus
 //! provenance. The Eggsec adapter lives in `eggbench-drivers`.
@@ -126,12 +129,18 @@ impl CorrectnessRegistry {
         Self::default()
     }
 
-    /// Register an executor for its source label.
-    pub fn register(&mut self, executor: Box<dyn CorrectnessExecutor>) {
-        self.executors.insert(
-            executor.source().to_owned(),
-            Arc::new(tokio::sync::Mutex::new(executor)),
-        );
+    /// Register an executor for its source label. Duplicate sources are rejected.
+    ///
+    /// # Errors
+    /// Returns a human-readable reason when the source is already registered.
+    pub fn register(&mut self, executor: Box<dyn CorrectnessExecutor>) -> Result<(), String> {
+        let source = executor.source().to_owned();
+        if self.executors.contains_key(&source) {
+            return Err(format!("duplicate correctness executor {source}"));
+        }
+        self.executors
+            .insert(source, Arc::new(tokio::sync::Mutex::new(executor)));
+        Ok(())
     }
 
     /// Look up an executor by source label.

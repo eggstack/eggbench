@@ -9,9 +9,21 @@ eggbench validate <plan>             parse and validate a plan
 eggbench doctor   <plan>             validate, resolve, and preflight without starting work
 eggbench run      <plan> <bundle>    execute and finalize a bundle
 eggbench inspect  <bundle>           verify and summarize a finalized bundle
+eggbench compare  <baseline> <cand>  compare two finalized bundles offline
 ```
 
-Production resolution uses the catalog owned by `eggbench-drivers`. The external-process drivers (`oha`, `h2load`, `iperf3`, `eggreplay-semantic`, and `eggprobe`) are always catalogued. The `eggstack-http` feature adds the EggServe controlled origin and the native Eggfetch HTTP workload. The opt-in `eggstack-path` feature adds the listener-free Eggress route and deterministic Eggchaos stream-fault path:
+A separate command family operates on a security-qualification profile and
+publishes a qualification receipt rather than an `.eggb` bundle, so it is not
+part of the experiment-plan chain:
+
+```text
+eggbench qualify validate <profile>  validate a qualification profile
+eggbench qualify expand   <profile>  expand it into runnable stages
+eggbench qualify run      <profile>  execute it and emit a qualification receipt
+eggbench qualify inspect  <receipt>  verify and summarize a qualification receipt
+```
+
+Production resolution uses the catalog owned by `eggbench-drivers`. The external-process drivers (`oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggprobe`, `eggsec-waf`, and `eggsec-load`) are always catalogued. The `eggstack-http` feature adds the EggServe controlled origin and the native Eggfetch HTTP workload. The opt-in `eggstack-path` feature adds the listener-free Eggress route and deterministic Eggchaos stream-fault path:
 
 ```text
 Eggfetch -> Eggress route -> Eggchaos accepted byte stream -> EggServe origin

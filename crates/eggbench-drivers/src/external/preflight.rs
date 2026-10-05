@@ -8,6 +8,7 @@
 //! without CLI preflight.
 
 use super::error::{DriverError, ErrorCategory};
+use super::resolver::ResolvedExecutable;
 use super::version::ToolVersion;
 use super::{
     EGGPROBE_DRIVER_NAME, EGGREPLAY_DRIVER_NAME, EGGSEC_DRIVER_NAME, EGGSEC_LOAD_DRIVER_NAME,
@@ -20,35 +21,59 @@ use super::{
 use eggbench_core::Name;
 use tokio_util::sync::CancellationToken;
 
-/// Whether a catalog driver name is an external-process workload.
+/// Every registered driver that runs as an external process.
+///
+/// This is the single source for the external-driver gate: the load oracles
+/// (`oha`, `h2load`, `iperf3`), the semantic-replay workload, the load
+/// workload, the `eggprobe` diagnostic driver, and the `eggsec-waf`
+/// correctness driver all shell out to a binary. All three predicates below
+/// consult this list, so the gate cannot silently under-cover a registered
+/// driver again.
+const EXTERNAL_DRIVER_NAMES: [&str; 7] = [
+    OHA_DRIVER_NAME,
+    H2LOAD_DRIVER_NAME,
+    IPERF3_DRIVER_NAME,
+    EGGREPLAY_DRIVER_NAME,
+    EGGSEC_LOAD_DRIVER_NAME,
+    EGGPROBE_DRIVER_NAME,
+    EGGSEC_DRIVER_NAME,
+];
+
+/// Resolve an external driver by catalog name.
+///
+/// `None` for an in-process driver (nothing to resolve); `Some(result)`
+/// keeps the per-driver resolution error instead of collapsing it, because a
+/// registered external driver whose binary is absent still needs an answer.
+fn resolve_external_driver(name: &str) -> Option<Result<ResolvedExecutable, DriverError>> {
+    Some(match name {
+        OHA_DRIVER_NAME => OhaWorkload::resolve(),
+        H2LOAD_DRIVER_NAME => H2loadWorkload::resolve(),
+        IPERF3_DRIVER_NAME => Iperf3Workload::resolve(),
+        EGGREPLAY_DRIVER_NAME => EggReplayWorkload::resolve(),
+        EGGPROBE_DRIVER_NAME => EggProbeExecutor::resolve(),
+        EGGSEC_DRIVER_NAME => super::EggsecWafExecutor::resolve(),
+        EGGSEC_LOAD_DRIVER_NAME => EggsecLoadWorkload::resolve(),
+        _ => return None,
+    })
+}
+
+/// Whether a catalog driver name is an external-process driver.
+///
+/// True for every name in [`EXTERNAL_DRIVER_NAMES`]: the three load oracles,
+/// the semantic-replay workload, the load workload, the `eggprobe`
+/// diagnostic driver, and the `eggsec-waf` correctness driver.
 #[must_use]
 pub fn is_external_workload(name: &Name) -> bool {
-    matches!(
-        name.as_str(),
-        OHA_DRIVER_NAME
-            | H2LOAD_DRIVER_NAME
-            | IPERF3_DRIVER_NAME
-            | EGGREPLAY_DRIVER_NAME
-            | EGGSEC_LOAD_DRIVER_NAME
-    )
+    EXTERNAL_DRIVER_NAMES.contains(&name.as_str())
 }
 
 /// Filesystem-only binary presence for `doctor` (no process is spawned).
 ///
-/// Returns `None` for in-process drivers; `Some(present)` for external
-/// workload, diagnostic, and correctness drivers.
+/// Returns `None` for in-process drivers; `Some(present)` for every external
+/// workload, diagnostic, and correctness driver.
 #[must_use]
 pub fn external_binary_present(name: &Name) -> Option<bool> {
-    match name.as_str() {
-        OHA_DRIVER_NAME => Some(OhaWorkload::resolve().is_ok()),
-        H2LOAD_DRIVER_NAME => Some(H2loadWorkload::resolve().is_ok()),
-        IPERF3_DRIVER_NAME => Some(Iperf3Workload::resolve().is_ok()),
-        EGGREPLAY_DRIVER_NAME => Some(EggReplayWorkload::resolve().is_ok()),
-        EGGPROBE_DRIVER_NAME => Some(EggProbeExecutor::resolve().is_ok()),
-        EGGSEC_DRIVER_NAME => Some(super::EggsecWafExecutor::resolve().is_ok()),
-        EGGSEC_LOAD_DRIVER_NAME => Some(EggsecLoadWorkload::resolve().is_ok()),
-        _ => None,
-    }
+    resolve_external_driver(name.as_str()).map(|resolved| resolved.is_ok())
 }
 
 /// Canonical executable path for resolution pinning, when resolvable.
@@ -59,16 +84,7 @@ pub fn external_binary_present(name: &Name) -> Option<bool> {
 /// fails with `MissingExecutablePath` — the explicit missing-binary signal.
 #[must_use]
 pub fn executable_path_for(name: &Name) -> Option<String> {
-    let resolved = match name.as_str() {
-        OHA_DRIVER_NAME => OhaWorkload::resolve().ok(),
-        H2LOAD_DRIVER_NAME => H2loadWorkload::resolve().ok(),
-        IPERF3_DRIVER_NAME => Iperf3Workload::resolve().ok(),
-        EGGREPLAY_DRIVER_NAME => EggReplayWorkload::resolve().ok(),
-        EGGPROBE_DRIVER_NAME => EggProbeExecutor::resolve().ok(),
-        EGGSEC_DRIVER_NAME => super::EggsecWafExecutor::resolve().ok(),
-        EGGSEC_LOAD_DRIVER_NAME => EggsecLoadWorkload::resolve().ok(),
-        _ => None,
-    }?;
+    let resolved = resolve_external_driver(name.as_str())?.ok()?;
     Some(resolved.canonical_path.to_string_lossy().into_owned())
 }
 
@@ -119,5 +135,70 @@ pub async fn probe_external_workload(
             ErrorCategory::BinaryNotFound,
             format!("no external workload driver named {}", name.as_str()),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The three predicates must agree for every external driver: a name in
+    /// the shared list is gated as external, is answerable by the
+    /// filesystem-only presence check, and yields a pinned path exactly when
+    /// that check says the binary is present.
+    #[test]
+    fn external_predicates_agree_over_the_registered_set() {
+        for tool in EXTERNAL_DRIVER_NAMES {
+            let name = Name::new(tool).expect("static driver name");
+            assert!(is_external_workload(&name), "{tool} is not gated");
+            let present = external_binary_present(&name)
+                .unwrap_or_else(|| panic!("{tool} has no binary-presence answer"));
+            assert_eq!(
+                executable_path_for(&name).is_some(),
+                present,
+                "{tool} path/presence disagree",
+            );
+            assert!(
+                resolve_external_driver(tool).is_some(),
+                "{tool} is not resolvable",
+            );
+        }
+    }
+
+    /// The list must name every registered external-process driver, and only
+    /// those: it is the gate for "does this driver need a binary".
+    #[test]
+    fn shared_list_matches_the_registered_external_drivers() {
+        let catalog = crate::production_catalog();
+        let registered: Vec<String> = catalog
+            .descriptors()
+            .iter()
+            .filter(|descriptor| descriptor.external_process)
+            .map(|descriptor| descriptor.name.as_str().to_owned())
+            .collect();
+        assert!(!registered.is_empty(), "no external drivers registered");
+
+        for name in &registered {
+            assert!(
+                EXTERNAL_DRIVER_NAMES.contains(&name.as_str()),
+                "registered external driver {name} is missing from the shared list",
+            );
+            let parsed = Name::new(name).expect("static driver name");
+            assert!(is_external_workload(&parsed));
+            assert!(external_binary_present(&parsed).is_some());
+        }
+
+        for tool in EXTERNAL_DRIVER_NAMES {
+            assert!(
+                registered.iter().any(|name| name == tool),
+                "{tool} is gated as external but is not a registered external driver",
+            );
+        }
+
+        // An in-process driver is outside the list and answers `None`.
+        let in_process = Name::new("eggfetch-http").expect("static driver name");
+        assert!(!is_external_workload(&in_process));
+        assert!(external_binary_present(&in_process).is_none());
+        assert!(executable_path_for(&in_process).is_none());
     }
 }

@@ -1329,7 +1329,7 @@ mod tests {
     #[test]
     fn outcome_helper_builds_bounded_streams() {
         let total = valid_report_json().len() as u64;
-        let stream = CapturedStream::collect(valid_report_json(), total, total.max(1));
+        let stream = CapturedStream::from_parts(valid_report_json(), total);
         assert!(!stream.truncated());
         assert_eq!(stream.retained_bytes(), total);
     }

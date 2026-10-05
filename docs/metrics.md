@@ -20,6 +20,13 @@ aggregation semantics, and (where defined) direction:
 | `latency_p95` | `ms` | p95 | lower-is-better |
 | `latency_p99` | `ms` | p99 | lower-is-better |
 | `latency_p999` | `ms` | p99.9 (basis points 9990) | lower-is-better |
+
+The percentile basis-points column is a naming convention, not an enforced
+identity: a driver that reports `latency_p99` while claiming a different
+percentile aggregation is accepted, and the aggregation it actually claimed is
+retained verbatim in the normalized observation. Consumers that depend on the
+percentile must read the observation's `aggregation`, not infer it from the
+name.
 | `error_rate` | `ratio` | ratio | lower-is-better |
 | `timeout_rate` | `ratio` | ratio | lower-is-better |
 | `bytes_sent` | `bytes` | sum | informational (no fixed direction) |
@@ -43,8 +50,11 @@ ambiguity.
 Every requested metric normalizes to exactly one of:
 
 - `observed(value)` — a finite scalar. Zero is valid where the domain permits.
-- `missing(reason)` — `source_not_provided`, `unsupported_by_driver`, or
-  `trial_not_completed`. Missing is never `0`, `NaN`, or record absence.
+- `missing(reason)` — `source_not_provided` or `trial_not_completed`. The
+  vocabulary also defines `unsupported_by_driver`, but the normalizer does not
+  currently emit it: a driver that cannot supply a requested metric is
+  handled at the producing adapter, not here. Missing is never `0`, `NaN`, or
+  record absence.
 - `invalid(reason, detail?)` — `non_finite`, `unit_mismatch`,
   `duplicate_observation`, `aggregation_mismatch`,
   `malformed_source_reference`, or `domain_error`.
