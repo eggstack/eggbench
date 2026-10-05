@@ -85,11 +85,12 @@ One snapshot immediately after start, cadenced polling (never faster than
 `observed_at_unix_ms` snapshots deduplicate. At most 256 snapshots and
 256 KiB of raw series bytes are retained per trial; aggregation always
 runs over exactly the retained set, and overflow counts as dropped samples
-plus a warning. Truncation evicts the OLDEST retained samples to stay within
-the budget: affected metrics are simply absent from the retained set and a
-`dropped_samples` counter records the loss. It does not mark them invalid
-(NaN) and does not invent values. A consumer that needs to distinguish
-"truncated" from "never reported" must read the counter.
+plus a warning. Once either cap is reached the **incoming** sample is
+discarded and the counter increments, so the retained set is the oldest
+part of the trial and the tail is simply absent from it. It does not mark
+metrics invalid (NaN) and it does not invent or backfill values. A consumer
+that needs to distinguish "truncated" from "never reported" must read the
+`dropped_samples` counter.
 
 ## Metrics
 

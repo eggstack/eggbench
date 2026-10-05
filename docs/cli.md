@@ -20,7 +20,7 @@ eggbench qualify run      <profile> --output <dir>
 eggbench qualify inspect  <qualification-receipt.json>
 ```
 
-`--json` and `--quiet` are global options. `validate`, `doctor`, and `run` accept a `.toml` or `.json` path, or `-` for stdin; stdin requires `--input-format` because content alone cannot determine the format. `run` requires a new destination ending in `.eggb`; `inspect` requires an existing finalized bundle. There is no route, fault, network-path, or plan-seed CLI flag: those values are declared in the plan.
+`--json` and `--quiet` are global options. `validate`, `doctor`, and `run` accept a `.toml` or `.json` path, or `-` for stdin; stdin requires `--input-format` because content alone cannot determine the format. `run` requires a new destination ending in `.eggb`, and the destination's **parent directory must already exist** — `run` does not create it. An existing destination or a missing parent fails as a bundle I/O error (exit `5`) before any measurement work starts. `inspect` requires an existing finalized bundle. There is no route, fault, network-path, or plan-seed CLI flag: those values are declared in the plan.
 
 `--workload-driver` on `doctor` and `run` pins the workload driver explicitly. Any registered `Workload` driver may be named — `oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and the feature-gated `eggfetch-http`. The flag checks the name's syntax only; an unrecognised but well-formed name is resolved against the catalog and surfaces as `missing_driver`. Without it, the resolver uses a unique marked default or fails with `ambiguous_selection`.
 

@@ -4,7 +4,7 @@
 
 `resolve_plan` performs no I/O. Callers supply descriptors, selections/default policy, platform, executable paths, and extra requirements. The resolver always checks the requested workload capability (load model, or `SemanticReplay` for replay plans), required telemetry, service/workload compatibility, and platform support. Unsupported, missing, mismatched, ambiguous, or incompatible behavior is an error before execution. Optional missing telemetry produces a warning only when the request marks it optional. The resolver does not search PATH or contact external services.
 
-Default selection is deterministic: use one marked category default, or the only available driver in the category. More than one candidate without a unique default is an error. Explicit selection removes ambiguity. A schema-v3 path does not introduce a second selection mechanism: the route and fault names in the plan must match the selected Route/Fault descriptors.
+Default selection is deterministic: use one marked category default, or the only available driver in the category. More than one candidate without a unique default is an error. Explicit selection removes ambiguity. `Correctness` is the one exception to category-first resolution: because a registry may expose one descriptor per correctness family, the resolver first narrows the candidates to those advertising every required capability and, if any remain, selects among those. Every other category keeps category-first resolution so that unsupported-capability errors stay specific. A schema-v3 path does not introduce a second selection mechanism: the route and fault names in the plan must match the selected Route/Fault descriptors.
 
 ## Network-path capability matrix
 

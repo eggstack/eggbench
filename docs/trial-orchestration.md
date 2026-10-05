@@ -22,9 +22,27 @@ preflight → startup/readiness → warmup 1..N → measured trial 1
                workload drain → service teardown → evidence finalization
 ```
 
+The diagram is the unconditional backbone. Three further `PhaseKind` values are
+recorded only when the plan asks for them, and they appear in
+`runner-phases.json` without being shown above. `DiagnosticsPre` runs after
+readiness, `CorrectnessChecks` runs after pre-workload diagnostics but **before**
+warmups, and `DiagnosticsPost` runs after workload drain and before teardown,
+while services are still alive. So a plan using both extends the schedule to:
+
+```text
+preflight → startup/readiness → [pre diagnostics] → [correctness checks]
+          → warmup 1..N → measured trial 1 … → workload drain
+          → [post diagnostics] → service teardown → evidence finalization
+```
+
+All three sit outside every measured interval, so their evidence is diagnostic
+or correctness evidence and never contributes latency. Under cancellation, post
+diagnostics are skipped with `skipped_due_to_cancellation` and `Cancelled`
+remains the primary status.
+
 Reset and cooldown occur only between measured trials. Reset runs first, so
 cooldown is post-reset stabilization time. Warmup state carries into measured
-trial 1. No reset or cooldown follows the final trial.
+trials. No reset or cooldown follows the final trial.
 
 Every code path that reaches the post-experimental tail — workload/reset
 failure, cancellation, evidence-staging failure — runs the same drain and

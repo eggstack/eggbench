@@ -2,6 +2,21 @@
 
 An ExperimentPlan is a versioned request, not an execution script. JSON is the canonical machine representation and TOML is supported for hand editing. Both decode to the same typed model, reject unknown fields, and are semantically validated before use.
 
+Two TOML constraints are worth knowing before hand-writing one, because both
+surface as parse errors rather than as validation errors:
+
+- **TOML has no `null`.** A field that is optional *or* nullable must be
+  omitted rather than set to `null` — for example `readiness`,
+  `workload.duration_ms`, `shutdown.method`, and `working_directory`. Writing
+  `readiness = null` fails with `invalid float, expected nan`.
+- **Top-level arrays of tables must precede every table header.** A bare
+  `telemetry = []` written after `[trials]` is parsed as a `trials` field and is
+  rejected as an unknown field. Place such keys at the top of the file, next to
+  `experiment` and before the first `[table]`.
+
+The repository's worked examples are all JSON, so the JSON form in
+`examples/` is the safer starting point.
+
 ## Schema versions
 
 - **v1** describes ordinary workloads and service topology. It remains supported unchanged.
@@ -17,7 +32,7 @@ An ExperimentPlan is a versioned request, not an execution script. JSON is the c
 
 A workload target must name a declared service or the explicitly named external subject. A closed/open workload specifies exactly one of request count or duration. Time-bounded closed-loop plans require concurrency; open-loop plans require an offered rate. Services have stable names, managed/external lifecycle intent, acyclic dependencies, and bounded typed fields. Metric direction, unit, intent, and gates are explicit; diagnostic or informational metrics cannot gate. Secret material is referenced, never embedded.
 
-A v2/v3 paired design requires a label subject naming the comparison, two distinct live arm services, an even measured trial count of at least two, and a workload target equal to the baseline arm. A v3 plan may still use paired design when `network_path` is absent.
+A paired design (schema v2 or later) requires a label subject naming the comparison, two distinct live arm services, an even measured trial count of at least two, and a workload target equal to the baseline arm. A v3 plan may still use paired design when `network_path` is absent.
 
 ## Schema-v3 `network_path`
 
@@ -68,7 +83,7 @@ Eggchaos faults are **user-space accepted byte-stream impairments, never packet/
 
 ### Subject and design restrictions
 
-`network_path` requires a transport-owning workload. It is incompatible with `Subject::External` (including an external oracle) and with the v2/v3 paired design; both fail during validation before startup. This is deliberate: paired arms share a run-scoped client/pool, so a physical connection cannot be assigned unambiguously to an arm. The current supported execution combination is the native `eggfetch-http` workload with an `eggserve-origin` target; external oracles do not advertise the custom network-path capability.
+`network_path` requires a transport-owning workload. It is incompatible with `Subject::External` (including an external oracle) and with paired design on any schema version; both fail during validation before startup. This is deliberate: paired arms share a run-scoped client/pool, so a physical connection cannot be assigned unambiguously to an arm. The current supported execution combination is the native `eggfetch-http` workload with an `eggserve-origin` target; external oracles do not advertise the custom network-path capability.
 
 Resolved snapshots currently use ResolvedPlan schema v6 and add selected Route/Fault provenance when a path is present. ResolvedPlan v1 through v5 remain readable for legacy evidence; new path resolution always records v6. Semantic-replay resolution records the same v6 envelope with a `SemanticReplay` workload capability and an external `eggreplay-semantic` descriptor; fixture digest identity lives in `semantic-replay.json`, not in the resolved path. Diagnostic resolution adds the required `DiagnosticProbe` capabilities and selects the external `eggprobe` descriptor with its pinned executable path. See [driver capabilities](driver-capabilities.md), the complete [schema-v3 example](../examples/eggstack-path.json), the [schema-v4 replay example](../examples/eggstack-replay.json), and the [schema-v5 diagnostics example](../examples/eggstack-diagnostics.json). The paired rejection example is [intentionally invalid](../examples/eggstack-path-paired-unsupported.json).
 
