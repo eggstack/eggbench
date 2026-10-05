@@ -13,11 +13,16 @@ eggbench compare <baseline.eggb> <candidate.eggb> [--output <comparison.json>] [
 eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb> [--output <comparison.json>] [--seed <u64>]
 eggbench compare --absolute-only <candidate.eggb> [--output <comparison.json>] [--seed <u64>]
 eggbench compare --paired <bundle.eggb> [--output <comparison.json>] [--seed <u64>]
+
+eggbench qualify validate <profile>
+eggbench qualify expand   <profile>
+eggbench qualify run      <profile> --output <dir>
+eggbench qualify inspect  <qualification-receipt.json>
 ```
 
 `--json` and `--quiet` are global options. `validate`, `doctor`, and `run` accept a `.toml` or `.json` path, or `-` for stdin; stdin requires `--input-format` because content alone cannot determine the format. `run` requires a new destination ending in `.eggb`; `inspect` requires an existing finalized bundle. There is no route, fault, network-path, or plan-seed CLI flag: those values are declared in the plan.
 
-`--workload-driver` on `doctor` and `run` pins the workload driver explicitly (`oha`, `h2load`, `iperf3`, or the feature-gated `eggfetch-http`). Without it, the resolver uses a unique marked default or fails with `ambiguous_selection`; unknown names fail with `missing_driver`.
+`--workload-driver` on `doctor` and `run` pins the workload driver explicitly. Any registered `Workload` driver may be named — `oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and the feature-gated `eggfetch-http`. The flag checks the name's syntax only; an unrecognised but well-formed name is resolved against the catalog and surfaces as `missing_driver`. Without it, the resolver uses a unique marked default or fails with `ambiguous_selection`.
 
 ## Schema-v3 path behavior
 
@@ -56,6 +61,14 @@ Pass `--json` to emit one JSON envelope on stdout. Human progress and diagnostic
 
 `ok` is true when the command succeeded. On failure, `error` carries a stable category and `result` is absent. JSON mode writes exactly one document to stdout; `--quiet` suppresses optional prose but never changes the exit status.
 
+The envelope above applies to the five plan-chain commands. `qualify` bypasses
+it: its JSON is the command's own payload (`{"ok": true, "command":
+"qualify_validate", ...}` for `validate`, the raw expansion for `expand`, the
+raw receipt for `run` and `inspect`), it carries no `schema_version`, and its
+error object uses `message` rather than `detail`. A consumer parsing the
+envelope must branch on the command before reading the error shape. `qualify`
+is documented in the next section.
+
 | Code | Meaning |
 |---|---|
 | `0` | Command completed successfully. |
@@ -69,6 +82,34 @@ Pass `--json` to emit one JSON envelope on stdout. Human progress and diagnostic
 | `8` | Comparison aggregate verdict is `Invalid`. |
 
 A finalized non-success run retains its run result and bundle path alongside `run_non_success` and exits `4`. Network-path preflight failures do not publish a bundle or start a service.
+
+## Qualification commands
+
+`qualify` operates on a security-qualification profile rather than an
+experiment plan and publishes a qualification receipt rather than an `.eggb`
+bundle, so it is structurally separate from the five commands above: it is
+dispatched in the binary and is absent from the library's `Command` enum. It
+accepts no `--input-format` and does not read a plan.
+
+- `qualify validate <profile>` expands and validates the profile and its
+  referenced corpus, reporting the profile id, scenario count, and per-scenario
+  workload driver.
+- `qualify expand <profile>` emits the deterministic expansion the run stages.
+- `qualify run <profile> --output <dir>` executes scenarios serially and
+  publishes `<dir>` by atomic rename, with `qualification-receipt.json` written
+  last. `--output` is required and an existing destination is rejected. The
+  exit status is the aggregate verdict: `0` Pass, `6` Fail, `7` Inconclusive,
+  `8` Invalid — the same verdict-to-code mapping as `compare`, because a
+  qualification aggregate is built from comparison verdicts.
+- `qualify inspect <qualification-receipt.json>` re-derives every typed verdict
+  from on-disk evidence before displaying the receipt. The argument is the
+  receipt **file** inside the published directory, not the directory itself.
+
+Because the exit code is the verdict, a `qualify run` that correctly
+discovers a failing scenario exits `6` rather than `0`; that is the intended
+result, not a CLI failure. `--quiet` is accepted globally but has no effect on
+`qualify` output. See [security qualification](security-qualification.md) and
+[synvoid qualification](synvoid-qualification.md).
 
 ## Cancellation and boundaries
 

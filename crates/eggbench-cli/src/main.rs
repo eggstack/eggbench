@@ -112,7 +112,7 @@ enum QualifyCommand {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Verify and summarize an immutable qualification receipt directory.
+    /// Verify and summarize an immutable qualification receipt.
     Inspect { qualification_receipt: PathBuf },
 }
 

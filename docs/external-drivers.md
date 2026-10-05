@@ -1,10 +1,14 @@
 # External drivers
 
-External Oracles M001 establishes the shared `eggbench-drivers` crate and a
-secure, bounded, testable command-adapter substrate. Oracles M002 adds the
-first tool adapters on that substrate — oha/h2load/iperf3 mapping, with
-tc/netem still future and no installer, shell execution, or remote
-execution. See [external oracles](external-oracles.md).
+The contract for spawning an external measurement tool: how a binary is
+resolved, how it is invoked, and what is retained. Tool-specific report
+semantics live in [external oracles](external-oracles.md); the module-by-module
+walkthrough is [`architecture/drivers-external-substrate.md`](../architecture/drivers-external-substrate.md).
+
+The product ships no installer and no remote execution: a tool binary is either
+already on the host or provisioned out of band by a qualification harness
+(`scripts/qualification/provision-external-oracles.sh`), which is test
+infrastructure rather than part of this contract.
 
 ## Catalog ownership
 

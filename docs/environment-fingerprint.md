@@ -36,6 +36,7 @@ binaries are expected to differ.
 | `current_cpu_frequency_mhz` | warning_only | Maximum current frequency in MHz. Transient — never comparison-critical. |
 | `eggbench_collector_version` | informational | `eggbench` package version. |
 | `rust_target` | informational | Rust `cfg!(target_arch)` value. |
+| `rustc_version_runtime` | informational | Declared but always absent: the collector returns `None` by decision rather than take a dependency for one informational label. |
 | `build_profile` | informational | `debug` or `release` based on `cfg!(debug_assertions)`. |
 
 Fields are omitted when their underlying data source is unavailable. ARM/SBC

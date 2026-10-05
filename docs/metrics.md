@@ -20,6 +20,12 @@ aggregation semantics, and (where defined) direction:
 | `latency_p95` | `ms` | p95 | lower-is-better |
 | `latency_p99` | `ms` | p99 | lower-is-better |
 | `latency_p999` | `ms` | p99.9 (basis points 9990) | lower-is-better |
+| `error_rate` | `ratio` | ratio | lower-is-better |
+| `timeout_rate` | `ratio` | ratio | lower-is-better |
+| `bytes_sent` | `bytes` | sum | informational (no fixed direction) |
+| `bytes_received` | `bytes` | sum | informational (no fixed direction) |
+| `cpu_percent` | `percent` | mean | informational (no fixed direction) |
+| `rss_bytes` | `bytes` | maximum | informational (no fixed direction) |
 
 The percentile basis-points column is a naming convention, not an enforced
 identity: a driver that reports `latency_p99` while claiming a different
@@ -27,12 +33,6 @@ percentile aggregation is accepted, and the aggregation it actually claimed is
 retained verbatim in the normalized observation. Consumers that depend on the
 percentile must read the observation's `aggregation`, not infer it from the
 name.
-| `error_rate` | `ratio` | ratio | lower-is-better |
-| `timeout_rate` | `ratio` | ratio | lower-is-better |
-| `bytes_sent` | `bytes` | sum | informational (no fixed direction) |
-| `bytes_received` | `bytes` | sum | informational (no fixed direction) |
-| `cpu_percent` | `percent` | mean | informational (no fixed direction) |
-| `rss_bytes` | `bytes` | maximum | informational (no fixed direction) |
 
 The table is a vocabulary/default-semantics reference, not permission to
 override the plan. If a plan declares a contradicting unit or direction for

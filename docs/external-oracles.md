@@ -9,13 +9,15 @@ workload, bounded execution, raw retention, metric mapping, and evidence.
 ## Driver selection
 
 `doctor` and `run` accept `--workload-driver <name>` to pin the workload
-driver explicitly (`oha`, `h2load`, `iperf3`, `eggfetch-http`). Without the
-flag, resolution uses the unique marked default (`eggfetch-http` when the
-`eggstack-http` feature is compiled in); without a unique default the
+driver explicitly. Any registered `Workload` driver may be named — `oha`,
+`h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and the
+feature-gated `eggfetch-http`; the flag checks the name's syntax only, and an
+unrecognised but well-formed name fails resolution with `missing_driver`.
+Without the flag, resolution uses the unique marked default (`eggfetch-http`
+when the `eggstack-http` feature is compiled in); without a unique default the
 resolution fails explicitly with `ambiguous_selection` listing the
-candidates. Unknown names fail with `missing_driver`. Explicit selection
-flows through the existing `ResolutionOptions::selections` seam — no plan
-schema change.
+candidates. Explicit selection flows through the existing
+`ResolutionOptions::selections` seam — no plan schema change.
 
 External-process drivers additionally pin their resolved canonical binary
 path into resolution (`executable_paths`), resolve the binary

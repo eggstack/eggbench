@@ -79,11 +79,10 @@ linked at all.
 | Cargo feature | Declared at | Optional deps it enables |
 |---|---|---|
 | *(default)* | `Cargo.toml:9` — `default = []` | none |
-| `external-command` | `Cargo.toml:10` | none |
-| `eggstack-http` | `Cargo.toml:11-16` | `eggfetch-core`, `eggserve-primitives`, `eggserve-server`, `hdrhistogram` |
-| `gregg` | `Cargo.toml:17` | `eggfetch-core`, `gregg-protocol` |
-| `prometheus-http` | `Cargo.toml:18` | `eggfetch-core` |
-| `eggstack-path` | `Cargo.toml:19-25` | `eggstack-http` (feature), `eggress-outbound`, `eggress-uri`, `eggress-core`, `eggchaos-core` |
+| `eggstack-http` | `Cargo.toml:10-15` | `eggfetch-core`, `eggserve-primitives`, `eggserve-server`, `hdrhistogram` |
+| `gregg` | `Cargo.toml:16` | `eggfetch-core`, `gregg-protocol` |
+| `prometheus-http` | `Cargo.toml:17` | `eggfetch-core` |
+| `eggstack-path` | `Cargo.toml:18-24` | `eggstack-http` (feature), `eggress-outbound`, `eggress-uri`, `eggress-core`, `eggchaos-core` |
 
 The CLI forwards each one verbatim (`crates/eggbench-cli/Cargo.toml:15-20`) and adds nothing.
 `eggstack-path` forwards to the CLI's *own* `eggstack-http` feature as well
@@ -380,10 +379,6 @@ own transport cannot corroborate that adapter.
   (`catalog.rs:59-67`) and `production_workload_executor`'s name arms
   (`workload_registry.rs:402-450`) are two hand-maintained lists of the same fact, and
   `workload_registry.rs:390` claims an invariant the code does not enforce.
-- **`external-command` is a declared feature with no referent.** `Cargo.toml:10` defines
-  `external-command = []`, and no `#[cfg(feature = "external-command")]` exists anywhere in the
-  workspace, though the external substrate is always compiled. The behavior is right; the name is
-  misleading.
 - **`lock_version` returns the first matching stanza.** `build.rs:78-79` returns as soon as it sees a
   `version = "…"` after a matching `name` line. If the lockfile ever carried two versions of a
   scraped crate, the reported provenance could be the version this crate does not link. The `=` pins

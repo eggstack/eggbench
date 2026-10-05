@@ -833,12 +833,14 @@ Ordered by what would hurt most if it regressed.
     (`version.rs:68`), and `EggReplayWorkload::new` is called with an explicit
     `std::env::current_dir()` (`preflight.rs:113`) — cwd is a real input to
     tool behavior, not a formality.
-14. **Feature plumbing.** The `external-command` feature is declared
-    (`crates/eggbench-drivers/Cargo.toml:10`) and no `#[cfg]` in
-    `crates/eggbench-drivers/src` references it; the substrate is compiled
-    unconditionally. `docs/external-drivers.md:27` describes it as
-    "`external-command = [...]` (substrate only)", which reads as if the
-    substrate were gated by it.
+14. **No feature gates the substrate.** The external command substrate is compiled
+    unconditionally: `crates/eggbench-drivers/Cargo.toml` declares only `default`,
+    `eggstack-http`, `gregg`, `prometheus-http`, and `eggstack-path`, and no
+    `#[cfg(feature = ...)]` in `crates/eggbench-drivers/src` guards the external
+    module. A missing tool binary is therefore a resolution/preflight failure, not
+    a link-time one, which is what makes the seven external drivers register on a
+    no-feature build. An `external-command` feature that was once declared with no
+    referent has been removed.
 
 ## Related
 

@@ -50,7 +50,7 @@ Environment data has a separate schema version (`EnvironmentFingerprint` v1). Ea
 
 ## Runtime-topology evidence (Eggstack HTTP)
 
-`lifecycle/runtime-topology.json` (schema v1, `Redacted`) records one entry per launch-order service identity plus externally managed services: ownership kind (`process`/`adapter`/`external`), the named service type for adapter-owned services, and non-secret startup-established runtime bindings such as the origin's `http_url`, `bound_addr`, and `bound_port`. It stages from retained session state after teardown, so topology evidence survives service shutdown. Network paths remain separate run evidence; they are never inserted as fake service entries.
+`lifecycle/runtime-topology.json` (schema v2, `Redacted`) records one entry per launch-order service identity plus externally managed services: ownership kind (`process`/`adapter`/`external`), the named service type for adapter-owned services, and non-secret startup-established runtime bindings such as the origin's `http_url`, `bound_addr`, and `bound_port`. It stages from retained session state after teardown, so topology evidence survives service shutdown. Network paths remain separate run evidence; they are never inserted as fake service entries.
 
 ## Telemetry artifacts (Eggstack M001b)
 

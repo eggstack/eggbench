@@ -105,6 +105,10 @@ manifest v2's separate execution and comparison fields.
 
 ## Remaining non-goals
 
-No production workload driver, metric normalization, comparison engine, CLI,
-remote execution, database, or security semantics. The session stays usable
-independently as the phase orchestrator's process owner.
+Production workload drivers, metric normalization, the comparison engine, the
+CLI, and security semantics all shipped after this module was written and are
+documented elsewhere in `docs/`; this document owns the process lifecycle only.
+Still out of scope: remote execution — the `ExecutionProvider` category has an
+accessor but no registered driver, deferred per ADR-0005 — and any database.
+The session stays usable independently as the phase orchestrator's process
+owner.

@@ -203,76 +203,46 @@ Other contracts that cut across every module:
 
 ### Known drift and open findings
 
-These deep dives were written by reading the code, and they disagree with
-some existing prose in places. The tables below are the consolidated index.
-They are review leads, not verdicts: each row points at the deep dive that
-documents it and at the source line to check, so a reviewer can confirm or
-dismiss any of them independently. No source or pre-existing doc was edited
-as part of writing this directory.
+The deep dives were written by reading the code, and comparing the code against
+its own prose surfaced 38 findings. Every one has since been re-verified
+against source and dispositioned, so this section is a **live** index of what is
+still open — not a record of what was found. Findings that are fixed have been
+removed rather than left to rot into a list that contradicts its own
+disposition note.
 
-Every row was subsequently re-verified against source and dispositioned by
-`plans/subsystems/architecture-deep-dive-corrective-addendum.md`. That pass
-resolved the documentation rows, the evidence-integrity findings, and the
-unreachable-observability findings; the remainder are recorded as
-decision-gated follow-ups in its C003 table. Three audit claims did not
-survive verification and are listed at the end of each table rather than
-silently dropped.
-
-**Pre-existing documents that contradict the code.** `docs/` and the four
-crate-level `architecture/` files are the canonical contracts, so these
-matter: a reader following them would build a wrong model.
-
-| Document claim | What the code does | Deep dive |
-|---|---|---|
-| `architecture/drivers.md:11`, `docs/driver-capabilities.md:25`: `ResolvedPlan` is "current v3", v1/v2 readable | `RESOLVED_PLAN_SCHEMA_VERSION = 6`; evidence accepts v1–v5 plus current | [core-driver-resolution.md](core-driver-resolution.md) |
-| `architecture/drivers.md:13`: a non-empty fault plan retains the experiment seed in the resolved plan | Resolved plan copies `seed` unconditionally; the fault-conditional namespacing lives in path evidence | [core-driver-resolution.md](core-driver-resolution.md) |
-| `architecture/drivers.md:39`: only `oha`, `h2load`, `iperf3` are unconditional | 7 external drivers register unconditionally | [drivers-catalog-features.md](drivers-catalog-features.md) |
-| `architecture/runner.md:109`, `docs/trial-orchestration.md:32`: drain runs "if the executor was reached" | Drain is unconditional; the `workload_entered` flag is written but never read | [runner-orchestration.md](runner-orchestration.md) |
-| `docs/trial-orchestration.md:78`: exactly four timeout names | The allowlist also includes `telemetry` | [runner-orchestration.md](runner-orchestration.md) |
-| `docs/trial-orchestration.md:49`: `TrialExecutionResult` is schema v1 | Pinned to schema v2 (adds `arm`, `pair_id`) | [runner-orchestration.md](runner-orchestration.md) |
-| `docs/comparison.md:61`, `docs/paired-experiments.md:97`: paired receipts are schema v2 | `COMPARISON_RECEIPT_SCHEMA_VERSION = 4` is emitted | [core-comparison.md](core-comparison.md) |
-| `docs/metrics.md:21`: percentile basis points are part of the contract | `aggregation_matches` accepts any percentile against any expected percentile | [core-metrics.md](core-metrics.md) |
-| `docs/metrics.md:46`: `UnsupportedByDriver` is a normalization outcome | Never constructed | [core-metrics.md](core-metrics.md) |
-| `docs/external-oracles.md:111`: partial stdout is staged on cancellation | Cancellation returns `Err`; no outcome and no artifact | [drivers-external-substrate.md](drivers-external-substrate.md) |
-| `docs/external-drivers.md:46`: secrets never appear in `Debug` output | `ExternalCommandSpec` derives `Debug` and holds argv/env verbatim | [drivers-external-substrate.md](drivers-external-substrate.md) |
-| `docs/external-drivers.md:52`: no inherited working directory | `None` leaves the child inheriting the parent's cwd | [drivers-external-substrate.md](drivers-external-substrate.md) |
-| `docs/gregg-telemetry.md:88`: retention truncation marks metrics invalid | The sample is dropped and a counter increments; no invalidation | [drivers-telemetry-adapters.md](drivers-telemetry-adapters.md) |
-| `architecture/evidence.md:9`: v1 tolerates a curated set of additive fields | Neither manifest struct declares `deny_unknown_fields`, so tolerance is blanket top-level | [core-evidence-bundle.md](core-evidence-bundle.md) |
-| `qualification/synvoid/v1/README.md:3`: the upstream asset contract is still "open" | `upstream-manifest.md:5` records it CLOSED and `plans/registry.md:121` discharges the condition | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
-| `README.md` documents five commands | The binary declares six; `qualify` is absent from the README | [cli-surface.md](cli-surface.md) |
+The original table of pre-existing documents that contradicted the code has
+been retired: all sixteen of its rows were corrected (`f61df14`). Three further
+audit claims did not survive verification and were never acted on; they are
+listed in the Disposition section below rather than dropped. The record lives in
+`plans/subsystems/architecture-deep-dive-corrective-addendum.md` and
+`plans/closure/architecture-deep-dive-corrective/`. What remains are the
+source-level findings below.
 
 **Source-level findings worth a reviewer's attention.** Each is documented
 in full, with surrounding context, in the linked deep dive's *Review focus*.
 
 | Area | Finding | Deep dive |
 |---|---|---|
-| Resolution | `DriverCategory` has 7 variants but `DriverCatalog` exposes 5 accessors — `Route` and `Fault` have none, so path descriptors are only reachable by scanning the flat list | [drivers-catalog-features.md](drivers-catalog-features.md) |
-| Dispatch | Catalog registration and CLI dispatch are two hand-maintained name lists; a comment claims catalog-gated resolution but the code is a pure name match | [cli-workload-registry.md](cli-workload-registry.md) |
-| Comparison | Metric truncation at 256 is silent — no warning, no receipt field — so an over-budget plan yields a receipt that looks complete | [core-comparison.md](core-comparison.md) |
-| Evidence | `trial_metrics` completes `read_to_end` before applying its 256 MiB cap, and `BundleReader::open` does not verify sizes | [core-evidence-bundle.md](core-evidence-bundle.md) |
-| Evidence | A stale `.{name}.finalize-lock` from a crash is reported as `DestinationExists` even when the destination is free | [core-evidence-bundle.md](core-evidence-bundle.md) |
-| Seams | `CorrectnessRegistry`/`DiagnosticRegistry` silently overwrite duplicate registrations, while `ServiceAdapterRegistry`/`TelemetryRegistry` reject them | [runner-adapter-seams.md](runner-adapter-seams.md) |
-| Seams | `diagnostics.rs` claims sibling-neutrality but hardcodes `driver == "eggprobe"` and `machine_schema == "0.3"`, duplicating a pin in the drivers crate | [runner-adapter-seams.md](runner-adapter-seams.md) |
-| Substrate | `cancelled`/`timed_out` on `ExternalCommandOutcome` are permanently `false`, and `cleanup_notes` is computed after the cancel/timeout early returns | [drivers-external-substrate.md](drivers-external-substrate.md) |
-| Substrate | `ErrorCategory::OutputTruncated` and `ExternalParseError` are public and exported but never constructed | [drivers-external-substrate.md](drivers-external-substrate.md) |
+| Dispatch | Catalog registration and CLI dispatch are two hand-maintained name lists, so a driver can reach the catalog with no executor arm. The comment stating dispatch is by name is now truthful, and a guard test asserts the two sets agree — so this is a maintainability cost, not a live divergence | [cli-workload-registry.md](cli-workload-registry.md) |
+| Evidence | `BundleReader::open` performs no declared-size verification: path validation checks symlink components and manifest validation checks declared *bounds*, but an artifact whose on-disk bytes exceed its declared size is not rejected at open | [core-evidence-bundle.md](core-evidence-bundle.md) |
+| Evidence | A stale `.{name}.finalize-lock` from a crash is reported as `DestinationExists` even when the destination is free (`C003-a`) | [core-evidence-bundle.md](core-evidence-bundle.md) |
+| Seams | `diagnostics.rs` claims sibling-neutrality but hardcodes `driver == "eggprobe"` and `machine_schema == "0.3"`, duplicating a pin the drivers crate already exports | [runner-adapter-seams.md](runner-adapter-seams.md) |
+| Substrate | `ErrorCategory::OutputTruncated` and `ExternalParseError` are public and exported but never constructed — a documented reservation, not a defect | [drivers-external-substrate.md](drivers-external-substrate.md) |
 | CLI | Public failure categories are derived by substring-matching driver error text, so rewording a message silently changes a public category | [cli-commands.md](cli-commands.md) |
-| CLI | `ResolutionOptions` and `workload_load_mode` are built independently in `run.rs` and `doctor.rs`, so `doctor` can disagree with `run` | [cli-commands.md](cli-commands.md) |
-| Build | `build.rs` returns the first matching `[[package]]` stanza, so version provenance is wrong if the lockfile ever holds two versions of a scraped crate | [drivers-catalog-features.md](drivers-catalog-features.md) |
-| Build | The `external-command` cargo feature is declared with zero referents, yet `docs/external-drivers.md:27` implies it gates the substrate | [drivers-external-substrate.md](drivers-external-substrate.md) |
-| Orchestration | The phase-event count bound is one short in the maximal configuration (reset plus cooldown plus an active collector) | [runner-orchestration.md](runner-orchestration.md) |
-| Provisioning | `OHA_SHA256_aarch64` is empty, so `provision-external-oracles.sh` is x86_64-only and cannot provision aarch64 or the Windows lane | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
+| CLI | `ResolutionOptions` and `workload_load_mode` are built independently in `run.rs` and `doctor.rs`, so `doctor` can disagree with `run` (`C003-i`) | [cli-commands.md](cli-commands.md) |
+| Build | `build.rs` returns the first matching `[[package]]` stanza, so version provenance is wrong if the lockfile ever holds two versions of a scraped crate (`C003-e`) | [drivers-catalog-features.md](drivers-catalog-features.md) |
+| Provisioning | `OHA_SHA256_aarch64` is empty, so `provision-external-oracles.sh` is x86_64-only and cannot provision aarch64 or the Windows lane. It fails closed rather than installing unpinned | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 | Qualification | The live-tools negative control accepts any nonzero exit as "rejected" without checking the reason, so an unrelated crash would pass | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 
 ### Disposition of the audit findings
 
-`13eb443` recorded these as open leads. The corrective pass
+`13eb443` recorded the 38 findings as open leads. The corrective pass
 (`plans/subsystems/architecture-deep-dive-corrective-addendum.md`,
-milestones C001/C002) closed the following classes, and the deep dives'
-*Review focus* sections are now the historical record of the finding rather
-than a live to-do list:
+milestones C001/C002) closed the following classes, whose rows have been removed
+from the table above rather than left to read as live defects:
 
 - **Documentation drift** — every "pre-existing documents that contradict the
-  code" row above is corrected. Schema versions, readable ranges, the driver
+  code" row was corrected. Schema versions, readable ranges, the driver
   registration set, the unconditional-drain contract, the timeout allowlist,
   the external-substrate error and cwd semantics, the Prometheus retention
   model, and the manifest field-tolerance description all now match the code.
@@ -290,6 +260,9 @@ than a live to-do list:
   required count rather than one short, `FakeDiagnosticExecutor` reports
   `DiagnosticFailed`, and `TelemetryError` can no longer be built past its
   documented bound.
+- **Unreachable descriptors** — every `DriverCategory` variant now has a
+  catalog accessor, so `Route` and `Fault` descriptors are no longer reachable
+  only by scanning the flat list.
 
 Three claims did not survive verification and were **not** acted on:
 `docs/equivalence.md` never existed and the `ComparisonReceipt` field
@@ -300,8 +273,10 @@ unresolvable-reference asymmetry is a stated design decision at
 `metrics.rs:1028`.
 
 The remainder are decision-gated and enumerated as C003-a through C003-o in
-the addendum. The most consequential are the `doctor`/`run` disagreement for
-`prometheus-http` fields (C003-d), stale `finalize-lock` reporting
+the addendum, which is the authoritative record — several of them, including
+C003-c and C003-f through C003-o, have no row in the table above and are
+tracked only there. The most consequential are the `doctor`/`run` disagreement
+for `prometheus-http` fields (C003-d), stale `finalize-lock` reporting
 (C003-a), and whether the v2 manifest should be a closed contract (C003-b).
 
 ## 5. Feature matrix

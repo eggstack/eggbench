@@ -250,10 +250,11 @@ pairable.
 
 The structure is what enforces the contract, not a comment.
 
-1. **State, not control flow.** `RunState` (678) carries three flags that survive the tail:
-   `services_started` (698), `workload_entered` (700), and `staging_error` (703).
-   `staging_error` is `Option<BundleError>` precisely so an error can be *recorded*
-   mid-experiment without unwinding.
+1. **State, not control flow.** `RunState` (696) carries two flags that survive the tail:
+   `services_started` (716) and `staging_error` (719). `staging_error` is
+   `Option<BundleError>` precisely so an error can be *recorded* mid-experiment
+   without unwinding. A third flag, `workload_entered`, once gated the drain and
+   was found write-only; it has been removed, and the drain is unconditional.
 2. **No `?` in the tail.** From the tail comment at 1445 to the first `return` at 1721, every
    fallible staging call is written as `if let Err(error) = … { state.staging_error =
    Some(error) }` (1639, 1642, 1650, 1658, 1666, 1674, 1678, 1714). There is no early exit and
@@ -415,20 +416,23 @@ path.
 5. **Finalization ordering** (1700–1721). The event must be finished exactly once *before*
    `stage_phase_artifacts`, and `state.phases` must not be touched after. A new
    post-finalization event would put an unterminated event into `runner-phases.json`.
-6. **The phase-count bound** (806–822) is `warmups + 3·trials + 2 + diagnostics + correctness`.
-   In the maximal configuration (reset *and* cooldown between every pair, plus an active
-   telemetry collector) the real count is `warmups + 3·trials + 3`, because telemetry adds a
-   second `Drain` event at 1518. `Vec::with_capacity` absorbs the shortfall and
-   `MAX_PHASE_EVENTS` has headroom, but the per-artifact reservation at 3163 derives from the
-   same bound, so the `runner-phases.json` floor is one event short in that configuration.
+6. **The phase-count bound** (806–822) is `warmups + 3·trials + FIXED_PHASE_EVENTS +
+   diagnostics + correctness`. `FIXED_PHASE_EVENTS = 3` (59) is a deliberately exact *net*
+   value, not a rounded one: five phases sit outside the per-trial terms
+   (`StartupReadiness`, workload `Drain`, telemetry `Drain`, `Teardown`, `Finalization`), while
+   `3·trials` already carries two events more than the `3T − 2` inter-trial Reset/Cooldown pairs
+   actually produce, so netting the surplus against the five gives three. Exactness matters in
+   both directions — `phase_bound` sizes the per-artifact reservation, so over-reserving would
+   reject plans that fit and under-reserving fails staging after all measurement work is done.
 7. **`services_started` is set only on the successful startup path** (899). That is correct
    today because `LocalSession::startup` self-cleans on every failure path, but it couples the
    teardown gate to that internal guarantee: if startup ever returned with processes still
    running, both `LocalSession::shutdown` (1591) and post-workload diagnostics (1575) would be
    skipped.
-8. **`workload_entered` is write-only.** Assigned at 1040, 1066, 1201, and 1310, never read;
-   drain is unconditional with the rationale at 1452. The in-tree docs assert the opposite
-   gating — see the divergence note below.
+8. **Drain is unconditional.** It was once gated on a `workload_entered` flag that was
+   assigned on four paths and never read; the flag has been removed and the rationale for the
+   unconditional call is recorded at 1452. The in-tree docs had asserted the opposite gating and
+   now match the code.
 9. **Adversarial driver input.** Artifact names (3441, 3485, 3560), counts (3422, 3555), and
    byte sizes (2652, 2749, 2857) are re-checked at the runner boundary rather than trusted. New
    artifact kinds need the same treatment.
