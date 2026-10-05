@@ -112,7 +112,11 @@ Historical post-M003 live-tool C001 stopped with evidence and successor C002 is
 closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`.
 No older corrective handoff remains open.
 
-## Conditionally closed implementation plans (named conditions remain)
+## Closed implementation plans (named conditions discharged)
+
+Per-milestone implementation plans and closure records live under
+`plans/implementation/` and `plans/closure/`; this table names only the
+currently relevant terminal entries, not every historical record.
 
 | Subsystem | Milestone | Status | Plan | Closure | Remaining condition |
 |---|---|---|---|---|---|
@@ -299,7 +303,7 @@ Before marking a plan ready, verify:
 
 Both cross-repo gating handoffs are closed:
 
-- SynVoid owner-side qualification asset contract:
+- SynVoid owner-side qualification asset contract (sibling repo, not this tree):
   `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
   — **CLOSED** 2026-09-28 (implementation `ae045481`, closeout head
   `30e68af8`);

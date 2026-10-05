@@ -19,7 +19,7 @@ An HTTP corpus plan uses schema version 8 and `http_corpus_checks`. Each check p
 
 ```sh
 cargo run -p eggbench-cli --features eggstack-http -- validate examples/security-http-corpus-plan.json
-cargo run -p eggbench-cli --features eggstack-http -- run examples/security-http-corpus-plan.json --bundle target/http-corpus.eggb
+cargo run -p eggbench-cli --features eggstack-http -- run examples/security-http-corpus-plan.json target/http-corpus.eggb
 ```
 
 Cases run serially after readiness and before warmups. They do not enter trial metrics. Only HTTP status, owner-defined case IDs, case/request hashes, expectation, and stable dispositions enter the evidence artifact; request and response bodies and server error text are omitted. Transport failures and timeouts are Invalid. Status mismatches are correctness Fail while performance trials continue.

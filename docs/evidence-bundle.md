@@ -22,7 +22,7 @@ example.eggb/
   trials/001/result.json
 ```
 
-`plan.json` preserves the source plan, including an optional schema-v3 `network_path`. New resolutions write `resolved-plan.json` as ResolvedPlan schema v3, which records selected Route/Fault descriptors and their upstream provenance. ResolvedPlan v1 and v2 remain readable for legacy evidence; they are not rewritten or silently upgraded. A v1/v2 source plan remains compatible when it has no network path.
+`plan.json` preserves the source plan, including an optional schema-v3 `network_path`. New resolutions write `resolved-plan.json` as ResolvedPlan schema v6, which records selected Route/Fault descriptors and their upstream provenance. ResolvedPlan v1 through v5 remain readable for legacy evidence; they are not rewritten or silently upgraded. A v1/v2 source plan remains compatible when it has no network path.
 
 ## Network-path evidence
 
@@ -78,4 +78,4 @@ Retention, garbage collection, indexing, and database-backed search are outside 
 
 ## Offline comparison receipts
 
-`eggbench compare` never mutates either bundle. Unpaired path-free comparison emits a standalone versioned JSON receipt (schema v1, policy `eggbench.trial-bootstrap.v1`); comparisons involving a network path use the path-aware policy `eggbench.trial-bootstrap-network-path.v1`. Both carry bundle identities, the baseline reference, environment policy, typed comparability, seed, per-metric estimates/intervals/thresholds/verdicts, the aggregate verdict, and warnings. Paired comparison emits schema v2 under `eggbench.trial-bootstrap-paired.v1`; schema-v1 receipts remain readable. The manifest `comparison_verdict` field remains reserved for future run-time comparison performed before finalization. Network-path configuration is included in comparison identity as described in [comparison](comparison.md).
+`eggbench compare` never mutates either bundle. Unpaired path-free comparison emits a standalone versioned JSON receipt (schema v4, policy `eggbench.trial-bootstrap.v1`); comparisons involving a network path use the path-aware policy `eggbench.trial-bootstrap-network-path.v1`. Both carry bundle identities, the baseline reference, environment policy, typed comparability, seed, per-metric estimates/intervals/thresholds/verdicts, the aggregate verdict, and warnings. Paired comparison emits schema v4 under `eggbench.trial-bootstrap-paired.v1`; schema-v1 through schema-v3 receipts remain readable. The manifest `comparison_verdict` field remains reserved for future run-time comparison performed before finalization. Network-path configuration is included in comparison identity as described in [comparison](comparison.md).

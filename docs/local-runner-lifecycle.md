@@ -50,12 +50,13 @@ responsible for discovery and version capture before passing a resolved path.
 ## Child environment
 
 Every managed process starts with an empty environment. Only values explicitly
-resolved into `ProcessSpec.env` are injected. In this v1 runner contract, those
-values come from subject secret references. Service `config` is opaque and is
+resolved into `ProcessSpec.env` are injected. Those values come from subject
+secret references and, on plan schema v9, from typed `binding_args` /
+`binding_env` references to a declared dependency's non-secret runtime binding
+consumed after that dependency is ready. Service `config` is opaque and is
 not translated into environment variables. The runner does not inherit
 `HOME`, `PATH`, temporary-directory, locale, proxy, credential, or toolchain
-variables. A future typed plan-schema milestone is required for non-secret
-environment fields or an inheritance allowlist.
+variables.
 
 ## Readiness
 

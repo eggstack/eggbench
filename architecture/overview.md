@@ -115,49 +115,49 @@ and `docs/synvoid-qualification.md` document `qualify`. See
 
 Line counts are source-only (`crates/*/src`), excluding tests.
 
-### `eggbench-core` — domain contracts (17,778 LOC)
+### `eggbench-core` — domain contracts (17,975 LOC)
 
 | Module | Files (LOC) | Responsibility | Deep dive |
 |---|---|---|---|
 | Plan schema | `plan.rs` (3,209), `types.rs` (255) | Versioned plan decoding, `deny_unknown_fields`, semantic validation across schema v1–v10 | [core-plan-schema.md](core-plan-schema.md) |
-| Driver resolution | `resolved.rs` (1,457) | Capability descriptors, typed capability values, deterministic selection, `ResolvedPlan` v6 provenance | [core-driver-resolution.md](core-driver-resolution.md) |
-| Metrics | `metrics.rs` (1,575) | Metric vocabulary v1, `TrialMetrics` schema v1, pure normalization to observed/missing/invalid | [core-metrics.md](core-metrics.md) |
-| Comparison | `comparison.rs` (6,780) | Bundle identity, digest-pinned aliases, comparability, deterministic bootstrap policies, verdicts, receipt | [core-comparison.md](core-comparison.md) |
-| Evidence | `evidence.rs` (2,487) | `.eggb` manifest contract, streaming writer, atomic finalize, read-only `BundleReader` | [core-evidence-bundle.md](core-evidence-bundle.md) |
+| Driver resolution | `resolved.rs` (1,463) | Capability descriptors, typed capability values, deterministic selection, `ResolvedPlan` v6 provenance | [core-driver-resolution.md](core-driver-resolution.md) |
+| Metrics | `metrics.rs` (1,588) | Metric vocabulary v1, `TrialMetrics` schema v1, pure normalization to observed/missing/invalid | [core-metrics.md](core-metrics.md) |
+| Comparison | `comparison.rs` (6,924) | Bundle identity, digest-pinned aliases, comparability, deterministic bootstrap policies, verdicts, receipt | [core-comparison.md](core-comparison.md) |
+| Evidence | `evidence.rs` (2,521) | `.eggb` manifest contract, streaming writer, atomic finalize, read-only `BundleReader` | [core-evidence-bundle.md](core-evidence-bundle.md) |
 | Qualification & security | `qualification.rs` (1,277), `security.rs` (412), `network_path.rs` (281) | Bounded subject-neutral qualification inputs, security-correctness evidence contract, declarative network-path intent | [core-qualification-security.md](core-qualification-security.md) |
 
-### `eggbench-runner` — lifecycle and orchestration (9,659 LOC)
+### `eggbench-runner` — lifecycle and orchestration (9,724 LOC)
 
 | Module | Files (LOC) | Responsibility | Deep dive |
 |---|---|---|---|
-| Orchestration | `orchestration.rs` (3,794) | Phase coordinator, warmups, measured trials, reset hooks, measurement interval, cleanup boundary | [runner-orchestration.md](runner-orchestration.md) |
+| Orchestration | `orchestration.rs` (3,805) | Phase coordinator, warmups, measured trials, reset hooks, measurement interval, cleanup boundary | [runner-orchestration.md](runner-orchestration.md) |
 | Process lifecycle | `session.rs` (1,266), `spec.rs` (529), `platform.rs` (157), `probe.rs` (239) | Process groups, dependency-ordered startup, readiness, bounded logs, reverse teardown | [runner-process-lifecycle.md](runner-process-lifecycle.md) |
-| Adapter seams | `service.rs` (290), `telemetry.rs` (478), `correctness.rs` (311), `diagnostics.rs` (348) | Object-safe trait seams and registries for services, telemetry, correctness, diagnostics | [runner-adapter-seams.md](runner-adapter-seams.md) |
+| Adapter seams | `service.rs` (290), `telemetry.rs` (513), `correctness.rs` (320), `diagnostics.rs` (358) | Object-safe trait seams and registries for services, telemetry, correctness, diagnostics | [runner-adapter-seams.md](runner-adapter-seams.md) |
 | Evidence preparation | `prepare.rs` (498), `environment.rs` (671), `subject.rs` (338), `bundle.rs` (204), `secret.rs` (65), `error.rs` (175) | Environment fingerprint, subject snapshot, pre-run evidence staging, secret indirection | [runner-evidence-prep.md](runner-evidence-prep.md) |
 
 Two deterministic fixtures support lifecycle testing and are not part of the
 production surface: `runner/src/bin/eggbench-child-fixture.rs` (185) and
 `drivers/src/bin/eggbench_fixture.rs` (80).
 
-### `eggbench-drivers` — adapters and catalog (16,107 LOC)
+### `eggbench-drivers` — adapters and catalog (16,641 LOC)
 
 | Module | Files (LOC) | Responsibility | Deep dive |
 |---|---|---|---|
-| Catalog & features | `catalog.rs` (215), `lib.rs` (63) | `DriverCatalog::production`, feature-gated registration, no-PATH-search contract | [drivers-catalog-features.md](drivers-catalog-features.md) |
+| Catalog & features | `catalog.rs` (341), `lib.rs` (63) | `DriverCatalog::production`, feature-gated registration, no-PATH-search contract | [drivers-catalog-features.md](drivers-catalog-features.md) |
 | Eggstack HTTP | `eggstack/fetch.rs` (1,520), `origin.rs` (265), `http_corpus.rs` (202), `mod.rs` (178) | Eggfetch closed-loop workload, EggServe controlled origin, fixed-corpus correctness | [drivers-eggstack-http.md](drivers-eggstack-http.md) |
 | Network path | `eggstack/path/{route,fault,dialer,evidence,mod}.rs` (1,360) | Route-first/fault-second Eggress + Eggchaos lowering, per-run path evidence | [drivers-network-path.md](drivers-network-path.md) |
-| External substrate | `external/{mod,resolver,command,version,parser,artifact,preflight,common,error}.rs` (1,926) | Trusted binary resolution, argv-only bounded execution, version policy, parser contract | [drivers-external-substrate.md](drivers-external-substrate.md) |
+| External substrate | `external/{mod,resolver,command,version,parser,artifact,preflight,common,error}.rs` (2,334) | Trusted binary resolution, argv-only bounded execution, version policy, parser contract | [drivers-external-substrate.md](drivers-external-substrate.md) |
 | Load tool adapters | `external/{oha,h2load,iperf3}.rs` (2,552) | Independent external load generators and their report semantics | [drivers-external-load-tools.md](drivers-external-load-tools.md) |
 | Oracle tool adapters | `external/{eggsec,eggsec_load,eggreplay,eggprobe}.rs` (4,953) | WAF correctness, security load, semantic replay, pre/post diagnostics | [drivers-external-oracle-tools.md](drivers-external-oracle-tools.md) |
 | Telemetry adapters | `gregg/{mod,collect,endpoint}.rs` (1,049), `prometheus_http.rs` (1,744) | Trial-synchronized host telemetry, bounded Prometheus text-format parsing | [drivers-telemetry-adapters.md](drivers-telemetry-adapters.md) |
 
-### `eggbench-cli` — presentation (5,425 LOC)
+### `eggbench-cli` — presentation (5,511 LOC)
 
 | Module | Files (LOC) | Responsibility | Deep dive |
 |---|---|---|---|
 | CLI surface | `main.rs` (913), `lib.rs` (227), `envelope.rs` (738), `error.rs` (124), `plan_input.rs` (93) | Argv parsing, JSON envelope compatibility surface, exit-code mapping, plan input loading | [cli-surface.md](cli-surface.md) |
-| Commands | `commands/{run,doctor,inspect,compare,validate,mod}.rs` (2,325) | One module per command; pipeline wiring, never orchestration logic | [cli-commands.md](cli-commands.md) |
-| Workload registry | `workload_registry.rs` (1,005) | Production/qualification driver-inventory split, adapter construction from capabilities | [cli-workload-registry.md](cli-workload-registry.md) |
+| Commands | `commands/{run,doctor,inspect,compare,validate,mod}.rs` (2,361) | One module per command; pipeline wiring, never orchestration logic | [cli-commands.md](cli-commands.md) |
+| Workload registry | `workload_registry.rs` (1,055) | Production/qualification driver-inventory split, adapter construction from capabilities | [cli-workload-registry.md](cli-workload-registry.md) |
 
 ## 4. Cross-cutting contracts
 
@@ -355,12 +355,12 @@ naming never defines what evidence exists.
 
 | Surface | Purpose | Deep dive |
 |---|---|---|
-| `docs/` (18 files) | Contract documentation: plan schema, capabilities, evidence, lifecycle, metrics, comparison, eggstack, gregg, oracles, security, qualification, CLI | referenced from each deep dive |
+| `docs/` (17 files) | Contract documentation: plan schema, capabilities, evidence, lifecycle, metrics, comparison, eggstack, gregg, oracles, security, qualification, CLI | referenced from each deep dive |
 | `plans/` | ADRs, subsystem roadmaps, implementation plans, closure records, registry | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 | `qualification/synvoid/{v1,v2}/` | Versioned qualification assets: scenarios, corpora, profiles, telemetry contracts, baselines | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 | `scripts/qualification/` | Live qualification harnesses and oracle assertions | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 | `examples/` | Worked plan examples, including intentionally rejected cases | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
-| `.github/workflows/` | `ci.yml` (4 lanes: Linux stable, Linux MSRV 1.89.0, macOS, Windows) and `live-tools.yml` (3 real-binary interoperability jobs: live-tools, live-eggsec, live-synvoid) | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
+| `.github/workflows/` | `ci.yml` (4 lanes: Linux stable, Linux MSRV 1.89.0, macOS, Windows) and `live-tools.yml` (5 real-binary interoperability jobs: live-tools, live-eggsec, live-m004b, live-synvoid, live-m003) | [tooling-qualification-ci.md](tooling-qualification-ci.md) |
 
 ## 8. Suggested review order
 

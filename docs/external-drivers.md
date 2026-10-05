@@ -10,7 +10,7 @@ execution. See [external oracles](external-oracles.md).
 
 Production driver inventory lives in `eggbench-drivers::DriverCatalog`. The
 catalog always registers the external-process drivers (`oha`, `h2load`,
-`iperf3`, `eggreplay-semantic`, `eggprobe`); native drivers join per feature.
+`iperf3`, `eggreplay-semantic`, `eggprobe`, `eggsec-waf`, `eggsec-load`); native drivers join per feature.
 `doctor` truthfully reports the inventory (including per-driver
 `binary_present` without spawning tools) and production `run` fails before
 startup with
