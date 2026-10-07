@@ -1,6 +1,8 @@
 # C002 — Evidence Integrity and Observability
 
-Status: implementation
+Status: **implemented — local verification complete, hosted-lane conditions
+open** (closure record
+`plans/closure/architecture-deep-dive-corrective/001-status.md`)
 Corrective classification: post-closure corrective
 Blocked by: nothing
 Compatibility: **no serialized-schema change.** Every fix either reuses an

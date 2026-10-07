@@ -5,8 +5,9 @@ Implementation:
 `plans/implementation/architecture-deep-dive-corrective/001-contract-truthfulness.md`
 and `002-evidence-integrity-and-observability.md`
 
-Status: **closing** — C001 closed, C002 landing with a named verification
-condition (see "Verification actually run").
+Status: **closing** — C001 closed, C002 implemented with a complete local
+verification pass. Two hosted-lane conditions remain open (see "Named
+verification conditions"); no hosted CI run is claimed by this record.
 
 ## What this milestone is
 
@@ -137,6 +138,59 @@ unreachable path-validation arm is deleted.
   observe the `prometheus-http` field rejection that `run` enforces. This is
   the mechanism behind C003-d and constrains any fix.
 
+## Item-by-item audit of the C002 plan
+
+Every item in
+`plans/implementation/architecture-deep-dive-corrective/002-evidence-integrity-and-observability.md`
+was re-verified against the source tree, and each was checked for the named
+regression test the plan requires. The plan's test obligation is the substance
+of this milestone, so the test column is the one that decides closure.
+
+| Item | Implementation | Named regression test |
+|---|---|---|
+| 1.1 truncation warning | `push_metric_truncation_warning` | `metric_truncation_is_recorded_as_a_receipt_warning`, `metric_set_within_bound_emits_no_truncation_warning` |
+| 1.2 per-trial metric semantics | rejects `baseline_metric_semantics_divergent` | `baseline_trials_with_divergent_metric_semantics_are_rejected`, `baseline_trials_with_coherent_metric_semantics_are_accepted` |
+| 1.3 bounded artifact read | `read_bounded` | **was missing — added `bounded_read_rejects_past_the_cap_and_accepts_exactly_the_cap`** |
+| 1.4 secure manifest re-read | `BundleReader::manifest_bytes`, `read_manifest_bytes` | **was missing — added `manifest_reread_shares_the_open_time_manifest_cap`** |
+| 2.1 real deadline flags | deadline-derived, not success-derived | `deadline_during_drain_reports_timed_out_outcome` |
+| 2.2 cleanup notes before early returns | `platform_cleanup_notes`, `with_cleanup_notes` | `timed_out_invocation_carries_cleanup_notes`, `cancelled_invocation_carries_cleanup_notes` |
+| 2.3 drain timeout is an error | `join_pipes_within`, `join_pipe` | `stalled_drain_is_a_cleanup_failure_not_empty_output`, `failed_drain_task_is_a_cleanup_failure` |
+| 2.4 dead `limit` parameter removed | `from_parts` owns the bound | `captured_stream_truncation_follows_total_minus_retained` |
+| 2.5 duplicate registration rejected | both registries return `Result` | `duplicate_correctness_source_registration_rejected`, `duplicate_diagnostic_source_registration_rejected` |
+| 2.6 diagnostic failure category | `DiagnosticFailed` | `diagnostic_operational_failure_is_not_reported_as_a_workload_failure` |
+| 2.7 `TelemetryError` bound | fields private, `new` sole constructor | `telemetry_error_detail_truncates_at_evidence_bound`, `telemetry_error_detail_keeps_short_text_verbatim` |
+| 3.1 exact phase bound | `FIXED_PHASE_EVENTS = 3` | `maximal_phase_shape_stays_within_the_reserved_phase_bound` |
+| 3.2 `workload_entered` deleted | field and four assignments gone | pre-existing `assert!(workload.drained)` guard, which the plan names as this item's guard |
+| 3.3 shared external-driver list | one list drives all three predicates | `external_predicates_agree_over_the_registered_set`, `shared_list_matches_the_registered_external_drivers` |
+| 3.4 catalog accessors | `route`, `fault`, `execution_provider`, `by_name` | `every_registered_category_is_reachable_through_its_accessor`, `by_name_resolves_any_category_and_rejects_unknown_names`, `route_and_fault_descriptors_resolve_under_the_path_feature` |
+| 3.5 catalog/dispatch guard | `every_catalog_workload_driver_has_a_dispatch_arm` | same-named test in `crates/eggbench-cli/src/workload_registry.rs` |
+| 3.6 inert `external-command` feature | absent from the manifest; no `cfg` referent remains in `crates/` | no test — the plan asks for a `cargo check` with and without all features, which the feature matrix covers, plus a source grep |
+| 3.7 unreachable path arm | `ends_with(':')` deleted | behavior-preserving deletion of a subsumed predicate; no test required |
+
+### Two items shipped without their required test
+
+1.3 and 1.4 are the two Group 1 items whose entire purpose is a bound that must
+hold on adversarial input, and both landed carrying only the code change. 1.3
+inlined the bounded read at its call site instead of extracting the
+`read_bounded` helper the plan specifies — and specifies it precisely *so the
+property is testable without a 256 MiB fixture*. 1.4's `manifest_bytes` had no
+negative test at all, so nothing would have caught a regression that restored
+the plain `File::open` re-read with its own larger cap.
+
+Both are now covered. The three copies of the bound-then-check idiom — `open`,
+`trial_metrics`, and `manifest_bytes` — are collapsed into the single
+`read_bounded` helper, so the cap exists once and the two tests exercise that
+one implementation. The tests assert rejection past the cap, acceptance at
+exactly the cap, and that a trusted capacity hint cannot relax the bound; the
+manifest test asserts `open` and the re-read report the *same*
+`BoundExceeded` for the same oversized bytes, which is the property item 1.4
+was written for.
+
+The guard test this milestone's headline property deserves is the negative one:
+it proves the cap is applied by the read rather than by a check after the read,
+which is the distinction the plan draws and the one no positive-path test in
+the existing suite could observe.
+
 ## Verification actually run
 
 Local, Linux only, at the implementation commit:
@@ -157,33 +211,73 @@ Local, Linux only, at the implementation commit:
 The runner suite requires `EGGBENCH_PARENT_SENTINEL_26CE` to be set; without it
 `lifecycle.rs` intentionally panics. All runs set it.
 
+### Complete local verification pass (2026-10-05/06)
+
+Re-run on the final tree, which includes the `read_bounded` extraction and the
+two added regression tests for items 1.3/1.4. Linux, stable 1.99.
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check` | clean |
+| `cargo check --workspace --all-targets --locked` | clean |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | clean |
+| `cargo test --workspace --all-targets --all-features --locked` | **615 passed, 0 failed across 27 test binaries** |
+| `python3 scripts/verify-architecture-docs.py` | 26 files, 3,532 citations, 0 errors |
+| Drivers isolation: `--no-default-features` | clean |
+| Drivers isolation: `+ eggstack-http` | clean |
+| Drivers isolation: `+ gregg` | clean |
+| Drivers isolation: `+ eggstack-path` | clean |
+| Drivers isolation: `+ eggstack-path,gregg` | clean |
+| Drivers isolation: `+ prometheus-http` | clean |
+| `cargo check -p eggbench-cli --no-default-features --features eggstack-path` | clean |
+| `cargo tree -p eggbench-drivers --no-default-features --edges normal \| grep -E 'eggress\|eggchaos'` | empty — isolation holds |
+| same, with `--features eggstack-http` | empty — isolation holds |
+| `cargo test -p eggbench-cli --no-default-features --test cli` | passed (feature-off fail-closed path) |
+| `cargo +1.89.0 check --workspace --all-targets --locked` (MSRV) | clean |
+| `cargo +1.89.0 check --workspace --all-targets --all-features --locked` (MSRV) | clean |
+| `cargo run -p eggbench-cli --features eggstack-path -- validate examples/eggstack-path.json` | `eggbench: validate ok` |
+
+**The heavy-suite condition is now cleared.** The earlier partial result is
+superseded: the complete `--all-targets --all-features` run finished with 615
+tests passing and no failures across 27 binaries, including the whole
+`synvoid_m002b` group. The cases that assert on comparison verdicts — the ones
+most exposed to C002's semantics change — all passed:
+`workload_drift_compares_as_incomparable`,
+`smoke_profile_passes_with_absolute_gates`,
+`perf_same_source_pair_never_fails`,
+`performance_only_regression_fails_suite_despite_correctness_pass`, and
+`correctness_only_regression_fails_suite_despite_perf_pass`.
+
+That is the expected result rather than a lucky one: both `check_metric_semantics`
+call sites convert a rejection into a per-metric `Invalid` disposition, the same
+shape the pre-existing `metric_semantics_mismatch` path used, and a real run's
+baseline is semantically coherent, so no verdict changes.
+
+`synvoid_m002b` took roughly 70 minutes wall-clock, serializing on a shared lock
+and running real paired qualification against Python stub origins. The host was
+also heavily contended for part of that window (load average above 30), so treat
+the duration as an environment property, not a code property.
+
+One gate failed for an environmental reason and was re-run clean: the
+`validate` smoke check first aborted with `No space left on device` while
+compiling `ring`/`eggchaos-core` (the filesystem was at 100%, with `target/`
+alone at 9.9 GB). It passed on retry once space was available. This is a disk
+condition, not a code defect, and it did not affect any test result.
+
 ### Named verification conditions
 
-1. **Heavy qualification integration suite — narrowed, not cleared.** The
-   `synvoid_m002b` suite runs real paired qualification against Python stub
-   origins and serializes on a shared lock, so it takes tens of minutes in a
-   debug build. It was still executing at commit time, with **9 test groups
-   green and 0 failures**. Critically, the two cases that assert on comparison
-   verdicts — the ones most exposed to the C002 semantics change — both
-   **passed**: `workload_drift_compares_as_incomparable` and
-   `smoke_profile_passes_with_absolute_gates`, alongside
-   `perf_same_source_pair_never_fails`,
-   `performance_only_regression_fails_suite_despite_correctness_pass`, and
-   `correctness_only_regression_fails_suite_despite_perf_pass`.
-
-   This is consistent with the analysis: both `check_metric_semantics` call
-   sites convert a rejection into a per-metric `Invalid` disposition, the same
-   shape the pre-existing `metric_semantics_mismatch` path used, and a real
-   run's baseline is semantically coherent, so no verdict changes. The
-   remaining telemetry-drift cases were still running and are unrelated to the
-   comparison change. **A complete local run and a hosted CI run are still
-   required to clear this condition** — the partial result is recorded as
-   evidence, not as completion.
-2. **Platform-conditional fixes.** C002 items 2.1–2.3 (deadline flags, cleanup
-   notes, drain timeout) matter most on non-Linux, and
+1. ~~**Heavy qualification integration suite.**~~ **CLEARED** — see the complete
+   local verification pass above. 615 passed, 0 failed.
+2. **Platform-conditional fixes — still open.** C002 items 2.1–2.3 (deadline
+   flags, cleanup notes, drain timeout) matter most on non-Linux, and
    `evidence.rs`'s stale-lock path is `#[cfg(not(target_os = "linux"))]`. The
    Linux lane does not exercise the `direct_child_only` note or the
-   finalize-lock path. **macOS and Windows lanes required.**
+   finalize-lock path. **macOS and Windows lanes required.** Their named tests
+   (`timed_out_invocation_carries_cleanup_notes`,
+   `cancelled_invocation_carries_cleanup_notes`,
+   `stalled_drain_is_a_cleanup_failure_not_empty_output`) exist and are
+   platform-independent in form, but the branches they guard are compiled only
+   off Linux.
 3. **No hosted CI run is claimed by this pass.** Clippy and `cargo fmt --check`
    must pass in the hosted lanes before C002 is marked closed.
 

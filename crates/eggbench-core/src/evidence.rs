@@ -810,6 +810,36 @@ fn io_error(path: impl Into<PathBuf>, source: io::Error) -> BundleError {
     }
 }
 
+/// Read `file` under a hard byte cap, rejecting anything larger.
+///
+/// The `.take(max + 1)` is the substance: a bare `read_to_end` followed by
+/// a post-hoc length check would already have allocated the full file
+/// before the check could reject it, so an on-disk file larger than the
+/// cap would still have cost its own size in memory. Reading one byte past
+/// the cap makes the bound — not the file — decide how much is retained, so
+/// a declared size that disagrees with the bytes on disk costs a fixed
+/// `max + 1` instead.
+///
+/// `capacity` is a trusted pre-allocation hint only; it never relaxes the
+/// cap. Callers that have a validated size (the manifest's own metadata
+/// length) pass it, callers reading arbitrary bytes pass `None`.
+fn read_bounded(
+    file: File,
+    max: u64,
+    what: &'static str,
+    capacity: Option<usize>,
+    path: impl Into<PathBuf>,
+) -> Result<Vec<u8>, BundleError> {
+    let mut bytes = capacity.map_or_else(Vec::new, Vec::with_capacity);
+    file.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error(path, error))?;
+    if bytes.len() as u64 > max {
+        return Err(BundleError::BoundExceeded(what));
+    }
+    Ok(bytes)
+}
+
 fn validate_bounds(bounds: ArtifactBounds) -> Result<(), BundleError> {
     if bounds.artifact_bytes == 0
         || bounds.total_bytes < bounds.artifact_bytes
@@ -1175,14 +1205,13 @@ impl BundleReader {
         let manifest_file = secure_open(&root, Path::new("manifest.json"))?;
         let manifest_capacity = usize::try_from(manifest_meta.len())
             .map_err(|_| BundleError::BoundExceeded("manifest bytes"))?;
-        let mut bytes = Vec::with_capacity(manifest_capacity);
-        manifest_file
-            .take(MAX_MANIFEST_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| io_error(&manifest_path, error))?;
-        if bytes.len() as u64 > MAX_MANIFEST_BYTES {
-            return Err(BundleError::BoundExceeded("manifest bytes"));
-        }
+        let bytes = read_bounded(
+            manifest_file,
+            MAX_MANIFEST_BYTES,
+            "manifest bytes",
+            Some(manifest_capacity),
+            &manifest_path,
+        )?;
         let manifest_version = serde_json::from_slice::<serde_json::Value>(&bytes)
             .map_err(|error| BundleError::ManifestParse(error.to_string()))?
             .get("schema_version")
@@ -1280,16 +1309,16 @@ impl BundleReader {
         let file = self.open_artifact(&expected)?;
         // Bound the read, not just the result: `read_to_end` alone would let
         // an artifact larger than the cap drive an allocation of that size
-        // before the bound below could reject it. Declared sizes are
+        // before the bound could reject it. Declared sizes are
         // validated, so the only way to exceed the cap is actual bytes on
         // disk in a shared or imported bundle.
-        let mut bytes = Vec::new();
-        file.take(MAX_ARTIFACT_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| io_error(expected.to_path_buf(), error))?;
-        if bytes.len() as u64 > MAX_ARTIFACT_BYTES {
-            return Err(BundleError::BoundExceeded("trial metrics bytes"));
-        }
+        let bytes = read_bounded(
+            file,
+            MAX_ARTIFACT_BYTES,
+            "trial metrics bytes",
+            None,
+            expected.to_path_buf(),
+        )?;
         let metrics: TrialMetrics = serde_json::from_slice(&bytes)
             .map_err(|error| BundleError::ManifestParse(error.to_string()))?;
         if metrics.trial_id != trial_id {
@@ -1334,14 +1363,13 @@ impl BundleReader {
     pub fn manifest_bytes(&self) -> Result<Vec<u8>, BundleError> {
         let manifest_path = self.root.join("manifest.json");
         let file = secure_open(&self.root, Path::new("manifest.json"))?;
-        let mut bytes = Vec::new();
-        file.take(MAX_MANIFEST_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| io_error(manifest_path, error))?;
-        if bytes.len() as u64 > MAX_MANIFEST_BYTES {
-            return Err(BundleError::BoundExceeded("manifest bytes"));
-        }
-        Ok(bytes)
+        read_bounded(
+            file,
+            MAX_MANIFEST_BYTES,
+            "manifest bytes",
+            None,
+            manifest_path,
+        )
     }
 
     fn validate_paths(&self) -> Result<(), BundleError> {
@@ -2517,5 +2545,82 @@ mod tests {
             .unwrap()
             .verify()
             .unwrap();
+    }
+
+    // C002 item 1.3. The cap is enforced by the read, not by a check after
+    // it, so this is provable at a small `max` instead of needing a real
+    // 256 MiB artifact on disk.
+    #[test]
+    fn bounded_read_rejects_past_the_cap_and_accepts_exactly_the_cap() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("payload.bin");
+        fs::write(&file_path, vec![b'x'; 4 * 1024]).unwrap();
+
+        // Past the cap: rejected, and the retained buffer never exceeds
+        // `max + 1` regardless of how large the file actually is.
+        let rejected = read_bounded(
+            File::open(&file_path).unwrap(),
+            1024,
+            "test bytes",
+            None,
+            &file_path,
+        );
+        assert!(matches!(
+            rejected,
+            Err(BundleError::BoundExceeded("test bytes"))
+        ));
+
+        // Exactly at the cap: the bound rejects *past* `max`, not at it.
+        let accepted = read_bounded(
+            File::open(&file_path).unwrap(),
+            4 * 1024,
+            "test bytes",
+            None,
+            &file_path,
+        )
+        .unwrap();
+        assert_eq!(accepted.len(), 4 * 1024);
+
+        // A trusted capacity hint must not relax the cap.
+        let rejected_with_hint = read_bounded(
+            File::open(&file_path).unwrap(),
+            1024,
+            "test bytes",
+            Some(64 * 1024),
+            &file_path,
+        );
+        assert!(matches!(
+            rejected_with_hint,
+            Err(BundleError::BoundExceeded("test bytes"))
+        ));
+    }
+
+    // C002 item 1.4. The comparison re-read exists to bind to the exact
+    // serialized manifest, so it must apply the same cap `open` does rather
+    // than trusting a size checked at open time.
+    #[test]
+    fn manifest_reread_shares_the_open_time_manifest_cap() {
+        let dir = TempDir::new().unwrap();
+        let reader = finalized_bundle(&dir, "reread-cap", true);
+        let oversize_len = usize::try_from(MAX_MANIFEST_BYTES).unwrap() + 1;
+        let oversize = vec![b'x'; oversize_len];
+
+        // `open` refuses an oversized manifest ...
+        let staging = TempDir::new().unwrap();
+        let oversized_bundle = staging.path().join("oversize.eggb");
+        fs::create_dir(&oversized_bundle).unwrap();
+        fs::write(oversized_bundle.join("manifest.json"), &oversize).unwrap();
+        assert!(matches!(
+            BundleReader::open(&oversized_bundle),
+            Err(BundleError::BoundExceeded("manifest bytes"))
+        ));
+
+        // ... and so does the re-read, so a manifest that grows after `open`
+        // cannot hand unbounded bytes to a digest derivation.
+        fs::write(reader.root.join("manifest.json"), &oversize).unwrap();
+        assert!(matches!(
+            reader.manifest_bytes(),
+            Err(BundleError::BoundExceeded("manifest bytes"))
+        ));
     }
 }
