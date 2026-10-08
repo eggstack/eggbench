@@ -119,6 +119,15 @@ Sample policy (recorded §8 evidence): 7 measured trials (1 warmup),
 `min_trials` 5. Thresholds were NOT widened and never have been: throughput
 15%, p95 20%, error_rate absolute 0.
 
+Measurement budget: 300000 ms per trial, except the three `perf-large`
+scenarios at 600000 ms. The large arms move ~786 MB per trial (12000 requests
+at a 65536-byte body), which the `macos-14` runner could not complete inside
+300 s; the run then finalized `Failed` with `primary_failure: "TimedOut"` and
+`perf_same_source_pair_never_fails` failed on `macos-stable`. The budget is a
+safety bound, not a gate: it does not enter any comparison, so raising it for
+the large arms cannot make a regression pass or fail. It is not a substitute
+for sample size, and the request count above stays the sample-policy lever.
+
 The request count is the sample-policy lever, and it was revised twice with
 measurement rather than opinion. The history matters because both earlier
 policies were too small to resolve the frozen allowances:

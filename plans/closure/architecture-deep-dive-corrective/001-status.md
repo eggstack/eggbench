@@ -268,16 +268,28 @@ condition, not a code defect, and it did not affect any test result.
 
 1. ~~**Heavy qualification integration suite.**~~ **CLEARED** — see the complete
    local verification pass above. 615 passed, 0 failed.
-2. **Platform-conditional fixes — still open.** C002 items 2.1–2.3 (deadline
-   flags, cleanup notes, drain timeout) matter most on non-Linux, and
-   `evidence.rs`'s stale-lock path is `#[cfg(not(target_os = "linux"))]`. The
-   Linux lane does not exercise the `direct_child_only` note or the
-   finalize-lock path. **macOS and Windows lanes required.** Their named tests
-   (`timed_out_invocation_carries_cleanup_notes`,
-   `cancelled_invocation_carries_cleanup_notes`,
-   `stalled_drain_is_a_cleanup_failure_not_empty_output`) exist and are
-   platform-independent in form, but the branches they guard are compiled only
-   off Linux.
+2. **Platform-conditional fixes — Windows cleared, macOS blocked by an
+   unrelated defect.** C002 items 2.1–2.3 (deadline flags, cleanup notes, drain
+   timeout) matter most on non-Linux, and `evidence.rs`'s stale-lock path is
+   `#[cfg(not(target_os = "linux"))]`. `windows-stable` is **green**, which
+   covers its half of this condition.
+
+   `macos-stable` is **red**, but not on anything C002 changed. It fails on
+   `perf_same_source_pair_never_fails` in `crates/eggbench-cli/tests/synvoid_m002b.rs`
+   with `primary_failure: "TimedOut"` — a pre-existing condition that has been
+   red since `13eb443` and affects every commit since, including this one. The
+   three `perf-large` scenarios move ~786 MB per trial at 12000 requests and a
+   65536-byte body, which exceeded the 300000 ms measurement budget on the
+   `macos-14` runner.
+
+   That sample policy is deliberate and measured (identical-build p95 spread
+   fell from 77.9% to 0.2–11.4% against unchanged 15%/20% allowances; see
+   `plans/closure/security-qualification-m002-corrective/002-status.md`), so the
+   fix raises the measurement budget on the three `perf-large` scenarios to
+   600000 ms rather than reverting the request count. The budget is a safety
+   bound and enters no comparison, so this cannot change any verdict. It is not
+   verified: the correction is unproven until a hosted `macos-stable` run is
+   green, and none is claimed here.
 3. **No hosted CI run is claimed by this pass.** Clippy and `cargo fmt --check`
    must pass in the hosted lanes before C002 is marked closed.
 
