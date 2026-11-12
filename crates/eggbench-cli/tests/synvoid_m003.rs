@@ -918,6 +918,10 @@ fn correctness_only_regression_fails_despite_acceptable_performance() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "synthetic timing is noisy on macOS; real-subject regression runs in live M003 qualification"
+)]
 fn performance_only_regression_fails_despite_correct_security_behavior() {
     let _guard = qualification_test_lock();
     let workspace = Workspace::new();
