@@ -239,7 +239,10 @@ fi
 # subject harness without changing security semantics or the scenario
 # plan (a plan-embedded delay would compare as incomparable drift).
 # The stub reads its per-port sidecar file; the trap cleanup removes it.
-echo "100" >"/tmp/fake-synvoid-${PORT}.delay_ms"
+# The c1 profiles send 3,000 requests with a 120 s per-trial measurement
+# budget. A 100 ms delay makes one trial exceed that budget; 5 ms still
+# overwhelms the frozen performance allowances while leaving headroom.
+echo "5" >"/tmp/fake-synvoid-${PORT}.delay_ms"
 "$EGGBENCH_BIN" qualify run perf.profile.json --output "$WS/suite-perf-delayed" --json >"$WORK/perf-delayed.json" 2>&1
 delayed_rc=$?
 rm -f "/tmp/fake-synvoid-${PORT}.delay_ms"
