@@ -511,6 +511,7 @@ def main():
         http_corpus("synvoid", [[body_case, 40]], 8, "pooled", "corpus.json"),
         standard_metrics(),
         72,
+        measurement_ms=300000,
     )
     plan(
         "eggsec-blocked-c8.json",
@@ -518,6 +519,7 @@ def main():
         http_corpus("synvoid", [[blocked_case, 40]], 8, "pooled", "corpus.json"),
         standard_metrics(),
         73,
+        measurement_ms=300000,
     )
 
     smoke = {
