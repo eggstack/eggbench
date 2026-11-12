@@ -498,7 +498,10 @@ fn performance_only_regression_fails_suite_despite_correctness_pass() {
     let root = workspace.path();
     let port = free_port();
     patch_subject_ports(root, port);
-    shrink_perf_workload(root, 400);
+    // The deliberate 100 ms per-request fault is far beyond either frozen
+    // allowance, so keep this negative proof small enough to stay bounded on
+    // low-concurrency and large-response scenarios.
+    shrink_perf_workload(root, 50);
 
     // Qualification-only controlled delay in the subject harness: the
     // scenario plans (and therefore comparison identities) are untouched,

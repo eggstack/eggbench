@@ -23,6 +23,7 @@ Usage:
 
 import argparse
 import sys
+import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
@@ -69,7 +70,8 @@ class Handler(BaseHTTPRequestHandler):
         Absent/unparseable file means no delay.
         """
         try:
-            with open("/tmp/fake-synvoid-%d.delay_ms" % port) as handle:
+            sidecar = tempfile.gettempdir() + "/fake-synvoid-%d.delay_ms" % port
+            with open(sidecar) as handle:
                 return float(handle.read().strip() or 0)
         except (OSError, ValueError):
             return 0.0
