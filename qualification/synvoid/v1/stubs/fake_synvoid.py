@@ -18,12 +18,11 @@ qualification requires the real SynVoid minimal binary plus the
 SynVoid-owned exported assets (see scripts/qualification/synvoid-m002/).
 
 Usage:
-    fake_synvoid.py --port 18080 [--delay-ms 50]
+    fake_synvoid.py --port 18080 [--delay-ms 50] [--delay-file PATH]
 """
 
 import argparse
 import sys
-import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
@@ -57,21 +56,22 @@ def is_attack(raw_target: str) -> bool:
 class Handler(BaseHTTPRequestHandler):
     server_version = "FakeSynVoid/0"
     delay_ms = 0.0
-    port = 0
+    delay_file = None
 
     @staticmethod
-    def sidecar_delay_ms(port: int) -> float:
+    def sidecar_delay_ms() -> float:
         """Plan-invisible harness throttle (M002b performance-only proof).
 
-        The delay lives in a sidecar file keyed by listen port so the
+        The delay lives in an explicit sidecar file so the
         scenario plan -- and therefore the comparison identity -- stays
         identical between baseline and candidate runs. A plan-embedded
         delay would (correctly) compare as incomparable drift instead.
         Absent/unparseable file means no delay.
         """
+        if Handler.delay_file is None:
+            return 0.0
         try:
-            sidecar = tempfile.gettempdir() + "/fake-synvoid-%d.delay_ms" % port
-            with open(sidecar) as handle:
+            with open(Handler.delay_file) as handle:
                 return float(handle.read().strip() or 0)
         except (OSError, ValueError):
             return 0.0
@@ -91,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _handle(self) -> None:
-        delay = Handler.delay_ms + Handler.sidecar_delay_ms(Handler.port)
+        delay = Handler.delay_ms + Handler.sidecar_delay_ms()
         if delay:
             time.sleep(delay / 1000.0)
         if self.command not in ("GET", "HEAD"):
@@ -118,6 +118,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     parser = argparse.ArgumentParser(description="Synthetic SynVoid stand-in.")
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--delay-file")
     parser.add_argument(
         "--delay-ms",
         type=float,
@@ -135,7 +136,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     Handler.delay_ms = args.delay_ms
-    Handler.port = args.port
+    Handler.delay_file = args.delay_file
     if args.startup_delay_ms > 0:
         time.sleep(args.startup_delay_ms / 1000.0)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

@@ -116,6 +116,10 @@ fn eggbench(workspace: &Path, args: &[&str]) -> std::process::Output {
 /// Point every fake subject in the workspace at one free loopback port.
 /// Scenarios execute serially, so one port serves the whole profile.
 fn patch_subject_ports(workspace: &Path, port: u16) {
+    patch_subject_ports_with_delay_file(workspace, port, None);
+}
+
+fn patch_subject_ports_with_delay_file(workspace: &Path, port: u16, delay_file: Option<&Path>) {
     let scenarios = workspace.join("scenarios");
     let mut entries: Vec<_> = std::fs::read_dir(&scenarios)
         .expect("read scenarios")
@@ -130,11 +134,18 @@ fn patch_subject_ports(workspace: &Path, port: u16) {
         let mut changed = false;
         for service in plan["services"].as_array_mut().expect("services") {
             if service["name"] == "synvoid" {
-                service["kind"]["argv"] = Value::Array(vec![
+                let mut argv = vec![
                     "stubs/fake_synvoid.py".into(),
                     "--port".into(),
                     port.to_string().into(),
-                ]);
+                ];
+                if let Some(delay_file) = delay_file {
+                    argv.extend([
+                        "--delay-file".into(),
+                        delay_file.to_string_lossy().into_owned().into(),
+                    ]);
+                }
+                service["kind"]["argv"] = Value::Array(argv);
                 let url = service["http_url"].as_str().expect("static http_url");
                 let host = url
                     .split('/')
@@ -497,7 +508,8 @@ fn performance_only_regression_fails_suite_despite_correctness_pass() {
     let workspace = copy_workspace();
     let root = workspace.path();
     let port = free_port();
-    patch_subject_ports(root, port);
+    let sidecar = std::env::temp_dir().join(format!("fake-synvoid-{port}.delay_ms"));
+    patch_subject_ports_with_delay_file(root, port, Some(&sidecar));
     // The deliberate 100 ms per-request fault is far beyond either frozen
     // allowance, so keep this negative proof small enough to stay bounded on
     // low-concurrency and large-response scenarios.
@@ -508,7 +520,6 @@ fn performance_only_regression_fails_suite_despite_correctness_pass() {
     // and WAF block/pass semantics are identical with any delay. The
     // baselines are captured before the delay lands, so the candidates are
     // compared against unthrottled evidence.
-    let sidecar = std::env::temp_dir().join(format!("fake-synvoid-{port}.delay_ms"));
     let pairs = qualify_paired(root, "throttled", BaselineTiming::BeforeFault, || {
         std::fs::write(&sidecar, "100").expect("write delay sidecar");
     });
