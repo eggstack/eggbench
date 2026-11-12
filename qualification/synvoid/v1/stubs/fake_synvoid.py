@@ -23,6 +23,7 @@ Usage:
 
 import argparse
 import sys
+import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
@@ -57,9 +58,10 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "FakeSynVoid/0"
     delay_ms = 0.0
     delay_file = None
+    port = 0
 
     @staticmethod
-    def sidecar_delay_ms() -> float:
+    def sidecar_delay_ms(port: int) -> float:
         """Plan-invisible harness throttle (M002b performance-only proof).
 
         The delay lives in an explicit sidecar file so the
@@ -68,10 +70,11 @@ class Handler(BaseHTTPRequestHandler):
         delay would (correctly) compare as incomparable drift instead.
         Absent/unparseable file means no delay.
         """
-        if Handler.delay_file is None:
-            return 0.0
+        sidecar = Handler.delay_file
+        if sidecar is None:
+            sidecar = tempfile.gettempdir() + "/fake-synvoid-%d.delay_ms" % port
         try:
-            with open(Handler.delay_file) as handle:
+            with open(sidecar) as handle:
                 return float(handle.read().strip() or 0)
         except (OSError, ValueError):
             return 0.0
@@ -91,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _handle(self) -> None:
-        delay = Handler.delay_ms + Handler.sidecar_delay_ms()
+        delay = Handler.delay_ms + Handler.sidecar_delay_ms(Handler.port)
         if delay:
             time.sleep(delay / 1000.0)
         if self.command not in ("GET", "HEAD"):
@@ -137,6 +140,7 @@ def main() -> int:
     args = parser.parse_args()
     Handler.delay_ms = args.delay_ms
     Handler.delay_file = args.delay_file
+    Handler.port = args.port
     if args.startup_delay_ms > 0:
         time.sleep(args.startup_delay_ms / 1000.0)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
