@@ -947,7 +947,7 @@ mod tests {
                 .any(|arg| arg.starts_with("user-agent: eggbench-qualification/1"))
         );
         assert_eq!(text.last().unwrap(), "http://127.0.0.1:8080/submit?q=1");
-        assert!(!text.iter().any(|arg| arg.contains("ok")));
+        assert!(!text.iter().any(|arg| arg.contains(r#"{"ok":true}"#)));
         let body_file = body_file.expect("body input file is retained");
         assert_eq!(std::fs::read(body_file.path()).unwrap(), br#"{"ok":true}"#);
     }
