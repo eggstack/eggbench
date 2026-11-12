@@ -24,6 +24,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 FILL = b"\x42"
 
 
+class ControlledOriginServer(ThreadingHTTPServer):
+    # The live c32 scenarios can open more than five upstream connections at
+    # once.  Keep the kernel accept queue large enough that the test origin
+    # does not manufacture connection failures under the frozen workload.
+    request_queue_size = 128
+
+
 class Handler(BaseHTTPRequestHandler):
     routes = {}
     log_path = ""
@@ -76,7 +83,7 @@ def main():
     }
     Handler.log_path = args.log_file
     open(args.log_file, "w").close()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = ControlledOriginServer(("127.0.0.1", args.port), Handler)
     server.serve_forever()
 
 
