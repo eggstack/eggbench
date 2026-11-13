@@ -459,6 +459,7 @@ def main():
         http_corpus("synvoid", [[c, n * 4] for c, n in mixed], 32, "pooled", "corpus.json"),
         standard_metrics(),
         67,
+        measurement_ms=300000,
     )
     # The telemetry trials are long and moderately concurrent on purpose: they
     # must span many poll cadences (a short trial retains too few in-window
