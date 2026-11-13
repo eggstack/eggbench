@@ -31,6 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::future::Future;
 use std::io::Write;
+use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -183,7 +184,35 @@ impl WorkloadExecutor for OhaWorkload {
                 .await
                 .map_err(|error| failure_category(&error))?;
             let report = parse_oha_report(&outcome).map_err(|error| failure_category(&error))?;
-            Ok(oha_output(&outcome, &report))
+            let mut output = oha_output(&outcome, &report);
+            if matches!(&context.workload, Workload::HttpCorpus { .. }) {
+                let workspace =
+                    std::env::current_dir().map_err(|_| FailureCategory::WorkloadFailed)?;
+                let (mismatch_rate, transport_error_rate) =
+                    oha_http_corpus_rates(&context.workload, &report, &workspace)
+                        .map_err(|error| failure_category(&error))?
+                        .expect("HTTP corpus workload has corpus rates");
+                let raw = [OHA_STATUS_ARTIFACT.to_owned()];
+                output.metrics.extend([
+                    observation(
+                        "expected_outcome_mismatch_rate",
+                        "ratio",
+                        mismatch_rate,
+                        Aggregation::Ratio,
+                        "oha.statusCodeDistribution",
+                        &raw,
+                    ),
+                    observation(
+                        "transport_error_rate",
+                        "ratio",
+                        transport_error_rate,
+                        Aggregation::Ratio,
+                        "oha.statusCodeDistribution",
+                        &raw,
+                    ),
+                ]);
+            }
+            Ok(output)
         })
     }
 
@@ -435,6 +464,73 @@ fn oha_http_corpus_argv(
     Ok((args, body_file))
 }
 
+/// Derive the corpus correctness and transport rates from oha's status
+/// distribution. The plan permits one repeated case for this adapter, so the
+/// owner's expectation is applied to each reported status code; requests with
+/// no response status count as transport errors.
+fn oha_http_corpus_rates(
+    workload: &Workload,
+    report: &OhaReport,
+    workspace: &Path,
+) -> Result<Option<(f64, f64)>, DriverError> {
+    let Workload::HttpCorpus {
+        corpus_ref,
+        corpus_sha256,
+        schedule,
+        ..
+    } = workload
+    else {
+        return Ok(None);
+    };
+    let parse_failed = |detail: String| DriverError::parse(ErrorCategory::ParseFailed, detail);
+    if schedule.len() != 1 {
+        return Err(parse_failed(
+            "oha HTTP corpus workload must contain exactly one case".to_owned(),
+        ));
+    }
+    let (corpus, _) = load_http_security_corpus(workspace, corpus_ref, corpus_sha256)
+        .map_err(|error| parse_failed(format!("invalid oha HTTP corpus: {error}")))?;
+    let entry = &schedule[0];
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.id == entry.case_id)
+        .ok_or_else(|| parse_failed("oha schedule references an unknown corpus case".to_owned()))?;
+    let planned = u64::from(entry.count.get());
+    let mut received = 0_u64;
+    let mut mismatches = 0_u64;
+    for (status, count) in &report.status_codes {
+        let status = status.parse::<u16>().map_err(|_| {
+            parse_failed(format!(
+                "invalid oha status code distribution key: {status}"
+            ))
+        })?;
+        received = received
+            .checked_add(*count)
+            .ok_or_else(|| parse_failed("oha status code count overflow".to_owned()))?;
+        if !case.expectation.matches(status) {
+            mismatches = mismatches
+                .checked_add(*count)
+                .ok_or_else(|| parse_failed("oha mismatch count overflow".to_owned()))?;
+        }
+    }
+    if received > planned {
+        return Err(parse_failed(format!(
+            "oha reported {received} status responses for {planned} planned requests"
+        )));
+    }
+    let denominator = f64::from(entry.count.get());
+    let mismatches = u32::try_from(mismatches)
+        .map_err(|_| parse_failed("oha mismatch count exceeds planned requests".to_owned()))?;
+    let missing = u32::try_from(planned - received).map_err(|_| {
+        parse_failed("oha missing status count exceeds planned requests".to_owned())
+    })?;
+    Ok(Some((
+        f64::from(mismatches) / denominator,
+        f64::from(missing) / denominator,
+    )))
+}
+
 /// Format milli-rps as an oha `-q` rate, trimming trailing zeros.
 fn rate_rps(milli_rps: u64) -> String {
     let whole = milli_rps / 1000;
@@ -672,7 +768,7 @@ fn observation(
         value,
         aggregation,
         source_field: Some(source_field.to_owned()),
-        producer: None,
+        producer: Some(OHA_DRIVER_NAME.to_owned()),
         producer_version: None,
         raw_artifacts: raw_artifacts.to_vec(),
     }
@@ -781,6 +877,12 @@ mod tests {
         assert!(report.error_counts.is_empty());
         let output = oha_output(&outcome_with_stdout(&valid_oha_json(), Some(0)), &report);
         let names: Vec<&str> = output.metrics.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            output
+                .metrics
+                .iter()
+                .all(|metric| { metric.producer.as_deref() == Some(OHA_DRIVER_NAME) })
+        );
         assert!(names.contains(&"throughput"));
         assert!(names.contains(&"error_rate"));
         assert!(names.contains(&"latency_min"));
@@ -932,6 +1034,21 @@ mod tests {
                 "eggbench-qualification/1".to_owned(),
             )],
         };
+        let report = OhaReport {
+            requests_per_sec: 1.0,
+            success_rate: 1.0,
+            fastest_ms: None,
+            average_ms: None,
+            percentile_ms: BTreeMap::new(),
+            status_codes: BTreeMap::from([("200".to_owned(), 1), ("403".to_owned(), 8)]),
+            error_counts: Vec::new(),
+        };
+        let (mismatch_rate, transport_error_rate) =
+            oha_http_corpus_rates(&workload, &report, workspace.path())
+                .expect("status distribution maps to corpus outcomes")
+                .expect("HTTP corpus rates");
+        assert!((mismatch_rate - 0.1).abs() < f64::EPSILON);
+        assert!((transport_error_rate - 0.1).abs() < f64::EPSILON);
         let (args, body_file) =
             oha_http_corpus_argv(&workload, "http://127.0.0.1:8080/ignored", workspace.path())
                 .unwrap();
@@ -947,7 +1064,7 @@ mod tests {
                 .any(|arg| arg.starts_with("user-agent: eggbench-qualification/1"))
         );
         assert_eq!(text.last().unwrap(), "http://127.0.0.1:8080/submit?q=1");
-        assert!(!text.iter().any(|arg| arg.contains("ok")));
+        assert!(!text.iter().any(|arg| arg.contains(r#"{"ok":true}"#)));
         let body_file = body_file.expect("body input file is retained");
         assert_eq!(std::fs::read(body_file.path()).unwrap(), br#"{"ok":true}"#);
     }

@@ -459,6 +459,7 @@ def main():
         http_corpus("synvoid", [[c, n * 4] for c, n in mixed], 32, "pooled", "corpus.json"),
         standard_metrics(),
         67,
+        measurement_ms=300000,
     )
     # The telemetry trials are long and moderately concurrent on purpose: they
     # must span many poll cadences (a short trial retains too few in-window
@@ -511,6 +512,7 @@ def main():
         http_corpus("synvoid", [[body_case, 40]], 8, "pooled", "corpus.json"),
         standard_metrics(),
         72,
+        measurement_ms=300000,
     )
     plan(
         "eggsec-blocked-c8.json",
@@ -518,6 +520,7 @@ def main():
         http_corpus("synvoid", [[blocked_case, 40]], 8, "pooled", "corpus.json"),
         standard_metrics(),
         73,
+        measurement_ms=300000,
     )
 
     smoke = {

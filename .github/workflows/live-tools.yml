@@ -32,8 +32,11 @@ jobs:
       - name: Run live external-tool qualification harness
         run: |
           set -u
-          bash scripts/qualification/m003-live-tools/run-live-qualification.sh >live-qualification.log 2>&1
-          rc=$?
+          if bash scripts/qualification/m003-live-tools/run-live-qualification.sh >live-qualification.log 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
           tail -45 live-qualification.log
           exit "$rc"
       - name: Upload bounded provenance and evidence summary
@@ -56,8 +59,11 @@ jobs:
       - name: Run M004a live Eggsec qualification harness
         run: |
           set -u
-          bash scripts/qualification/m004a-eggsec/run-live-qualification.sh >live-eggsec-qualification.log 2>&1
-          rc=$?
+          if bash scripts/qualification/m004a-eggsec/run-live-qualification.sh >live-eggsec-qualification.log 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
           tail -45 live-eggsec-qualification.log
           exit "$rc"
       - name: Upload bounded provenance and evidence summary
@@ -80,8 +86,11 @@ jobs:
       - name: Run M004b combined-verdict qualification harness
         run: |
           set -u
-          bash scripts/qualification/m004b-combined/run-live-qualification.sh >live-m004b-qualification.log 2>&1
-          rc=$?
+          if bash scripts/qualification/m004b-combined/run-live-qualification.sh >live-m004b-qualification.log 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
           tail -50 live-m004b-qualification.log
           exit "$rc"
       - name: Upload bounded provenance and evidence summary
@@ -111,8 +120,11 @@ jobs:
       - name: Run M002a live SynVoid qualification harness
         run: |
           set -u
-          bash scripts/qualification/synvoid-m002/run-live-qualification.sh >live-synvoid-qualification.log 2>&1
-          rc=$?
+          if bash scripts/qualification/synvoid-m002/run-live-qualification.sh >live-synvoid-qualification.log 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
           tail -50 live-synvoid-qualification.log
           exit "$rc"
       - name: Upload bounded provenance and evidence summary
@@ -154,9 +166,12 @@ jobs:
       - name: Run M003c/M003d live qualification harness
         run: |
           set -u
-          EGGBENCH_BIN="$PWD/target/release/eggbench" \
-            bash scripts/qualification/synvoid-m003/run-live-qualification.sh >live-m003-qualification.log 2>&1
-          rc=$?
+          if EGGBENCH_BIN="$PWD/target/release/eggbench" \
+            bash scripts/qualification/synvoid-m003/run-live-qualification.sh >live-m003-qualification.log 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
           tail -60 live-m003-qualification.log
           exit "$rc"
       - name: Upload bounded provenance and evidence summary
