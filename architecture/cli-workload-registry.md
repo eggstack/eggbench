@@ -316,7 +316,7 @@ verified only indirectly, by resolution + execution through `run`.
    the reachable set: the catalog's registrations
    ([catalog.rs:49-67](../crates/eggbench-drivers/src/catalog.rs#L49)) and the arms at
    [:402-460](../crates/eggbench-cli/src/workload_registry.rs#L402). *Spelling* cannot drift — both sides
-   use the same constants, e.g. [external/oha.rs:39](../crates/eggbench-drivers/src/external/oha.rs#L39),
+   use the same constants, e.g. [external/oha.rs:40](../crates/eggbench-drivers/src/external/oha.rs#L40),
    [external/eggsec_load.rs:34](../crates/eggbench-drivers/src/external/eggsec_load.rs#L34),
    [eggstack/mod.rs:42](../crates/eggbench-drivers/src/eggstack/mod.rs#L42), matching the catalog test's
    expected names ([catalog.rs:145-153](../crates/eggbench-drivers/src/catalog.rs#L145)). *Membership*

@@ -51,7 +51,15 @@ Normalized metrics (parity names with the native driver): `throughput`
 observed; p90/p999 stay missing). Error counts carry the
 `errorDistribution` entries (`oha:<message>`); the status-code distribution
 is retained as the `oha-status.json` diagnostic artifact; raw stdout as
-`stdout.raw`.
+`stdout.raw`. Oha labels its raw observations with producer `oha` and leaves
+`producer_version` unset.
+
+For an `HttpCorpus` workload, oha additionally reports
+`expected_outcome_mismatch_rate` and `transport_error_rate`. The first is the
+share of planned requests whose returned status does not match the scheduled
+case's expected outcome; the second is the share with no response status.
+This adapter supports one scheduled corpus case per run and rejects malformed
+or over-counted status distributions.
 
 Exit status is not a failure signal: oha exits 0 with every request
 failed, so success is read from `successRate` and the error distribution.

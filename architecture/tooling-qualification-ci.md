@@ -40,7 +40,7 @@ qualification/synvoid/
   v2/                         M003c/M003d workspace, owner telemetry contract
 examples/                     worked plans, including a rejected one
 plans/                        registry, ADRs, subsystem roadmaps, closure records
-docs/                         18 contract documents
+docs/                         17 contract documents
 ```
 
 ## Key types
@@ -259,13 +259,17 @@ backend under the subject-under-test. This is a significant choice: the WAF or
 proxy is the subject, and the origin behind it must be a known quantity or a
 pass/fail result is unfalsifiable. Both are deliberately inert — exact route
 table, fixed `0x42` fill bodies, 501 everywhere else, one log line per request
-as `METHOD TARGET STATUS`, no timestamps. The M003 variant adds a throttle
-that reads a **signal file** rather than a plan value
+as `METHOD TARGET STATUS`, no timestamps. Both origins use enlarged accept
+queues (128 for M002, 512 for M003) so the kernel does not manufacture
+connection failures under the frozen workloads
+([controlled-origin.py:27-31](../scripts/qualification/synvoid-m002/controlled-origin.py),
+[controlled-origin-m003.py:127-132](../scripts/qualification/synvoid-m003/controlled-origin-m003.py)).
+The M003 variant also adds a throttle that reads a **signal file** rather than a plan value
 ([controlled-origin-m003.py:50](../scripts/qualification/synvoid-m003/controlled-origin-m003.py)),
 which is what lets a performance regression be injected between two runs of
-the same plan without changing the comparison identity, and an enlarged listen
-backlog so a throttled trial degrades throughput instead of refusing
-connections and reporting a subject failure.
+the same plan without changing the comparison identity, so a throttled trial
+degrades throughput instead of refusing connections and reporting a subject
+failure.
 
 ## Invariants
 

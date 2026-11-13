@@ -37,7 +37,7 @@ This document covers the three adapters only. The substrate is owned by
 
 | File | Lines | Role |
 |---|---|---|
-| [`external/oha.rs`](../crates/eggbench-drivers/src/external/oha.rs) | 989 | HTTP load; JSON report; the only one of the three with a rate limiter and with HTTP-corpus support |
+| [`external/oha.rs`](../crates/eggbench-drivers/src/external/oha.rs) | 1,106 | HTTP load; JSON report; the only one of the three with a rate limiter and with HTTP-corpus support |
 | [`external/h2load.rs`](../crates/eggbench-drivers/src/external/h2load.rs) | 843 | HTTP load; human-readable text report, no machine format |
 | [`external/iperf3.rs`](../crates/eggbench-drivers/src/external/iperf3.rs) | 720 | TCP byte-stream throughput; JSON report; not HTTP |
 
@@ -51,8 +51,10 @@ Each file has the same internal shape: constants → executor struct and its fou
 construction entry points → `WorkloadExecutor` impl → argv builder(s) →
 validated report struct → parse shapes → `ExternalOutputParser` adapter →
 `parse_*_report` and its row/token helpers → `*_output` → `*_descriptor` → unit
-tests. The `observation` helper is written out three times with identical bodies
-([oha.rs](../crates/eggbench-drivers/src/external/oha.rs):661-679,
+tests. The `observation` helper is written out three times with the same shape,
+but oha labels each observation with its producer name while h2load and iperf3
+leave producer attribution unset
+([oha.rs](../crates/eggbench-drivers/src/external/oha.rs):757-775,
 [h2load.rs](../crates/eggbench-drivers/src/external/h2load.rs):587-605,
 [iperf3.rs](../crates/eggbench-drivers/src/external/iperf3.rs):447-465); it is
 not shared in `common.rs`. Each file also has its own exhaustive
@@ -66,18 +68,18 @@ workload variant is a compile error in three places at once.
 
 | Constant | oha | h2load | iperf3 |
 |---|---|---|---|
-| Driver name | `oha` ([oha.rs:39](../crates/eggbench-drivers/src/external/oha.rs)) | `h2load` ([h2load.rs:37](../crates/eggbench-drivers/src/external/h2load.rs)) | `iperf3` ([iperf3.rs:39](../crates/eggbench-drivers/src/external/iperf3.rs)) |
-| Parser id | `oha-json/v1` ([oha.rs:43](../crates/eggbench-drivers/src/external/oha.rs)) | `h2load-text/v1` ([h2load.rs:41](../crates/eggbench-drivers/src/external/h2load.rs)) | `iperf3-json/v1` ([iperf3.rs:43](../crates/eggbench-drivers/src/external/iperf3.rs)) |
-| Minimum version | `(1, 0, 0)` ([oha.rs:45](../crates/eggbench-drivers/src/external/oha.rs)) | `(1, 0, 0)` ([h2load.rs:43](../crates/eggbench-drivers/src/external/h2load.rs)) | `(3, 1, 0)` ([iperf3.rs:45](../crates/eggbench-drivers/src/external/iperf3.rs)) |
-| Extra diagnostic artifact | `oha-status.json` ([oha.rs:47](../crates/eggbench-drivers/src/external/oha.rs)) | `h2load-status.json` ([h2load.rs:45](../crates/eggbench-drivers/src/external/h2load.rs)) | none |
-| stdout cap | 4 MiB ([oha.rs:49](../crates/eggbench-drivers/src/external/oha.rs)) | 1 MiB ([h2load.rs:47](../crates/eggbench-drivers/src/external/h2load.rs)) | 4 MiB ([iperf3.rs:53](../crates/eggbench-drivers/src/external/iperf3.rs)) |
+| Driver name | `oha` ([oha.rs:40](../crates/eggbench-drivers/src/external/oha.rs)) | `h2load` ([h2load.rs:37](../crates/eggbench-drivers/src/external/h2load.rs)) | `iperf3` ([iperf3.rs:39](../crates/eggbench-drivers/src/external/iperf3.rs)) |
+| Parser id | `oha-json/v1` ([oha.rs:44](../crates/eggbench-drivers/src/external/oha.rs)) | `h2load-text/v1` ([h2load.rs:41](../crates/eggbench-drivers/src/external/h2load.rs)) | `iperf3-json/v1` ([iperf3.rs:43](../crates/eggbench-drivers/src/external/iperf3.rs)) |
+| Minimum version | `(1, 0, 0)` ([oha.rs:46](../crates/eggbench-drivers/src/external/oha.rs)) | `(1, 0, 0)` ([h2load.rs:43](../crates/eggbench-drivers/src/external/h2load.rs)) | `(3, 1, 0)` ([iperf3.rs:45](../crates/eggbench-drivers/src/external/iperf3.rs)) |
+| Extra diagnostic artifact | `oha-status.json` ([oha.rs:48](../crates/eggbench-drivers/src/external/oha.rs)) | `h2load-status.json` ([h2load.rs:45](../crates/eggbench-drivers/src/external/h2load.rs)) | none |
+| stdout cap | 4 MiB ([oha.rs:50](../crates/eggbench-drivers/src/external/oha.rs)) | 1 MiB ([h2load.rs:47](../crates/eggbench-drivers/src/external/h2load.rs)) | 4 MiB ([iperf3.rs:53](../crates/eggbench-drivers/src/external/iperf3.rs)) |
 | stderr cap | 256 KiB (all three) | | |
 | Probe timeout | 10 s (all three) | | |
 | Tool-specific constant | — | — | `U64_MAX_AS_F64` ([iperf3.rs:51](../crates/eggbench-drivers/src/external/iperf3.rs)) |
 
 The stdout caps sit far above the real report sizes — "JSON reports are small;
 the cap only guards pathologies"
-([oha.rs:48](../crates/eggbench-drivers/src/external/oha.rs)) — so they bound
+([oha.rs:49](../crates/eggbench-drivers/src/external/oha.rs)) — so they bound
 retention, not content. `U64_MAX_AS_F64` makes the byte-counter range check a
 named constant with a parity test instead of a lossy cast at the comparison site
 ([iperf3.rs:46-51](../crates/eggbench-drivers/src/external/iperf3.rs),
@@ -87,7 +89,7 @@ named constant with a parity test instead of a lossy cast at the comparison site
 
 `OhaWorkload`, `H2loadWorkload`, and `Iperf3Workload` share a two-field shape — a
 `ResolvedExecutable` and an `Option<String>` version
-([oha.rs:61-64](../crates/eggbench-drivers/src/external/oha.rs),
+([oha.rs:62-65](../crates/eggbench-drivers/src/external/oha.rs),
 [h2load.rs:54-57](../crates/eggbench-drivers/src/external/h2load.rs),
 [iperf3.rs:60-63](../crates/eggbench-drivers/src/external/iperf3.rs)) — and a
 four-entry construction surface:
@@ -103,28 +105,36 @@ The `version: None` state lets a direct `execute_run` consumer get the same floo
 as the CLI preflight path
 ([preflight.rs](../crates/eggbench-drivers/src/external/preflight.rs):1-8); the
 lazy branch is `ensure_probed`
-([oha.rs:128-138](../crates/eggbench-drivers/src/external/oha.rs),
+([oha.rs:129-139](../crates/eggbench-drivers/src/external/oha.rs),
 [h2load.rs:159-169](../crates/eggbench-drivers/src/external/h2load.rs),
 [iperf3.rs:125-135](../crates/eggbench-drivers/src/external/iperf3.rs)). Once
 set, the version is never re-probed: it is pinned for the whole run and lands in
 each trial's command metadata. `Debug` renders only driver name and version,
 redacting the executable path and digest
-([oha.rs:141-148](../crates/eggbench-drivers/src/external/oha.rs), asserted at
-[oha.rs:970-988](../crates/eggbench-drivers/src/external/oha.rs)).
+([oha.rs:142-149](../crates/eggbench-drivers/src/external/oha.rs), asserted at
+[oha.rs:1087-1105](../crates/eggbench-drivers/src/external/oha.rs)).
 
 ### Validated report structs
 
 | Type | Fields | Where |
 |---|---|---|
-| `OhaReport` | `requests_per_sec`, `success_rate`, `fastest_ms: Option`, `average_ms: Option`, `percentile_ms: BTreeMap<&'static str, f64>`, `status_codes`, `error_counts` | [oha.rs:462-470](../crates/eggbench-drivers/src/external/oha.rs) |
+| `OhaReport` | `requests_per_sec`, `success_rate`, `fastest_ms: Option`, `average_ms: Option`, `percentile_ms: BTreeMap<&'static str, f64>`, `status_codes`, `error_counts` | [oha.rs:558-566](../crates/eggbench-drivers/src/external/oha.rs) |
 | `H2loadReport` | `total`, `failed`, `errored`, `timed_out`, `req_per_sec_mean`, `request_min_ms`, `request_mean_ms`, `status_codes: Option` | [h2load.rs:331-340](../crates/eggbench-drivers/src/external/h2load.rs) |
 | `Iperf3Report` | `sent_bps`, `received_bps`, `sent_bytes: u64`, `received_bytes: u64`, `retransmits: Option<u64>` | [iperf3.rs:275-281](../crates/eggbench-drivers/src/external/iperf3.rs) |
 
 The `Option` fields carry one policy: *a measurement the tool could not take
 stays missing and is never zero-filled*. For oha that is an all-fail run with
 `successRate: 0.0` and null timings
-([oha.rs:496-503](../crates/eggbench-drivers/src/external/oha.rs), fixture at
-[oha.rs:801-829](../crates/eggbench-drivers/src/external/oha.rs)).
+([oha.rs:592-599](../crates/eggbench-drivers/src/external/oha.rs), fixture at
+[oha.rs:903-931](../crates/eggbench-drivers/src/external/oha.rs)).
+
+For `HttpCorpus`, oha adds `expected_outcome_mismatch_rate` from the scheduled
+case's status expectation and `transport_error_rate` from planned requests
+without response statuses. The adapter accepts exactly one scheduled case and
+rejects malformed or over-counted status distributions
+([oha.rs:187-212](../crates/eggbench-drivers/src/external/oha.rs),
+[oha.rs:471-523](../crates/eggbench-drivers/src/external/oha.rs)); the user
+contract is documented in [external-oracles.md](../docs/external-oracles.md).
 
 ### Descriptors
 
@@ -132,24 +142,24 @@ All three descriptors are pure functions with no I/O and
 `category: DriverCategory::Workload`, `external_process: true`,
 `default: false`, empty `supported_platforms`, empty
 `compatible_service_types`, and `machine_output_schema: Some(SchemaVersion(1))`
-([oha.rs:686-716](../crates/eggbench-drivers/src/external/oha.rs),
+([oha.rs:782-812](../crates/eggbench-drivers/src/external/oha.rs),
 [h2load.rs:612-637](../crates/eggbench-drivers/src/external/h2load.rs),
 [iperf3.rs:472-491](../crates/eggbench-drivers/src/external/iperf3.rs)).
 `upstream_version` is `None` in all three
-([oha.rs:707](../crates/eggbench-drivers/src/external/oha.rs),
+([oha.rs:803](../crates/eggbench-drivers/src/external/oha.rs),
 [iperf3.rs:482](../crates/eggbench-drivers/src/external/iperf3.rs)): the
 descriptor is static, and the pinned tool version lives in the executor and in
 trial evidence.
 
 | Capability | oha | h2load | iperf3 |
 |---|---|---|---|
-| `HttpVersion(Http11)` | yes ([oha.rs:688](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:614](../crates/eggbench-drivers/src/external/h2load.rs)) | — (not HTTP) |
-| `HttpVersion(Http2)` | yes ([oha.rs:691](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:617](../crates/eggbench-drivers/src/external/h2load.rs)) | — |
-| `LoadMode(ClosedLoop)` | yes ([oha.rs:694](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:620](../crates/eggbench-drivers/src/external/h2load.rs)) | yes ([iperf3.rs:474](../crates/eggbench-drivers/src/external/iperf3.rs)) |
-| `LoadMode(OpenLoop)` | yes ([oha.rs:698](../crates/eggbench-drivers/src/external/oha.rs)) | no | no |
-| `CorrectedLatency` | yes ([oha.rs:701](../crates/eggbench-drivers/src/external/oha.rs)) | no | no |
-| `HttpCorpus` | yes ([oha.rs:697](../crates/eggbench-drivers/src/external/oha.rs)) | no | no |
-| `ExternalBinary` | yes ([oha.rs:702](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:623](../crates/eggbench-drivers/src/external/h2load.rs)) | yes ([iperf3.rs:477](../crates/eggbench-drivers/src/external/iperf3.rs)) |
+| `HttpVersion(Http11)` | yes ([oha.rs:784](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:614](../crates/eggbench-drivers/src/external/h2load.rs)) | — (not HTTP) |
+| `HttpVersion(Http2)` | yes ([oha.rs:787](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:617](../crates/eggbench-drivers/src/external/h2load.rs)) | — |
+| `LoadMode(ClosedLoop)` | yes ([oha.rs:790](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:620](../crates/eggbench-drivers/src/external/h2load.rs)) | yes ([iperf3.rs:474](../crates/eggbench-drivers/src/external/iperf3.rs)) |
+| `LoadMode(OpenLoop)` | yes ([oha.rs:794](../crates/eggbench-drivers/src/external/oha.rs)) | no | no |
+| `CorrectedLatency` | yes ([oha.rs:797](../crates/eggbench-drivers/src/external/oha.rs)) | no | no |
+| `HttpCorpus` | yes ([oha.rs:793](../crates/eggbench-drivers/src/external/oha.rs)) | no | no |
+| `ExternalBinary` | yes ([oha.rs:798](../crates/eggbench-drivers/src/external/oha.rs)) | yes ([h2load.rs:623](../crates/eggbench-drivers/src/external/h2load.rs)) | yes ([iperf3.rs:477](../crates/eggbench-drivers/src/external/iperf3.rs)) |
 | `NetworkPath` / `StreamFaultPlan` | no | no | no |
 
 Two descriptor facts deserve emphasis. `supported_platforms` is an empty set for
@@ -175,7 +185,7 @@ a tool ([preflight.rs:36-52](../crates/eggbench-drivers/src/external/preflight.r
 
 | Tool | Probe mechanism | Version token | On unsupported version |
 |---|---|---|---|
-| oha | `VersionProbe::run` with `["--version"]` ([oha.rs:82-98](../crates/eggbench-drivers/src/external/oha.rs)) | generic first `N.N` token, parsed by `parse_version_tuple` ([common.rs:162-188](../crates/eggbench-drivers/src/external/common.rs)) | `unsupported_version` from `check_min_version` ([common.rs:138-160](../crates/eggbench-drivers/src/external/common.rs)) |
+| oha | `VersionProbe::run` with `["--version"]` ([oha.rs:83-99](../crates/eggbench-drivers/src/external/oha.rs)) | generic first `N.N` token, parsed by `parse_version_tuple` ([common.rs:162-188](../crates/eggbench-drivers/src/external/common.rs)) | `unsupported_version` from `check_min_version` ([common.rs:138-160](../crates/eggbench-drivers/src/external/common.rs)) |
 | h2load | hand-rolled `run_command` on `["--version"]` ([h2load.rs:77-129](../crates/eggbench-drivers/src/external/h2load.rs)) | the nghttp2 release after the `nghttp2/` marker | same, compared against the nghttp2 release |
 | iperf3 | `VersionProbe::run` with `["--version"]` ([iperf3.rs:79-95](../crates/eggbench-drivers/src/external/iperf3.rs)) | generic first `N.N` token | same |
 
@@ -214,21 +224,21 @@ differ.
 3. Build argv from the plan workload; the URL is appended last.
 4. Run one bounded child through `run_command` with `driver_env()` (`LC_ALL=C`,
    `LANG=C` only), `stdin_null`, no cwd override, and the invocation's timeout
-   ([oha.rs:171-181](../crates/eggbench-drivers/src/external/oha.rs)).
+   ([oha.rs:172-182](../crates/eggbench-drivers/src/external/oha.rs)).
 5. Parse retained stdout into the validated report, then assemble artifacts and
    raw observations.
 
 `drain` is a no-op for all three: every invocation spawns and reaps one child, so
 there is no persistent state to quiesce
-([oha.rs:190-196](../crates/eggbench-drivers/src/external/oha.rs),
+([oha.rs:219-225](../crates/eggbench-drivers/src/external/oha.rs),
 [h2load.rs:211-216](../crates/eggbench-drivers/src/external/h2load.rs),
 [iperf3.rs:177-182](../crates/eggbench-drivers/src/external/iperf3.rs)).
 
 ### argv and the load-model knobs the plan controls
 
-**oha** ([oha.rs:216-318](../crates/eggbench-drivers/src/external/oha.rs)) always
+**oha** ([oha.rs:245-347](../crates/eggbench-drivers/src/external/oha.rs)) always
 emits `--no-tui --output-format json` first
-([oha.rs:223](../crates/eggbench-drivers/src/external/oha.rs)):
+([oha.rs:252](../crates/eggbench-drivers/src/external/oha.rs)):
 
 | Plan workload | argv | Knob source |
 |---|---|---|
@@ -243,37 +253,37 @@ emits `--no-tui --output-format json` first
 `--latency-correction` is unconditional on every open-loop path, which is what
 makes `CorrectedLatency` true rather than aspirational. Rates trim trailing zeros
 from milli-rps (`2500` → `2.5`,
-[oha.rs:439-449](../crates/eggbench-drivers/src/external/oha.rs)); durations
+[oha.rs:535-545](../crates/eggbench-drivers/src/external/oha.rs)); durations
 emit as `1500ms`, not `1.5s`
-([oha.rs:451-458](../crates/eggbench-drivers/src/external/oha.rs), pinned by
-[oha.rs:955-967](../crates/eggbench-drivers/src/external/oha.rs)). A count **and**
+([oha.rs:547-554](../crates/eggbench-drivers/src/external/oha.rs), pinned by
+[oha.rs:1072-1084](../crates/eggbench-drivers/src/external/oha.rs)). A count **and**
 duration together fails closed rather than being coerced, because oha silently
 ignores `-n` under `-z` — a silent load-model change is exactly what the parser
-contract forbids ([oha.rs:243-247](../crates/eggbench-drivers/src/external/oha.rs),
-[oha.rs:277-281](../crates/eggbench-drivers/src/external/oha.rs)).
+contract forbids ([oha.rs:272-276](../crates/eggbench-drivers/src/external/oha.rs),
+[oha.rs:306-310](../crates/eggbench-drivers/src/external/oha.rs)).
 
 oha also has the only second argv builder, `oha_http_corpus_argv`
-([oha.rs:321-436](../crates/eggbench-drivers/src/external/oha.rs)), adding
+([oha.rs:350-465](../crates/eggbench-drivers/src/external/oha.rs)), adding
 `--method`, one `-H` per case header, one `-H` per non-conflicting default
 header, `--disable-keepalive` for `HttpConnectionPolicy::FreshPerRequest`
-([oha.rs:388-390](../crates/eggbench-drivers/src/external/oha.rs)), and `-D` for
+([oha.rs:417-419](../crates/eggbench-drivers/src/external/oha.rs)), and `-D` for
 a body. It enforces: exactly one scheduled case
-([oha.rs:344-346](../crates/eggbench-drivers/src/external/oha.rs)); a
+([oha.rs:373-375](../crates/eggbench-drivers/src/external/oha.rs)); a
 digest-verified corpus load
-([oha.rs:347-348](../crates/eggbench-drivers/src/external/oha.rs)); no default
+([oha.rs:376-377](../crates/eggbench-drivers/src/external/oha.rs)); no default
 header contradicting a case header
-([oha.rs:355-361](../crates/eggbench-drivers/src/external/oha.rs)); and an
+([oha.rs:384-390](../crates/eggbench-drivers/src/external/oha.rs)); and an
 absolute HTTP target, since it rebinds `origin + path_and_query` rather than
 forwarding the configured path
-([oha.rs:411-428](../crates/eggbench-drivers/src/external/oha.rs)). An inline
+([oha.rs:440-457](../crates/eggbench-drivers/src/external/oha.rs)). An inline
 body is spilled to a `NamedTempFile` **returned alongside the argv** and flushed
 before return, so the handle outlives argv construction and the file cannot
 vanish before the child reads it
-([oha.rs:391-406](../crates/eggbench-drivers/src/external/oha.rs),
-[oha.rs:429-435](../crates/eggbench-drivers/src/external/oha.rs), rebound at
-[oha.rs:159-170](../crates/eggbench-drivers/src/external/oha.rs)); a file body is
+([oha.rs:420-435](../crates/eggbench-drivers/src/external/oha.rs),
+[oha.rs:458-464](../crates/eggbench-drivers/src/external/oha.rs), rebound at
+[oha.rs:160-171](../crates/eggbench-drivers/src/external/oha.rs)); a file body is
 canonicalized under the corpus body root
-([oha.rs:400-405](../crates/eggbench-drivers/src/external/oha.rs)).
+([oha.rs:429-434](../crates/eggbench-drivers/src/external/oha.rs)).
 
 **h2load** ([h2load.rs:235-311](../crates/eggbench-drivers/src/external/h2load.rs))
 switches on the URL scheme first: `http` gets `--h1`, `https` gets nothing (the
@@ -328,11 +338,11 @@ emitted no observation and normalization must record `missing`, not zero (see
 [core-metrics.md](core-metrics.md)).
 
 **oha — `--output-format json`**
-([oha.rs:588-659](../crates/eggbench-drivers/src/external/oha.rs)). The parser
+([oha.rs:684-755](../crates/eggbench-drivers/src/external/oha.rs)). The parser
 requires the four upstream `schema.json` members `summary`,
 `latencyPercentiles`, `statusCodeDistribution`, `errorDistribution`
-([oha.rs:472-481](../crates/eggbench-drivers/src/external/oha.rs), enforced at
-[oha.rs:534-535](../crates/eggbench-drivers/src/external/oha.rs)):
+([oha.rs:568-577](../crates/eggbench-drivers/src/external/oha.rs), enforced at
+[oha.rs:630-631](../crates/eggbench-drivers/src/external/oha.rs)):
 
 | Report path | Metric | Unit | Aggregation | `source_field` | Present | Built-in |
 |---|---|---|---|---|---|---|
@@ -348,16 +358,16 @@ requires the four upstream `schema.json` members `summary`,
 | `statusCodeDistribution` | `oha-status.json` artifact | — | — | — | always | n/a |
 
 Latency conversion is a single `× 1000` from oha's seconds
-([oha.rs:545-549](../crates/eggbench-drivers/src/external/oha.rs)), applied to
+([oha.rs:641-645](../crates/eggbench-drivers/src/external/oha.rs)), applied to
 timings and percentiles alike. `successRate > 1.0` is a parse failure, not a clamp
-([oha.rs:536-542](../crates/eggbench-drivers/src/external/oha.rs)), which is what
+([oha.rs:632-638](../crates/eggbench-drivers/src/external/oha.rs)), which is what
 keeps `error_rate = 1 − successRate` inside the `[0, 1]` domain `Ratio` requires.
 `slowest` is deserialized only to validate the report shape; there is no
 `latency_max` in the vocabulary and oha does not invent one
-([oha.rs:489-491](../crates/eggbench-drivers/src/external/oha.rs)). p90 and p999
+([oha.rs:585-587](../crates/eggbench-drivers/src/external/oha.rs)). p90 and p999
 stay missing by construction
-([oha.rs:636-640](../crates/eggbench-drivers/src/external/oha.rs), asserted at
-[oha.rs:791](../crates/eggbench-drivers/src/external/oha.rs)).
+([oha.rs:732-736](../crates/eggbench-drivers/src/external/oha.rs), asserted at
+[oha.rs:893](../crates/eggbench-drivers/src/external/oha.rs)).
 
 **h2load — human-readable text** ([h2load.rs:521-585](../crates/eggbench-drivers/src/external/h2load.rs)).
 The parser skips every line up to and including the first one starting with
@@ -451,21 +461,22 @@ bound is rejected rather than silently wrapping
 
 All three emit `RawMetricObservation` — protocol-neutral, un-normalized — and
 never write normalized metric JSON; only `core::metrics` does
-([overview.md](overview.md):183-185). `producer` and `producer_version` are left
-`None` ([oha.rs:675](../crates/eggbench-drivers/src/external/oha.rs),
+([overview.md](overview.md):183-185). `producer_version` is `None` throughout;
+oha sets `producer` to `oha`, while h2load and iperf3 leave it `None`
+([oha.rs:771](../crates/eggbench-drivers/src/external/oha.rs),
 [h2load.rs:601](../crates/eggbench-drivers/src/external/h2load.rs),
-[iperf3.rs:461](../crates/eggbench-drivers/src/external/iperf3.rs)): tool identity
-travels in `command-metadata.json` and the resolved plan, not per observation.
+[iperf3.rs:461](../crates/eggbench-drivers/src/external/iperf3.rs)). Tool identity
+also travels in `command-metadata.json` and the resolved plan.
 `histograms` is empty and `measurement_elapsed` is `None` throughout — no adapter
 claims a measurement window it did not observe
 ([iperf3.rs:438-444](../crates/eggbench-drivers/src/external/iperf3.rs)).
 Every observation cites exactly one raw artifact, `stdout.raw`
-([oha.rs:597](../crates/eggbench-drivers/src/external/oha.rs)), so each number
+([oha.rs:693](../crates/eggbench-drivers/src/external/oha.rs)), so each number
 traces to the retained bytes. The `*_Parser` adapters satisfy the versioned
 `ExternalOutputParser` contract independent of spawning; each reports `parser_id`
 plus a `truncated` flag and leaves `tool_version` empty, because the version comes
 from the preflight probe, not the report
-([oha.rs:506-524](../crates/eggbench-drivers/src/external/oha.rs),
+([oha.rs:602-620](../crates/eggbench-drivers/src/external/oha.rs),
 [h2load.rs:343-358](../crates/eggbench-drivers/src/external/h2load.rs),
 [iperf3.rs:310-325](../crates/eggbench-drivers/src/external/iperf3.rs)).
 
@@ -473,7 +484,7 @@ Artifacts per trial are `stdout.raw`, `stderr.raw`, and `command-metadata.json`
 from `artifact_candidates`
 ([artifact.rs](../crates/eggbench-drivers/src/external/artifact.rs):13-34), plus
 `oha-status.json` unconditionally
-([oha.rs:590-596](../crates/eggbench-drivers/src/external/oha.rs)) or
+([oha.rs:686-692](../crates/eggbench-drivers/src/external/oha.rs)) or
 `h2load-status.json` only when the row was present
 ([h2load.rs:523-530](../crates/eggbench-drivers/src/external/h2load.rs)); iperf3
 adds none. Both status artifacts restate a distribution already in `stdout.raw`,
@@ -507,7 +518,7 @@ accurate.
 
 1. **Exit status is not a success signal for oha or h2load.** Both exit 0 with
    every request failed; oha reads success from `successRate` and the error
-   distribution ([oha.rs:526-530](../crates/eggbench-drivers/src/external/oha.rs)),
+   distribution ([oha.rs:622-626](../crates/eggbench-drivers/src/external/oha.rs)),
    h2load from the request counts
    ([h2load.rs:1-9](../crates/eggbench-drivers/src/external/h2load.rs)). Neither
    parser reads `exit_code`; an unreachable target is a *completed trial with
@@ -520,14 +531,14 @@ accurate.
    A zero-byte transfer is legitimate; a refused connection is not a measurement.
 3. **A missing measurement stays missing.** No percentile, timing, or
    `retransmits` value is ever zero-filled
-   ([oha.rs:496-503](../crates/eggbench-drivers/src/external/oha.rs),
+   ([oha.rs:592-599](../crates/eggbench-drivers/src/external/oha.rs),
    [h2load.rs:558](../crates/eggbench-drivers/src/external/h2load.rs),
    [iperf3.rs:428](../crates/eggbench-drivers/src/external/iperf3.rs)).
 4. **Domain checks are per field, not per document.** Every scalar that becomes a
    metric passes `finite_non_negative`
    ([common.rs](../crates/eggbench-drivers/src/external/common.rs):190-197);
    `successRate` must additionally be ≤ 1
-   ([oha.rs:536-542](../crates/eggbench-drivers/src/external/oha.rs)); byte and
+   ([oha.rs:632-638](../crates/eggbench-drivers/src/external/oha.rs)); byte and
    retransmit counters are range-bounded before the `u64` cast.
 5. **A workload the tool cannot express fails closed, never approximately.**
    Count-plus-duration for oha, any rate for h2load, any count for iperf3, and
@@ -567,7 +578,7 @@ accurate.
 | Parse failure under a cancelled token | `Cancelled` | Never downgraded to a workload failure |
 
 A stdout stream that hits its cap is reported as `truncated` through the parser
-contract ([oha.rs:521](../crates/eggbench-drivers/src/external/oha.rs)) rather
+contract ([oha.rs:617](../crates/eggbench-drivers/src/external/oha.rs)) rather
 than being silently accepted. A parse failure never mutates the invocation into a
 different load or protocol semantic — the parser contract's explicit prohibition
 ([parser.rs](../crates/eggbench-drivers/src/external/parser.rs):44-50).
@@ -590,7 +601,7 @@ test spawning `iperf3 -s` as a fixture
 ([oracles.rs](../crates/eggbench-drivers/tests/oracles.rs):97-108)); routing and
 faults (above); the installed toolchain; and corpus validation (oha calls
 `load_http_security_corpus` for digest verification
-([oha.rs:347-348](../crates/eggbench-drivers/src/external/oha.rs)) while the
+([oha.rs:376-377](../crates/eggbench-drivers/src/external/oha.rs)) while the
 corpus schema is a core contract).
 
 **Capability gating is the outer ring.** The resolver derives the required
@@ -613,15 +624,15 @@ and argv behavior.
 
 | Area | oha | h2load | iperf3 |
 |---|---|---|---|
-| Happy-path metric names and values | [oha.rs:774-798](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:696-725](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:536-550](../crates/eggbench-drivers/src/external/iperf3.rs) |
-| All-fail run stays a valid observation | [oha.rs:800-829](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:727-749](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:552-563](../crates/eggbench-drivers/src/external/iperf3.rs) |
-| Malformed / missing / domain-invalid fails | [oha.rs:831-840](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:751-762](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:565-576](../crates/eggbench-drivers/src/external/iperf3.rs) |
-| argv matrix and rejections | [oha.rs:842-890](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:774-803](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:578-609](../crates/eggbench-drivers/src/external/iperf3.rs) |
-| Corpus argv (oha only) | [oha.rs:892-953](../crates/eggbench-drivers/src/external/oha.rs) | — | — |
-| Duration / number text parity | [oha.rs:955-967](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:805-821](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:611-629](../crates/eggbench-drivers/src/external/iperf3.rs) |
+| Happy-path metric names and values | [oha.rs:870-900](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:696-725](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:536-550](../crates/eggbench-drivers/src/external/iperf3.rs) |
+| All-fail run stays a valid observation | [oha.rs:902-931](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:727-749](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:552-563](../crates/eggbench-drivers/src/external/iperf3.rs) |
+| Malformed / missing / domain-invalid fails | [oha.rs:933-942](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:751-762](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:565-576](../crates/eggbench-drivers/src/external/iperf3.rs) |
+| argv matrix and rejections | [oha.rs:944-992](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:774-803](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:578-609](../crates/eggbench-drivers/src/external/iperf3.rs) |
+| Corpus argv (oha only) | [oha.rs:994-1070](../crates/eggbench-drivers/src/external/oha.rs) | — | — |
+| Duration / number text parity | [oha.rs:1072-1084](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:805-821](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:611-629](../crates/eggbench-drivers/src/external/iperf3.rs) |
 | Version token extraction | — | [h2load.rs:764-772](../crates/eggbench-drivers/src/external/h2load.rs) | — |
 | Numeric boundary parity | — | — | [iperf3.rs:631-698](../crates/eggbench-drivers/src/external/iperf3.rs) |
-| `Debug` redaction | [oha.rs:969-988](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:823-842](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:700-719](../crates/eggbench-drivers/src/external/iperf3.rs) |
+| `Debug` redaction | [oha.rs:1086-1105](../crates/eggbench-drivers/src/external/oha.rs) | [h2load.rs:823-842](../crates/eggbench-drivers/src/external/h2load.rs) | [iperf3.rs:700-719](../crates/eggbench-drivers/src/external/iperf3.rs) |
 
 The three "text parity" tests are not cosmetic: each pins a byte-exact argv
 fragment against a documented pre-refactor authority (`humantime`,

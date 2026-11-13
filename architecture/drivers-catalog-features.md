@@ -69,7 +69,7 @@ linked at all.
 | `name` | Canonical lookup key; a validated `Name`, never a free string |
 | `category` | One `DriverCategory`; drives which accessor can find it |
 | `adapter_version` | Eggbench's own `CARGO_PKG_VERSION` for native adapters (`eggstack/mod.rs:44`) |
-| `upstream_name` / `upstream_version` | The concrete upstream crate/tool identity, `None` for external tools whose version is probed at runtime (`external/oha.rs:706-707`) |
+| `upstream_name` / `upstream_version` | The concrete upstream crate/tool identity, `None` for external tools whose version is probed at runtime (`external/oha.rs:802-803`) |
 | `capabilities` | Typed `BTreeSet<Capability>`; the only input to resolution |
 | `external_process` | Whether a host binary is required |
 | `default` | Unambiguous category-default claim used by deterministic selection |
@@ -117,7 +117,7 @@ error, never a build-configuration question (`catalog.rs:42-44`).
 
 | Name | Category | `external_process` | `default` | Descriptor |
 |---|---|---|---|---|
-| `oha` | Workload | true | false | `external/oha.rs:686` |
+| `oha` | Workload | true | false | `external/oha.rs:782` |
 | `h2load` | Workload | true | false | `external/h2load.rs:612` |
 | `iperf3` | Workload | true | false | `external/iperf3.rs:472` |
 | `eggreplay-semantic` | Workload | true | false | `external/eggreplay.rs:861` |

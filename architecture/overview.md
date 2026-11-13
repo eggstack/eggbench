@@ -139,7 +139,7 @@ Two deterministic fixtures support lifecycle testing and are not part of the
 production surface: `runner/src/bin/eggbench-child-fixture.rs` (185) and
 `drivers/src/bin/eggbench_fixture.rs` (80).
 
-### `eggbench-drivers` — adapters and catalog (16,641 LOC)
+### `eggbench-drivers` — adapters and catalog (16,758 LOC)
 
 | Module | Files (LOC) | Responsibility | Deep dive |
 |---|---|---|---|
@@ -147,7 +147,7 @@ production surface: `runner/src/bin/eggbench-child-fixture.rs` (185) and
 | Eggstack HTTP | `eggstack/fetch.rs` (1,520), `origin.rs` (265), `http_corpus.rs` (202), `mod.rs` (178) | Eggfetch closed-loop workload, EggServe controlled origin, fixed-corpus correctness | [drivers-eggstack-http.md](drivers-eggstack-http.md) |
 | Network path | `eggstack/path/{route,fault,dialer,evidence,mod}.rs` (1,360) | Route-first/fault-second Eggress + Eggchaos lowering, per-run path evidence | [drivers-network-path.md](drivers-network-path.md) |
 | External substrate | `external/{mod,resolver,command,version,parser,artifact,preflight,common,error}.rs` (2,334) | Trusted binary resolution, argv-only bounded execution, version policy, parser contract | [drivers-external-substrate.md](drivers-external-substrate.md) |
-| Load tool adapters | `external/{oha,h2load,iperf3}.rs` (2,552) | Independent external load generators and their report semantics | [drivers-external-load-tools.md](drivers-external-load-tools.md) |
+| Load tool adapters | `external/{oha,h2load,iperf3}.rs` (2,669) | Independent external load generators and their report semantics | [drivers-external-load-tools.md](drivers-external-load-tools.md) |
 | Oracle tool adapters | `external/{eggsec,eggsec_load,eggreplay,eggprobe}.rs` (4,953) | WAF correctness, security load, semantic replay, pre/post diagnostics | [drivers-external-oracle-tools.md](drivers-external-oracle-tools.md) |
 | Telemetry adapters | `gregg/{mod,collect,endpoint}.rs` (1,049), `prometheus_http.rs` (1,744) | Trial-synchronized host telemetry, bounded Prometheus text-format parsing | [drivers-telemetry-adapters.md](drivers-telemetry-adapters.md) |
 
