@@ -1,4 +1,4 @@
-//! EggServe origin and Eggfetch workload adapters behind `eggstack-http`.
+//! `EggServe` origin and `Eggfetch` workload adapters behind `eggstack-http`.
 //!
 //! Eggbench owns lifecycle and evidence; the adapters own HTTP semantics. The
 //! origin binds loopback on an ephemeral port, which is recorded in evidence.
