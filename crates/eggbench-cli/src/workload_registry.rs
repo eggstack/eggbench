@@ -1,17 +1,6 @@
-//! Workload driver registry with an explicit production/qualification split.
+//! CLI-facing workload view over the production driver catalog.
 //!
-//! Production driver inventory is owned by `eggbench-drivers`
-//! ([`eggbench_drivers::DriverCatalog`]); this module is a thin CLI-facing
-//! compatibility view over that catalog. [`WorkloadRegistry::production`]
-//! returns the catalog workload drivers (empty without the `eggstack-http`
-//! feature), so feature-off `run` fails before managed startup with a stable
-//! `missing_driver`/`unsupported_workload` category.
-//!
-//! Deterministic qualification uses [`WorkloadRegistry::with_qualification_fake`]
-//! (or [`QualificationRuntime`]) to inject the `FakeWorkload` descriptor and
-//! executor explicitly. That path is never used by `main.rs` and never
-//! appears in production help or the default driver inventory. Production
-//! adapters belong to External Oracles / Eggstack Integrations milestones.
+//! Qualification can inject a fake workload; production commands cannot.
 
 use eggbench_core::{DriverCategory, DriverDescriptor, LoadMode, Name};
 use eggbench_runner::test_support::FakeWorkload;

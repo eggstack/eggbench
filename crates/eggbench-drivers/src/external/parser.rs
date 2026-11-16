@@ -3,13 +3,12 @@
 use super::command::ExternalCommandOutcome;
 use super::error::{DriverError, ErrorCategory};
 
-/// Parser identifier for the M001 fixture parser.
+/// Parser identifier for the fixture parser.
 pub const FIXTURE_PARSER_ID: &str = "eggbench-fixture/v1";
 
 /// Driver-specific intermediate parse result.
 ///
-/// Later adapters map this to `RawMetricObservation`, `RawHistogramInput`,
-/// error-category counts, or additional raw artifacts.
+/// Adapters map parsed output to metric observations, error counts, or raw artifacts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedExternalOutput {
     /// Parser identifier and version.

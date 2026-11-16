@@ -1,9 +1,7 @@
-//! Pre-start bundle preparation helper.
+//! Stages the plan, environment fingerprint, and subject snapshot before execution.
 //!
-//! Stages the source plan, resolved plan, environment fingerprint, and
-//! subject snapshot artifacts into one still-unpublished [`BundleWriter`]
-//! so M002 [`execute_run`] can hand a complete writer into orchestration.
-//! All four primary artifacts are validated before the writer is returned.
+//! All primary artifacts are validated before the unpublished [`BundleWriter`]
+//! is passed to orchestration.
 
 use crate::{LocalEnvironmentCollector, SubjectSnapshot};
 use eggbench_core::{

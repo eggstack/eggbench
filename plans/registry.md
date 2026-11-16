@@ -1,344 +1,39 @@
-# Eggbench Active Planning Registry
+# Planning Registry
 
-This file is the compact control surface for active planning. Detailed requirements remain in canonical specifications, ADRs, subsystem roadmaps, implementation plans, closure records, and Git history.
+This page is a current-state index. Long-term plans and accepted ADRs define direction;
+subsystem roadmaps define milestones; implementation plans and closure records preserve
+handoff and acceptance evidence.
 
-Canonical direction remains in:
+Completed plans and closure records remain for traceability. This index omits duplicated
+work logs and dated sibling-repository snapshots; re-audit external dependencies at handoff.
 
-- plans/000-long-term-specification.md
-- plans/001-terminology-and-domain-model.md
-- plans/002-long-term-roadmap.md
-- plans/003-planning-process.md
+## Current subsystem status
 
-## Status vocabulary
-
-- **proposed** — roadmap or plan exists but is not approved/dependency-ready for execution.
-- **ready** — dependencies and interfaces are satisfied; plan may be handed off.
-- **active** — implementation or closure work is in progress.
-- **blocked** — a named dependency or evidence requirement prevents progress.
-- **closing** — implementation landed and closure evidence is being gathered.
-- **closed** — closure record accepted.
-- **conditionally closed** — substantial work landed but a named evidence condition remains.
-- **superseded** — replaced by another document.
-- **archived** — retained for traceability but no longer active.
-- **deferred** — intentionally outside the current implementation horizon.
-
-## Accepted architectural decisions
-
-| ADR | Status | Decision |
+| Subsystem | Status | Current direction |
 |---|---|---|
-| plans/adrs/ADR-0001-typed-core-and-driver-boundaries.md | accepted | Typed dependency-light core; separate runner/drivers/CLI; explicit capability failures |
-| plans/adrs/ADR-0002-immutable-evidence-and-testbed-provenance.md | accepted | Immutable .eggb bundles, manifest-last finalization, first-class testbed provenance |
-| plans/adrs/ADR-0003-trial-level-comparison-and-regression-verdicts.md | accepted | Trial-level inference, practical thresholds, deterministic bootstrap policy, pass/fail/inconclusive/invalid |
-| plans/adrs/ADR-0004-eggstack-composition-and-independent-oracles.md | accepted | Reuse Eggstack ownership; prefer stable seams; retain independent external benchmark drivers |
-| plans/adrs/ADR-0005-local-first-execution-and-remote-provider-boundary.md | accepted | Local runner first; future remote execution delegated through ExecutionProvider/Eggwork boundary |
-
-## Active subsystem roadmaps and correctives
-
-| Subsystem | Status | Roadmap / corrective | Current milestone | Dependencies or blockers |
-|---|---|---|---|---|
-| Foundation experiment/evidence post-closure corrective | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner/lifecycle post-closure corrective | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | C001 closed | none |
-| Local runner M002 post-closure corrective | closed | plans/subsystems/local-runner-m002-post-closure-corrective-addendum.md | C001 closed | Hosted CI run 35797812233 passed all required jobs |
-| post-M003/M001 qualification corrective | closed | plans/subsystems/post-m003-m001-qualification-corrective-addendum.md | C001 closed | Hosted CI run 35808371805 passed all required jobs |
-| post-M003 combined hosted qualification corrective | closed | plans/subsystems/post-m003-hosted-qualification-corrective-addendum.md | C001 stopped (historical); C002 closed | Combined qualification closed by hosted run 36029547565 (four lanes green); closure: plans/closure/post-m003-hosted-qualification-corrective/002-status.md |
-| post-M003 live external-tool qualification corrective | closed | plans/subsystems/post-m003-live-tool-qualification-corrective-addendum.md | C001 stopped with evidence; C002 closed | Live-binary interoperability qualified by C002 (implementation 98f16e6; hosted live-tool run 36177440371; four-lane run 36177440220); historical M003 closure preserved; M004 implementation unblocked |
-| Local runner/lifecycle | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | M001/M002/M003 closed; C001 closed | none |
-| Measurement/comparison | closed | plans/subsystems/measurement-comparison-roadmap.md | M001 qualified; M002 hosted-qualified; M003 closed/hosted-qualified | none; qualified by C002 run 36029547565 |
-| Eggstack integrations | closed | plans/subsystems/eggstack-integration-roadmap.md | M001-M004 closed/qualified (M004a `273e5b1`, M004b `b2de53e`); live Eggsec/combined qualification green | M004 substrate complete; Security Qualification M001 owns broader profiles |
-| External measurement oracles | active | plans/subsystems/external-oracles-roadmap.md | M001/M002 hosted-qualified; C002 closed (lint/qualification corrective); M003 future | none blocking; M003 netem remains the later milestone |
-| Security qualification | active | plans/subsystems/security-qualification-roadmap.md | M001 closed; M002 closed/hosted-qualified (C002 closed, exact-head runs `36640125422` + `36640125453` on `4703333`); M003a-b closed; M003c CLOSED (live harness `pass=30 stopped=0` against corrected owner `1338ce7b`, `m003c-13b` green); M003d inherits the same gate and is re-verified with it | SynVoid M002 asset contract and M003 telemetry v2 contract are closed upstream; M002 C002 is closed; the upstream telemetry-population gate was repaired by the owner and re-proven live |
-| Security qualification M002 post-conditional-closure corrective | closed | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | C001 STOPPED with verification at `b98973f` (historical); C002 closed | C001 closure: plans/closure/security-qualification-m002-corrective/001-status.md (STOPPED with verification); C002 closure: plans/closure/security-qualification-m002-corrective/002-status.md (closed on runs `36640125422` / `36640125453`); M003d CI corrective: plans/closure/security-qualification/003d-corrective-status.md (closed at `4703333`) |
-| Architecture deep-dive audit corrective | closing | plans/subsystems/architecture-deep-dive-corrective-addendum.md | C001 closed; C002 implemented, complete local verification green (615 tests / 27 binaries, feature matrix, MSRV, docs verifier); C003 registered as decision-gated follow-up | C002 awaits hosted macOS/Windows lanes for the platform-conditional fixes and a hosted clippy/fmt run; closure: plans/closure/architecture-deep-dive-corrective/001-status.md. C003-a..o await explicit contract decisions; none blocks C001/C002 |
-| Distributed execution | deferred | plans/subsystems/distributed-execution-roadmap.md | entry gate not met | Local lifecycle/evidence stable + concrete remote provider; evaluate Eggwork first |
-
-## Historical subsystem closures
-
-| Subsystem | Status | Roadmap | Closure evidence |
-|---|---|---|---|
-| Foundation experiment/evidence | closed | plans/subsystems/foundation-experiment-evidence-roadmap.md | plans/closure/foundation-experiment-evidence/001-status.md; 002-status.md; 003-status.md |
-| Foundation status/verdict corrective C001 | closed | plans/subsystems/foundation-experiment-evidence-post-closure-corrective-addendum.md | plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md |
-| Local runner/lifecycle M001 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/001-status.md; SHA erratum: plans/closure/local-runner-lifecycle/001-errata.md; corrective closure: plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
-| Local runner/lifecycle M002 | closed historical predecessor | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/002-status.md; C001 evidence-safety corrective: plans/closure/local-runner-m002-post-closure-corrective/001-status.md |
-| Local runner/lifecycle post-closure corrective C001 | closed | plans/subsystems/local-runner-lifecycle-post-closure-corrective-addendum.md | plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md |
-| Security qualification M002 post-conditional-closure corrective C001 | STOPPED with verification — runner-side fix verified; m002b perf issue was discharged by C002 as the live-host repeatability condition | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/001-status.md (implementation `b98973f`, STOPPED) |
-| Security qualification M002 post-conditional-closure corrective C002 | closed — real SynVoid proof, exact-head hosted four-lane + live qualified | plans/subsystems/security-qualification-m002-post-conditional-closure-corrective-addendum.md | plans/closure/security-qualification-m002-corrective/002-status.md (implementation `9d9d8b9`; four-lane `36640125422`, live `36640125453` on `4703333`) |
-| Security qualification M003d Eggsec-load CI portability corrective | closed | plans/implementation/security-qualification/003d-corrective-eggsec-load-ci-portability-and-unblock.md | plans/closure/security-qualification/003d-corrective-status.md (implementation `4703333`; four-lane `36640125422`, live `36640125453`) |
-| Local runner/lifecycle M003 | closed | plans/subsystems/local-runner-lifecycle-roadmap.md | plans/closure/local-runner-lifecycle/003-status.md; corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
-| Measurement/comparison M001 | closed (qualified) | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/001-status.md; qualification corrective: plans/closure/post-m003-m001-qualification-corrective/001-status.md |
-| Measurement/comparison M002 | closed | plans/subsystems/measurement-comparison-roadmap.md | plans/closure/measurement-comparison/002-status.md |
-
-Historical closure records remain evidence of what was accepted at the time. Corrective work does not silently rewrite them.
-
-## M003 closure status
-
-M003c, M003d, and the M003 milestone are closed; see the table in
-"Closed implementation plans" below.
-
-### M003 live qualification evidence (local)
-
-`scripts/qualification/synvoid-m003/run-live-qualification.sh` against the real
-pinned SynVoid `1338ce7b60f3793701091b4c329f80eb542f802d` and Eggsec
-`0509ac668adfd78e9899cd3428a807d0b3c9f27b`: `pass=30 stopped=0 notexec=0`,
-harness exit code 0. The previously stopped gate `m003c-13b` now passes:
-`subject_active_connections = 8.0`, `subject_event_loop_lag_ms = 1.0` with 20
-in-window samples per trial, no poll errors, no dropped samples. Hosted
-evidence is collected by the `live-m003-linux` job in
-`.github/workflows/live-tools.yml` on this branch.
-
-M002 corrective C001 remains **STOPPED with verification** at `b98973f`, preserved
-as historical evidence. C002 is **closed** at
-`plans/closure/security-qualification-m002-corrective/002-status.md`: real
-SynVoid correctness/performance/live evidence is green, and its terminal
-hosted pair was re-gathered on the M003d-corrective source `4703333` — four-lane
-run `36640125422` (all lanes green) and live run `36640125453`
-(`live-synvoid-linux` pass=25 stopped=0 notexec=5 with real stages executed).
-No C002 production work was authorized or performed.
-
-The M003d Eggsec-load CI portability corrective is **closed** at
-`plans/closure/security-qualification/003d-corrective-status.md`
-(implementation `4703333`), which also restores the repository-wide
-qualification gate that C002 had been waiting on.
-
-Cross-repo prerequisites are now satisfied:
-
-- SynVoid M002 asset contract: CLOSED, implementation `ae045481...`;
-- SynVoid M003 telemetry owner contract:
-  `synvoid.eggbench-telemetry.v2`, CLOSED QUALIFIED at corrective
-  implementation `739e7ba6...`, closeout head `0dc1f7fb...`;
-- v2 mapping SHA-256:
-  `622f6a13c4353cc7465cce39a57ed86fa0db2fe4114258e6f06226c1748d2d99`.
-
-Historical post-M003 live-tool C001 stopped with evidence and successor C002 is
-closed at `plans/closure/post-m003-live-tool-qualification-corrective/002-status.md`.
-No older corrective handoff remains open.
-
-## Closed implementation plans (named conditions discharged)
-
-Per-milestone implementation plans and closure records live under
-`plans/implementation/` and `plans/closure/`; this table names only the
-currently relevant terminal entries, not every historical record.
-
-| Subsystem | Milestone | Status | Plan | Closure | Remaining condition |
-|---|---|---|---|---|---|
-| Security qualification | M003c subject telemetry + SynVoid metrics ingestion | closed and hosted-qualified (corrected owner `1338ce7b`; four-lane CI `37143714313` + live `37143714261` green on `30a3825`) | plans/implementation/security-qualification/003c-subject-telemetry-and-synvoid-metrics-ingestion.md | plans/closure/security-qualification/003c-status.md | none |
-| Security qualification | M003d Eggsec load profiles + live qualification | closed and hosted-qualified (re-verified with the corrected owner; four-lane CI `37143714313` + live `37143714261` green on `30a3825`) | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | plans/closure/security-qualification/003d-status.md | none; `m003d-4` executes hosted via pinned provisioned `oha` with evidence assertion (`973451f`; hosted confirmation pending) |
-| Security qualification | M003 milestone | closed and hosted-qualified (four-lane CI `37143714313` + live `37143714261` green on `30a3825`) | plans/implementation/security-qualification/003d-eggsec-load-profiles-live-qualification-and-m003-closure.md | plans/closure/security-qualification/003-status.md | none |
-| Security qualification | M002a SynVoid controlled correctness profile | conditionally closed (routine synthetic scope; terminal proof supplied by the closed C002) | plans/implementation/security-qualification/002a-synvoid-controlled-correctness-profile.md | plans/closure/security-qualification/002a-status.md | none; the named condition is discharged by plans/closure/security-qualification-m002-corrective/002-status.md |
-| Security qualification | M002b SynVoid performance/resource suite + M002 closure | conditionally closed (routine synthetic scope; terminal proof supplied by the closed C002) | plans/implementation/security-qualification/002b-synvoid-performance-resource-suite-and-m002-closure.md | plans/closure/security-qualification/002b-status.md | none; the named condition is discharged by plans/closure/security-qualification-m002-corrective/002-status.md |
-
-## Authored but dependency-blocked implementation plans
-
-None currently. M003d is no longer blocked: its profile, baseline,
-negative-demonstration, and live work is complete, and the milestone inherits
-only the single upstream condition recorded above.
-
-External Oracles M003 netem remains separate.
-
-## Current execution order and dependency gates
-
-### Gate A — Historical foundation
-
-Foundation M001-M003 are closed historical predecessor work. They established the typed plan, driver resolution, and immutable evidence bundle.
-
-A post-closure audit found one schema-semantic issue: manifest v1 overloads execution outcome and comparison verdict in one `RunStatus` type.
-
-### Gate B — Foundation status/verdict corrective
-
-Foundation post-closure corrective C001 is closed as recorded at `plans/closure/foundation-experiment-evidence-post-closure-corrective/001-status.md`. It separates execution status from comparison verdict, emits manifest v2 for new writes, retains an explicit manifest-v1 reader, and records Local Runner M001 lifecycle-only evidence as “execution completed, comparison not performed.”
-
-This gate closed before Local Runner M002 began; the corrected status/verdict contract remains controlling for subsequent work.
-
-### Gate C — Local Runner M001 corrective
-
-Local Runner post-closure corrective C001 is closed at `plans/closure/local-runner-lifecycle-post-closure-corrective/001-status.md`. Its implementation added filesystem-resolved cwd confinement, a hermetic child environment contract, explicit executable resolution, truthful platform support, and cross-platform qualification. The historical M001 SHA erratum is recorded at `plans/closure/local-runner-lifecycle/001-errata.md`.
-
-The predecessor closure incorrectly listed `9387a45e1bbf9c1f9a55fb8ad875b07f6f880d21`; the actual M001 implementation commit is `9387a459103078c1ccdbca7d4db41ae0f6cefc11`. This gate is historical and has no remaining action item.
-
-### Gate D — Local Runner M002 and post-closure evidence-safety corrective
-
-Local Runner M002 has a historical closure at
-`plans/closure/local-runner-lifecycle/002-status.md`.
-
-The post-closure audit found two untested correctness defects in the
-orchestration/evidence boundary:
-
-- dynamic workload-artifact staging errors could return from `execute_run`
-  after managed startup but before the common workload-drain/service-teardown
-  tail;
-- the persisted finalization phase could differ from the returned
-  `RunOutcome.phases` because the phase was serialized before bundle
-  publication and then mutated again in memory.
-
-Corrective C001 closed at
-`plans/closure/local-runner-m002-post-closure-corrective/001-status.md` and is fully qualified by hosted CI run `35797812233`, which passed Linux stable, Linux Rust 1.89 MSRV, macOS stable, and Windows stable supported-subset jobs.
-Historical M002 closure remains preserved; the corrective records the new defects and the evidence that proves cleanup is now mandatory.
-
-### Gate E — Comparison and current-tip hosted qualification
-
-The earlier post-M003/M001 corrective is closed and qualified by hosted run 35808371805.
-
-Measurement M002 (80ff6d1) and Measurement M003 (49a4105) subsequently landed with local closure evidence. C001 fixed the first hosted defects at implementation 808c35f, including M003 ceiling-division lint, Windows ResolvedPlan v2 fixture completion, and feature-dependent CLI unused-mut cleanup.
-
-Fresh hosted run 36017662684 then passed Linux Rust 1.89 and passed cargo check on Linux/macOS/Windows stable, but all three stable jobs stopped at all-feature Clippy because stable 1.98 exposed pre-existing eggbench-drivers lint debt.
-
-C001 correctly stopped under its frozen-contract rule. Its successor C002 (implementation a8fbcea + 0e32ff0) cleared the driver debt plus narrowly masked follow-on findings and closed with four-lane green hosted run 36029547565. Measurement M003 is therefore closed/hosted-qualified and the accumulated post-M001 feature set carries current-tip hosted qualification.
-
-### Gate F — Drivers and integrations
-
-External Oracles M001/M002 are hosted-qualified. Eggstack M001-M003 are closed and hosted-qualified, including additive real-binary EggReplay/Eggprobe interoperability through post-M003 live-tool C002 (implementation `98f16e6`; hosted runs `36177440371` and `36177440220`).
-
-Eggstack M004 closed as two ordered stages:
-
-1. **M004a Eggsec strict WAF correctness adapter** — closed (implementation `273e5b1`; closure `plans/closure/eggstack-integration/004a-status.md`).
-2. **M004b security correctness gate family and M004 closure** — closed (implementation `b2de53e`; umbrella closure `plans/closure/eggstack-integration/004b-status.md`).
-
-M004a consumes Eggsec through an external strict-scope CLI boundary, initially only the bounded `waf --json` bypass semantics on local/private targets. It introduces a distinct correctness execution/evidence category and never turns Eggsec security results into performance metrics.
-
-M004b consumes M004a's sanitized evidence through a dedicated correctness gate family. ComparisonReceipt v3 records a performance-only verdict, a typed correctness section, and a conservative combined verdict. Performance cannot override failed correctness. Security Qualification M001 now owns the broader reusable profiles/corpora follow-up and is unblocked for its own implementation planning.
-
-Audited Eggsec source baseline for M004 planning: `0509ac668adfd78e9899cd3428a807d0b3c9f27b` (workspace 0.1.0, Rust 1.89; evolving source tree, no immutable release selected for this machine contract).
-
-External Oracles M003 netem remains a separate later system-level impairment boundary.
-
-### Gate G — Security profiles
-
-Security qualification retains separate correctness and performance gate families. Faster execution never overrides a security-correctness failure.
-
-Measurement prerequisites are already closed. Eggstack M004a/M004b delivered the generic execution/evidence and combined-verdict substrate (both closed). Security Qualification M001 is closed. M002 is closed and hosted-qualified: the routine scope landed at `b74f861` and remains historically conditionally closed, and the post-M002 corrective supplies the terminal proof — **C001 is STOPPED with verification at `b98973f`** (preserved as historical) and **C002 is closed** with real owner-exported SynVoid correctness/performance/live execution plus exact-head hosted runs `36640125422` and `36640125453` on the M003d-corrective source `4703333`. The SynVoid M002 asset contract is CLOSED upstream (`ae045481` / `30e68af8`). Eggbench does not translate SynVoid Detect/Pass semantics itself.
-
-Security Qualification M003 has now been researched and decomposed. M003a-b are closed; M003c is closed and M003d re-verified with it, live against the corrected pinned owner SynVoid `1338ce7b` and Eggsec (`pass=30 stopped=0 notexec=0`, `m003c-13b` green). SynVoid's M003 telemetry-export handoff remains CLOSED QUALIFIED under `synvoid.eggbench-telemetry.v2`; no upstream change was needed for the Eggsec load-profile adapter, although executing it against the real tool exposed four adapter-contract defects that are now repaired.
-
-### Gate H — Distributed execution
-
-Distributed execution remains deferred. Do not add SSH/scheduler/credential machinery to Eggbench. Evaluate Eggwork against ADR-0005 once local lifecycle/evidence semantics are stable.
-
-## Planning-time sibling integration facts to re-audit before implementation
-
-As of 2026-09-23 planning:
-
-- Eggfetch core is currently 0.2.0, Rust 1.89, with a lean `standard-http1` embedding profile; its Criterion/resource benchmark crate remains unpublished and Eggfetch-owned.
-- Eggress 1.0.8 exposes narrow reusable crates including relay/outbound/metrics/testkit surfaces.
-- EggServe workspace is currently 0.2.1; `eggserve-server` + `eggserve-primitives` are the documented direct generic H1 embedding seam.
-- Eggchaos, EggReplay, and Eggprobe are pre-release 0.1 projects with useful but evolving integration seams.
-- Gregg is currently 1.0.14; `gregg-protocol` exposes the versioned v2 wire contract and `/v2/status` is the universal status endpoint.
-- Eggsec owns structured scoped security/load-testing semantics.
-- SynVoid is an initial high-value benchmark subject, not an Eggbench dependency.
-
-These are planning observations, not permanent version pins. Every integration plan must inspect current sibling state at handoff.
-
-Observed 2026-09-24 during External Oracles M002 grounding (local host):
-Eggress workspace is 1.0.10 (many narrow crates incl. relay/outbound/
-metrics/routing/embed); EggServe workspace is 0.2.2; Eggsec is 0.1.0;
-Eggchaos/EggReplay/Eggprobe have no locally available seam; `oha 1.16.0`
-(built from crates.io), `h2load nghttp2/1.59.0`, and `iperf 3.16` all
-verified live against loopback.
-
-M002 handoff re-audit on 2026-09-24:
-
-- Eggress 1.0.10 is published on crates.io with Rust 1.89 and exposes the audited eggress-outbound listener-free TCP routing, typed detailed failures, and OutboundInfo; the implementation pins 1.0.10 exactly.
-- Eggchaos v0.1.0 is published and qualified; eggchaos-core exposes the protocol-neutral deterministic stream fault engine and BidirectionalChaosStream used by the M002 design.
-- eggchaos-eggfetch is deliberately not selected because its dialer owns a direct TCP connection; M002 composes Eggress route first and eggchaos-core second.
-- Eggchaos datagram work on main remains outside M002.
-
-M003 handoff re-audit on 2026-09-25:
-
-- EggReplay current planning HEAD observed: `29ce133f`; workspace 0.1.0 / Rust 1.89. Its JSON CLI exposes envelope schema 1 and RegressionReport schema 2. M003a uses `validate` + `replay --output json`; it does not parse long-running `serve` readiness stderr or import EggReplay Rust crates.
-- Eggprobe qualified release of record: `v0.1.1` at `53ea53d`, machine schema 0.3. Current main has unreleased schema 0.4 work while retaining package version 0.1.1, so M003b performs an explicit machine-schema handshake and consumes DNS/TCP/TLS/HTTP only.
-- Both integrations use existing trusted external-process machinery and preserve sibling ownership. No EggReplay/Eggprobe production Rust dependency is planned.
-
-M004 Eggsec handoff re-audit on 2026-09-25:
-
-- Eggsec audited HEAD `0509ac668adfd78e9899cd3428a807d0b3c9f27b`, workspace 0.1.0 / Rust 1.89; no immutable release was selected for the M004 machine contract.
-- The broad Eggsec Rust crate and generic `scan --json` pipeline are not selected. `eggsec-report-model` is narrow but is not the WAF CLI output contract.
-- Initial production seam is external `eggsec waf --json` with generated exact local/private scope, global `--strict-scope`, and guarded no-network preflight. Manual override flags, stress/flood, raw packets, NSE, remote/C2, db/web-proxy, credentials, and public targets are outside M004.
-- M004a consumes only Eggsec's explicit `bypass_successful` boolean plus structural report consistency; it does not interpret payload text or severity.
-- M004b keeps security correctness out of TrialMetrics/bootstrap and introduces an independent correctness receipt section with conservative combined verdict precedence.
-- Security Qualification M001 owns later reusable profile/corpus semantics rather than duplicating the M004 structural substrate.
-
-M002 implementation re-audit (routine scope, implementation `b74f861`):
-
-- SynVoid `7f1b79452a683e758e0b4ea1e70f6c0f2463f0d1`, package 1.1.0; upstream
-  asset contract still absent (harness Stage B proves absence per run).
-- 27-case WAF fixture corpus audited case-by-case: 5-case GET path/query
-  allowlist identified (verbatim/adapted in the synthetic corpus with source
-  IDs as opaque labels); 22 exclusions recorded with M001-based reasons.
-- Minimal `--no-default-features` build plausible but heavy (~1053-lock
-  packages, LTO); no binary built in routine scope.
-- Runner findings that shaped the routine scope: no binding interpolation
-  (static subjects cannot consume ephemeral adapter ports; D1), eggfetch-http
-  admitted only `eggserve-origin` targets until the M001a-intended `command`
-  widening, `qualify run` pins no per-scenario driver (D4 oracle procedure),
-  h2load p95 resolution floor on sub-ms loopback (oracle absolute-gate scoping).
-- Same-build repeatability evidence: 5-trial policy failed same-source (§8
-  stop honored, policy revised with evidence); 7-trial/200-2000-request policy
-  yields Pass/Inconclusive with zero Fail across repeated pairs; thresholds frozen.
-
-M002 SynVoid handoff re-audit on 2026-09-26 (planning-time baseline):
-
-- SynVoid audited source: `dbowm91/synvoid@49b4624b696b4c3aa0172b0326a04ae9e275ca3f`, package version 1.1.0.
-- `--no-default-features` is the supported minimal WAF/proxy runtime; foreground lifecycle is `synvoid --foreground --config-path <dir>`.
-- SynVoid owns an authoritative WAF fixture corpus with stable IDs and Detect/Pass expectations, but no Eggbench export/materialization contract exists.
-- The internal corpus includes inputs Eggbench M001 intentionally rejects (smuggling/hop-by-hop, binary/non-UTF8/internal-only cases), so Eggbench must not copy/translate the corpus wholesale.
-- SynVoid now has a planned owner-side handoff at `plans/eggbench_security_qualification_asset_contract.md` to export an allowlisted live-proxy-compatible subset, loopback-only minimal config, and provenance.
-- Eggbench M002a consumes that owner-authored export for correctness. M002b uses existing Eggfetch/oha/h2load and Gregg seams for bounded benign performance/resource scenarios.
-- Mixed malicious load, explicit connection churn, and SynVoid Prometheus/event-loop/queue ingestion are deferred because no current qualified Eggbench driver/telemetry seam expresses them truthfully.
-
-## Planning review checklist for new implementation plans
-
-Before marking a plan ready, verify:
-
-1. canonical specification/terminology references are correct;
-2. all hard dependencies are closed;
-3. driver/protocol ownership is not duplicated;
-4. timed versus untimed phases are explicit;
-5. experimental unit and primary metrics are explicit;
-6. execution status and comparison verdict are not conflated;
-7. lifecycle/cancellation/cleanup semantics are explicit;
-8. filesystem/environment/platform guarantees are truthful;
-9. security/correctness effects are explicit;
-10. machine-readable schema/version effects are explicit;
-11. closure evidence is sufficient to prove more than compilation.
-
-## Next handoff
-
-Both cross-repo gating handoffs are closed:
-
-- SynVoid owner-side qualification asset contract (sibling repo, not this tree):
-  `dbowm91/synvoid:plans/eggbench_security_qualification_asset_contract.md`
-  — **CLOSED** 2026-09-28 (implementation `ae045481`, closeout head
-  `30e68af8`);
-- SynVoid owner-side M003 telemetry contract
-  `synvoid.eggbench-telemetry.v2` — **CLOSED QUALIFIED** at corrective
-  implementation `739e7ba6`, closeout head `0dc1f7fb`.
-
-Eggbench C001 is **STOPPED with verification** (implementation
-`b98973f`; closure `plans/closure/security-qualification-m002-corrective/001-status.md`).
-The C001 runner-side fix is verified green by hosted CI run
-`36451730637`: `synvoid_m002a` is 7/7 green. The independent
-`synvoid_m002b::perf_same_source_pair_never_fails` failure surfaced
-post-fix is the live-host repeatability M002 closure condition; C002
-discharged it on the real subject and on the green `macos-stable` lane
-of run `36640125422`. C001's disposition stays historical and is not
-rewritten.
-
-Eggbench C002 is **closed** (closure
-`plans/closure/security-qualification-m002-corrective/002-status.md`):
-the real-live implementation consumed the owner export without
-reinterpreting SynVoid semantics, and its terminal hosted pair was
-re-gathered on the M003d-corrective source `4703333` — four-lane run
-`36640125422` (all lanes green) and live run `36640125453`
-(`live-synvoid-linux` pass=25 stopped=0 notexec=5, real stages executed
-rather than NOT-EXECUTED).
-
-The M003d Eggsec-load CI portability corrective is **closed**
-(implementation `4703333`; closure
-`plans/closure/security-qualification/003d-corrective-status.md`).
-
-Handoff executed: the upstream telemetry-population fix landed in SynVoid as
-`ccf92694` (dispatch + classification) and `1338ce7b` (live-value wiring), and
-`scripts/qualification/synvoid-m003/run-live-qualification.sh` was re-run
-against the corrected owner revision (`SYNVOID_PIN=1338ce7b`): `pass=30
-stopped=0 notexec=0` with `m003c-13b` green and no harness change. M003c is
-closed; M003d is re-verified; the M003 milestone awaits the hosted four-lane
-plus `live-m003-linux` evidence on the closing revision. M002 remains fully
-qualified and is no longer a premise gate.
+| [Foundation experiment and evidence](subsystems/foundation-experiment-evidence-roadmap.md) | Closed | M001–M003 and the post-closure corrective are complete. |
+| [Local runner and lifecycle](subsystems/local-runner-lifecycle-roadmap.md) | Closed | M001–M003 and recorded correctives are complete. |
+| [Measurement and comparison](subsystems/measurement-comparison-roadmap.md) | Closed | M001–M003 are qualified. |
+| [Eggstack integrations](subsystems/eggstack-integration-roadmap.md) | Closed | M001–M004 are delivered and qualified. |
+| [External measurement oracles](subsystems/external-oracles-roadmap.md) | Active | M001/M002 are complete; Linux netem M003 remains future work. |
+| [Security qualification](subsystems/security-qualification-roadmap.md) | M001–M003 closed | The roadmap records qualification evidence and any later follow-up. |
+| [Architecture deep-dive corrective](subsystems/architecture-deep-dive-corrective-addendum.md) | C001 closed; C002 hosted checks passed; C003 decision-gated | C002 hosted run `43510476976` passed; its closure record predates that run. |
+| [Distributed execution](subsystems/distributed-execution-roadmap.md) | Deferred | Follow ADR-0005; do not add remote execution machinery to Eggbench. |
+
+## Canonical direction and governance
+
+- [Long-term specification](000-long-term-specification.md)
+- [Terminology and domain model](001-terminology-and-domain-model.md)
+- [Long-term roadmap](002-long-term-roadmap.md)
+- [Planning and agent-handoff process](003-planning-process.md)
+- [Accepted ADRs](adrs/)
+
+## Planning rules
+
+- Read the relevant subsystem roadmap before proposing work.
+- Re-audit sibling repositories and external tool contracts at handoff; dated planning observations are not version pins.
+- Use one bounded implementation plan per milestone and record material deviations.
+- Close work with evidence in `plans/closure/`. Corrective work adds a new record; it does not rewrite historical closure evidence.
+- Archive completed interim plans only when they no longer serve as handoff evidence. Preserve canonical plans, accepted ADRs, and closure records.
+
+Current status belongs in the subsystem roadmaps and closure records. Update this index when a subsystem's status or next dependency changes.

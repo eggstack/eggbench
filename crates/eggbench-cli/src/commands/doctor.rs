@@ -155,9 +155,7 @@ fn run_with_input(
             options.executable_paths.insert(driver.clone(), path);
         }
     }
-    // M003b: pin the resolved eggprobe binary so diagnostic resolution
-    // records the exact executable. When the binary is missing the path
-    // stays absent and resolution reports MissingExecutablePath.
+    // Pin Eggprobe's executable path so resolution uses the selected binary.
     if plan
         .diagnostics
         .as_deref()
@@ -169,9 +167,7 @@ fn run_with_input(
             options.executable_paths.insert(probe, path);
         }
     }
-    // M004a: pin the resolved eggsec binary so correctness resolution
-    // records the exact executable. When the binary is missing the path
-    // stays absent and resolution reports MissingExecutablePath.
+    // Pin Eggsec's executable path so resolution uses the selected binary.
     if plan
         .security_checks
         .as_deref()

@@ -1,10 +1,7 @@
-//! Lifecycle evidence staged through the immutable bundle writer.
+//! Stages lifecycle metadata and bounded logs as ordinary bundle artifacts.
 //!
-//! The runner adds no second evidence format. Diagnostic logs and lifecycle
-//! metadata are staged as ordinary artifacts with the M003 [`BundleWriter`];
-//! finalization still requires the plan, resolved-plan, and environment
-//! primary roles. A lifecycle-only run records no trials and finalizes with
-//! execution completed and no comparison verdict.
+//! Finalization requires the plan, resolved plan, and environment artifacts.
+//! Lifecycle-only runs record no trials and no comparison verdict.
 
 use crate::RunEvidenceArtifact;
 use crate::session::{LifecycleOutcome, LocalSession};

@@ -1,24 +1,8 @@
 #![allow(clippy::doc_markdown)]
-//! EggReplay semantic replay workload adapter (Eggstack M003a).
+//! EggReplay semantic replay through its trusted external JSON CLI.
 //!
-//! EggReplay owns fixture format/validation, recorded request semantics,
-//! matching/replay order, candidate execution, and semantic finding meaning.
-//! Eggbench owns fixture identity/confinement, driver provenance, process
-//! lifecycle/cancellation, trial scheduling, bounded evidence, and the
-//! optional absolute correctness gate.
-//!
-//! Production seam: trusted external `eggreplay` JSON CLI, never a Rust
-//! library dependency:
-//!
-//! ```text
-//! eggreplay validate --fixture <path> --output json
-//! eggreplay replay --fixture <fixture> --target <url> --route direct --output json
-//! ```
-//!
-//! Envelope schema 1 and RegressionReport schema 2 are enforced. One complete
-//! fixture replay is one Eggbench trial observation; semantic findings are
-//! successful workload observations (`semantic_findings > 0`), never
-//! `WorkloadFailed`. Process wall-clock time is never mapped to latency.
+//! One replay is one trial observation. Semantic findings remain workload
+//! evidence, and process wall-clock time is not treated as latency.
 
 use super::artifact::artifact_candidates;
 use super::command::{ExternalCommandOutcome, ExternalCommandSpec, run_command};

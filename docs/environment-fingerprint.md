@@ -33,7 +33,7 @@ binaries are expected to differ.
 | `total_memory_bytes` | comparison_critical | Bytes of installed memory. |
 | `kernel_release` | comparison_critical | `uname -r` on Unix. |
 | `os_version` | warning_only | Pretty OS version (for example `/etc/os-release PRETTY_NAME`). |
-| `current_cpu_frequency_mhz` | warning_only | Maximum current frequency in MHz. Transient — never comparison-critical. |
+| `current_cpu_frequency_mhz` | warning_only | Maximum current frequency in MHz. It is transient and never comparison-critical. |
 | `eggbench_collector_version` | informational | `eggbench` package version. |
 | `rust_target` | informational | Rust `cfg!(target_arch)` value. |
 | `rustc_version_runtime` | informational | Declared but always absent: the collector returns `None` by decision rather than take a dependency for one informational label. |

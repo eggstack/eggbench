@@ -1,25 +1,8 @@
-//! Eggstack-native HTTP drivers behind the `eggstack-http` feature.
+//! EggServe origin and Eggfetch workload adapters behind `eggstack-http`.
 //!
-//! This module owns the first real Eggstack-native experiment path:
-//!
-//! ```text
-//! ExperimentPlan
-//!   | `EggServe` named managed origin (`eggserve-origin`)
-//!   | runtime HTTP binding (`http_url`)
-//!   | `Eggfetch` `WorkloadExecutor` (`eggfetch-http`)
-//!   | Measurement M002 trial lifecycle
-//! ```
-//!
-//! Invariants (from Eggstack Integration M001a):
-//!
-//! - `Eggfetch` owns outbound HTTP semantics; `EggServe` owns inbound
-//!   HTTP/runtime semantics; Eggbench owns lifecycle, configuration, metric
-//!   mapping, and evidence only. No Hyper client/server implementation is
-//!   created in Eggbench.
-//! - The controlled origin binds loopback only (`127.0.0.1` ephemeral).
-//! - Runtime-selected ephemeral ports are recorded as evidence.
-//! - Minimal/default builds never link these drivers; everything here is
-//!   gated behind `eggstack-http`.
+//! Eggbench owns lifecycle and evidence; the adapters own HTTP semantics. The
+//! origin binds loopback on an ephemeral port, which is recorded in evidence.
+//! Default builds do not link these adapters.
 
 mod fetch;
 mod http_corpus;
@@ -98,10 +81,8 @@ pub fn eggfetch_http_descriptor() -> DriverDescriptor {
     capabilities.insert(Capability::NetworkPath);
     let mut compatible = BTreeSet::new();
     compatible.insert(Name::new(EGGSERVE_ORIGIN_SERVICE_TYPE).expect("static service name"));
-    // M001a static `http_url` bindings let a managed command subject expose a
-    // loopback endpoint (Security Qualification M002a/M002b SynVoid profile).
-    // Eggfetch drives targets through that binding, so `command` services are
-    // drivable; a missing binding still fails closed at execution time.
+    // A managed command subject can expose a loopback endpoint through the
+    // `http_url` binding. A missing binding still fails closed at execution.
     compatible.insert(Name::new("command").expect("static service kind"));
     DriverDescriptor {
         name: Name::new(EGGFETCH_HTTP_DRIVER_NAME).expect("static driver name"),

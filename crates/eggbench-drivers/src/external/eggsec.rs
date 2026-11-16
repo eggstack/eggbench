@@ -1,5 +1,5 @@
 #![allow(clippy::doc_markdown)]
-//! Eggsec strict-scope WAF correctness adapter (Eggstack M004a).
+//! Eggsec strict-scope WAF correctness adapter.
 //!
 //! Eggsec owns payload generation, WAF detection, bypass-technique
 //! execution, and the meaning of `bypass_successful`. Eggbench owns the

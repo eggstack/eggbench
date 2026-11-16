@@ -1,15 +1,7 @@
-//! Local environment fingerprint collection for M003.
+//! Collects a versioned, non-secret testbed fingerprint before managed startup.
 //!
-//! The collector runs before managed startup so a failed collection cannot
-//! leave descendant processes running. It produces a versioned
-//! [`EnvironmentFingerprint`] using only filesystem, `std::process`, and a
-//! small set of portable platform APIs. No shell strings are executed and no
-//! ambient `PATH` is consulted.
-//!
-//! Missing optional fields stay absent; the fingerprint never fabricates
-//! placeholder values such as `unknown`. Comparison-critical fields are
-//! non-secret host facts used to decide whether two runs share a testbed.
-//! Transient load or frequency values are warning-only at best.
+//! The collector uses no shell or ambient `PATH`. Missing optional facts stay
+//! absent; transient load and frequency values do not determine comparability.
 
 use eggbench_core::{
     ENVIRONMENT_FINGERPRINT_SCHEMA_VERSION, EnvironmentField, EnvironmentFieldClass,

@@ -1,13 +1,7 @@
-//! `eggbench` CLI entry point and presentation logic.
+//! Public CLI types and command execution for the `eggbench` binary.
 //!
-//! The CLI is a thin presentation adapter over `eggbench-core` and
-//! `eggbench-runner`. It does not duplicate orchestration: every command
-//! either calls into core contracts (parse/validate/resolve/inspect) or
-//! delegates to the runner's bundle-preparation and execution seams.
-//!
-//! Machine output is a single JSON envelope on stdout when `--json` is set;
-//! human progress and diagnostics go to stderr. Exit codes follow the
-//! documented compact stable mapping.
+//! Argument parsing and result rendering live in the binary; command behavior
+//! delegates to core contracts and the runner.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::too_many_lines)]
@@ -204,9 +198,8 @@ pub fn commands_doctor_run_with_registry(
 
 /// Qualification/test seam: `run` with an explicitly injected fake workload.
 ///
-/// Not used by the production binary. The `signal` future deterministically
-/// triggers M002 cancellation in tests; production drivers would pass a
-/// Ctrl-C listener instead.
+/// The `signal` future triggers cancellation deterministically in tests.
+/// Production `run` supplies the operating-system Ctrl-C listener.
 pub async fn commands_run_with_qualification(
     plan: &std::path::Path,
     input_format: Option<InputFormat>,

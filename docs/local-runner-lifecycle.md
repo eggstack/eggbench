@@ -1,4 +1,4 @@
-# Local runner lifecycle (M001–M002)
+# Local runner lifecycle
 
 `eggbench-runner` owns managed local processes behind the runtime-free
 `eggbench-core` contracts. It spawns argv vectors directly (never a shell),
@@ -67,7 +67,7 @@ variables.
   tests). Unknown probe names fail with an explicit capability error before
   any spawn. HTTP/TCP parameters are never inferred from opaque strings.
 
-Readiness and startup sit outside any future measured interval.
+Readiness and startup occur before measured intervals.
 
 ## Shutdown and cancellation
 
@@ -103,12 +103,6 @@ completion does not imply a performance pass. Manifest v1 bundles retain
 their original status as explicitly ambiguous legacy evidence; new writes use
 manifest v2's separate execution and comparison fields.
 
-## Remaining non-goals
-
-Production workload drivers, metric normalization, the comparison engine, the
-CLI, and security semantics all shipped after this module was written and are
-documented elsewhere in `docs/`; this document owns the process lifecycle only.
-Still out of scope: remote execution — the `ExecutionProvider` category has an
-accessor but no registered driver, deferred per ADR-0005 — and any database.
-The session stays usable independently as the phase orchestrator's process
-owner.
+This guide covers managed process lifecycle. Workload orchestration,
+normalization, and comparison are described in their respective guides.
+Eggbench currently runs locally and does not provide remote execution.

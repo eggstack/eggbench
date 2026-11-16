@@ -1,18 +1,8 @@
-//! Gregg trial-synchronized telemetry collector.
+//! Polls Gregg's v2 loopback API through Eggfetch and aggregates trial metrics.
 //!
-//! Polls a loopback Gregg daemon's v2 endpoints with Eggfetch transport
-//! (no second HTTP client), validates every payload with `gregg-protocol`,
-//! and aggregates bounded trial-level host metrics. Gregg owns telemetry
-//! collection and wire semantics; Eggbench owns scheduling, aggregation,
-//! and evidence.
-//!
-//! Window discipline: one snapshot immediately after start, cadenced
-//! polling at `clamp(daemon_sample_interval_ms, 250ms, 5s)`, one final
-//! snapshot at stop when the budget allows. Identical
-//! `observed_at_unix_ms` snapshots are deduplicated. At most
-//! [`MAX_SAMPLES_PER_TRIAL`] snapshots and [`MAX_NDJSON_BYTES`] raw bytes
-//! are retained per trial; the aggregation set always equals the retained
-//! set, and overflow is reported as dropped counts plus a warning.
+//! Polling follows the daemon cadence (clamped to 250 ms–5 s). Duplicate
+//! timestamps are removed, and aggregation uses only the bounded retained
+//! samples; overflow is reported.
 
 use super::endpoint::{GreggEndpoint, HEALTH_PATH, STATUS_PATH, validate_endpoint};
 use super::{GREGG_PROTOCOL_VERSION, GREGG_SOURCE};
@@ -124,9 +114,8 @@ struct Sample {
 impl GreggCollector {
     /// Build a collector for a validated-loopback endpoint and requested metrics.
     ///
-    /// Unknown metric names fail closed: only the eight M001b `host_*`
-    /// names are collected; anything else is a plan/config error, never a
-    /// silent omission.
+    /// Only the supported `host_*` names are collected; unknown names are a
+    /// configuration error, never a silent omission.
     ///
     /// # Errors
     /// Returns a human-readable reason for endpoint-policy violations or
@@ -185,7 +174,7 @@ fn metric_name_kind(name: &str) -> Option<HostMetricKind> {
     }
 }
 
-/// All eight M001b host metric names, for descriptor capabilities.
+/// Supported host metric names, for descriptor capabilities.
 #[must_use]
 pub fn host_metric_names() -> Vec<String> {
     vec![

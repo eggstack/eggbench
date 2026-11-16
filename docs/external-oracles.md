@@ -1,6 +1,6 @@
-# External measurement oracles (M002)
+# External measurement oracles
 
-Independent load/capacity drivers on the M001 external-command substrate:
+Independent load and capacity drivers include:
 `oha` and `h2load` HTTP workloads plus the `iperf3` TCP throughput driver.
 The tools own load generation and their machine-output semantics; Eggbench
 owns binary resolution, version policy, argv construction from the plan
@@ -9,15 +9,15 @@ workload, bounded execution, raw retention, metric mapping, and evidence.
 ## Driver selection
 
 `doctor` and `run` accept `--workload-driver <name>` to pin the workload
-driver explicitly. Any registered `Workload` driver may be named — `oha`,
-`h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and the
+driver explicitly. Any registered `Workload` driver may be named, including
+`oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and the
 feature-gated `eggfetch-http`; the flag checks the name's syntax only, and an
 unrecognised but well-formed name fails resolution with `missing_driver`.
 Without the flag, resolution uses the unique marked default (`eggfetch-http`
 when the `eggstack-http` feature is compiled in); without a unique default the
 resolution fails explicitly with `ambiguous_selection` listing the
 candidates. Explicit selection flows through the existing
-`ResolutionOptions::selections` seam — no plan schema change.
+`ResolutionOptions::selections` seam without changing the plan schema.
 
 External-process drivers additionally pin their resolved canonical binary
 path into resolution (`executable_paths`), resolve the binary
@@ -25,8 +25,8 @@ synchronously in the executor factory, and probe `--version` in `run`
 preflight. Missing binaries fail with `missing_executable_path` and
 unsupported versions with `external_tool`, both exit code 3, before any
 managed startup. `doctor` reports per-driver `binary_present` from
-filesystem resolution only — it never spawns a tool (probed versions stay
-in `run` preflight and trial evidence).
+filesystem resolution only. It never spawns a tool; probed versions stay
+in `run` preflight and trial evidence.
 
 ## oha (`oha` driver, parser `oha-json/v1`, requires oha ≥ 1.0.0)
 
@@ -81,7 +81,7 @@ probed version is the nghttp2 release from `h2load nghttp2/<release>`
 | OpenLoop | rejected (no rate limiter; capability-gated) |
 
 Cleartext targets add `--h1`; `https` targets use the default (HTTP/2).
-Only the capability-advertised subset is built — no timing scripts,
+Only the capability-advertised subset is built. There are no timing scripts,
 multi-URI, header, or H3/QUIC options.
 
 Normalized metrics: `throughput` (rps ← `req/s` mean), `error_rate`
@@ -89,14 +89,14 @@ Normalized metrics: `throughput` (rps ← `req/s` mean), `error_rate`
 (ms ← `time for request` min/mean). Nonzero failed/errored/timeout counts
 become `h2load:<label>` error counts; status buckets are retained as
 `h2load-status.json`; raw stdout as `stdout.raw`. Like oha, h2load exits 0
-with every request failed — the counts, not the status, carry the failure.
+with every request failed; the counts, not the status, carry the failure.
 
 ## iperf3 (`iperf3` driver, parser `iperf3-json/v1`, requires iperf3 ≥ 3.1)
 
 Runs `iperf3 -c <host> -p <port> -t <secs> -J [-P <streams>]` against an
 explicit server host. Host/port come from the target's `http_url` binding
 authority (scheme/path ignored and recorded as such; default port 5201).
-Eggbench never manages an iperf3 server in M002.
+Eggbench does not manage an iperf3 server.
 
 Only duration-bound closed-loop workloads map (`-t` is ceiling'd whole
 seconds, `-P` from concurrency). Request counts have no byte-stream

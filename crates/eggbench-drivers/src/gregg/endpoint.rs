@@ -1,7 +1,7 @@
 //! Gregg loopback endpoint policy.
 //!
-//! Gregg serves unauthenticated telemetry on a private network. M001b
-//! accepts loopback HTTP endpoints only: `127.0.0.0/8`, `::1`, or
+//! Gregg serves unauthenticated telemetry. Only loopback HTTP endpoints are
+//! accepted: `127.0.0.0/8`, `::1`, or
 //! `localhost` when deterministic resolution stays loopback. Public
 //! addresses, private-LAN addresses, HTTPS, embedded credentials, and
 //! query/fragment endpoint forms are rejected.
@@ -52,7 +52,7 @@ impl GreggEndpoint {
 /// values, `endpoint_not_loopback` for non-loopback hosts.
 ///
 /// # Errors
-/// Returns the rejection reason when the endpoint violates M001b policy.
+/// Returns the rejection reason when the endpoint violates loopback policy.
 pub fn validate_endpoint(raw: &str) -> Result<GreggEndpoint, &'static str> {
     let rest = raw.strip_prefix("http://").ok_or("endpoint_invalid")?;
     if raw.starts_with("https://") || rest.contains('@') {

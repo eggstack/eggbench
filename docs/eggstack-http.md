@@ -15,7 +15,7 @@ Eggfetch owns outbound HTTP semantics, EggServe owns inbound HTTP/runtime semant
 
 ## Feature boundary
 
-`eggstack-http` contains the M001 origin/workload path:
+`eggstack-http` provides the native HTTP origin and workload:
 
 ```text
 eggfetch-core/standard-http1

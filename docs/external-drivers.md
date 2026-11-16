@@ -10,17 +10,15 @@ already on the host or provisioned out of band by a qualification harness
 (`scripts/qualification/provision-external-oracles.sh`), which is test
 infrastructure rather than part of this contract.
 
-## Catalog ownership
+## Available drivers
 
-Production driver inventory lives in `eggbench-drivers::DriverCatalog`. The
-catalog always registers the external-process drivers (`oha`, `h2load`,
-`iperf3`, `eggreplay-semantic`, `eggprobe`, `eggsec-waf`, `eggsec-load`); native drivers join per feature.
-`doctor` truthfully reports the inventory (including per-driver
-`binary_present` without spawning tools) and production `run` fails before
-startup with
-`missing_driver`/`unsupported_workload`/`ambiguous_selection`/`missing_executable_path`
-when no driver resolves. The CLI no longer owns the
-authoritative registry. The qualification fake stays test-only.
+External-process drivers include `oha`, `h2load`, `iperf3`,
+`eggreplay-semantic`, `eggprobe`, `eggsec-waf`, and `eggsec-load`. Native
+drivers are added by build features. `doctor` reports available drivers and
+whether external tool binaries are present without running them. `run` checks
+required external binaries and supported versions before starting managed
+services. See [driver capabilities](driver-capabilities.md) for workload and
+service compatibility.
 
 When a plan requests Eggprobe diagnostics, `doctor` additionally performs
 the schema-0.3 compatibility handshake against the resolved `eggprobe`
@@ -73,9 +71,3 @@ client/server dependency.
   `command-metadata.json`) before any semantic normalization. Parsers are
   versioned, fixture-testable, and independent of spawning; a parser failure
   never mutates the invocation into a different load/protocol semantic.
-
-## Tests
-
-Deterministic fixture executable (`eggbench_fixture` binary, test-only)
-covers version text/bytes/exit/sleep/malformed/child-spawn behaviors so
-Windows qualifies the same argv-only contract without shell scripts.

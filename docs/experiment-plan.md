@@ -6,7 +6,7 @@ Two TOML constraints are worth knowing before hand-writing one, because both
 surface as parse errors rather than as validation errors:
 
 - **TOML has no `null`.** A field that is optional *or* nullable must be
-  omitted rather than set to `null` — for example `readiness`,
+  omitted rather than set to `null`. For example, `readiness`,
   `workload.duration_ms`, `shutdown.method`, and `working_directory`. Writing
   `readiness = null` fails with `invalid float, expected nan`.
 - **Top-level arrays of tables must precede every table header.** A bare
@@ -22,7 +22,7 @@ The repository's worked examples are all JSON, so the JSON form in
 - **v1** describes ordinary workloads and service topology. It remains supported unchanged.
 - **v2** adds the optional predeclared `paired` baseline/candidate design. It remains supported unchanged.
 - **v3** adds the optional first-class `network_path`. A v3 plan may omit it. v1 and v2 plans must omit it; a network path in either legacy schema fails validation rather than being reinterpreted as Direct.
-- **v4** adds the `semantic_replay` workload (`target` plus relative workspace `fixture`). v1-v3 plans must omit it; a replay intent in a legacy schema fails validation. v4 plans must omit `network_path`; replay uses `--route direct` explicitly and never composes with the M002 path. Replay remains accepted on v5, v6, v8, v9, and v10.
+- **v4** adds the `semantic_replay` workload (`target` plus relative workspace `fixture`). v1-v3 plans must omit it; a replay intent in a legacy schema fails validation. v4 plans must omit `network_path`; replay uses a direct route and never composes with a network path. Replay remains accepted on v5, v6, v8, v9, and v10.
 - **v5** adds the optional `diagnostics` array of pre/post workload diagnostic requests. v1-v4 plans must omit the field entirely (an explicit field, even empty, fails validation). v5 keeps the v4 replay workload and rejects `network_path` whenever diagnostics are requested; diagnostics bypass the benchmark path by design. `diagnostics` remain accepted on v6, v8, v9, and v10.
 - **v6** adds the optional `security_checks` contract. It retains the v4 replay workload and v5 diagnostics.
 - **v7** adds the optional per-service `http_url` binding for runtime-published origins. v7 is a narrow dead end, not a rung on the ladder: among the v4+ versions it is the only one that carries **none** of `semantic_replay`, `diagnostics`, `security_checks`, or `http_corpus_checks` (v1-v3 predate all four), and it cannot take `network_path` either, which is v3-only. A v7 plan that needs any of those must use v8 or later instead.
@@ -127,6 +127,6 @@ A v5 plan may request bounded one-shot network diagnostics that run outside ever
   "required": true, "timeout_ms": 5000 }
 ```
 
-At most 32 requests with at most 16 probes each; IDs are unique and artifact-path safe; only the `eggprobe` source and the `dns`/`tcp`/`tls`/`http` families are supported in M003b, and duplicate probes are rejected. Each timeout is nonzero and capped at ten minutes. Targets must name a declared service or the external subject target. Diagnostics never compose with `network_path` (`diagnostic_path_incompatible`): generated Eggprobe plans always use route Direct, so direct diagnostics must not be presented as evidence about a routed path.
+At most 32 requests with at most 16 probes each are allowed. IDs are unique and artifact-path safe. The supported source is `eggprobe`, with the `dns`, `tcp`, `tls`, and `http` probe families; duplicate probes are rejected. Each timeout is nonzero and capped at ten minutes. Targets must name a declared service or the external subject target. Diagnostics never compose with `network_path` (`diagnostic_path_incompatible`): generated Eggprobe plans always use a direct route, so direct diagnostics must not be presented as evidence about a routed path.
 
 A required pre diagnostic that reports a negative outcome (or fails operationally) invalidates the run before any warmup begins; an optional one records evidence and continues. A required post negative after an otherwise completed workload invalidates the run; it never masks an earlier workload/cancellation failure. Cancellation skips post diagnostics (`skipped_due_to_cancellation`) and teardown always runs. Probe timings are diagnostic evidence only: they never enter `TrialMetrics`, satisfy metrics, or gate acceptance. See the [schema-v5 example](../examples/eggstack-diagnostics.json).

@@ -1,24 +1,7 @@
-//! Normalized per-trial metric vocabulary and evidence contract (M001).
+//! Versioned metric vocabulary and deterministic normalization for trial evidence.
 //!
-//! This module owns the versioned metric vocabulary, the normalized
-//! [`TrialMetrics`] artifact schema, and the pure normalization algorithm that
-//! turns driver-supplied raw observations into deterministic trial evidence.
-//!
-//! Design notes:
-//!
-//! - One measured trial is one statistical observation unit. Request counts
-//!   inside a trial never increase the comparison sample count.
-//! - A measured zero is distinct from [`MissingReason`], which is distinct
-//!   from [`InvalidReason`]. Missing data is never encoded as `0`, `NaN`, or
-//!   record absence.
-//! - Units, directionality, and gate intent come from the predeclared resolved
-//!   plan. Driver output cannot change them and no implicit unit conversion
-//!   occurs in v1.
-//! - Normalization runs after the measured workload interval ends. Warmup
-//!   observations must never enter this path.
-//! - This module performs no comparison, emits no verdict, and parses no
-//!   protocol-specific output. Drivers own parsing; this module owns
-//!   validation and normalization.
+//! Normalization preserves observed, missing, and invalid states. Drivers
+//! parse protocol output; comparison is handled separately.
 
 use crate::{
     ArtifactPath, BundleError, MetricDirection, MetricIntent, MetricRequest, Name, SchemaVersion,
@@ -57,8 +40,7 @@ pub const MAX_HISTOGRAM_FORMAT_LEN: usize = 64;
 
 /// What a normalized scalar means inside one trial.
 ///
-/// This states the meaning of the scalar; M001 never recomputes trial
-/// scalars from millions of raw requests.
+/// Declares the scalar meaning; core does not recompute it from raw requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Aggregation {
@@ -184,7 +166,7 @@ pub struct NormalizedObservation {
     pub provenance: MetricProvenance,
 }
 
-/// Reference to retained raw distribution evidence (no parsing in M001).
+/// Reference to retained raw distribution evidence; core does not parse it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HistogramReference {

@@ -1,4 +1,4 @@
-//! Eggstack M002 listener-free network path.
+//! Eggstack listener-free network path.
 //!
 //! Eggress + Eggchaos adapter module behind the `eggstack-path` cargo
 //! feature. Produces:
@@ -29,9 +29,9 @@ pub use route::{build_route_chain, parse_route_chain, redacted_chain_text};
 use eggbench_core::{Capability, DriverCategory, DriverDescriptor, Name};
 use std::collections::BTreeSet;
 
-/// Canonical M002 route driver name exposed to plan and resolved plans.
+/// Canonical route driver name exposed to plans and resolved plans.
 pub const ROUTE_DRIVER_NAME: &str = "eggress-route";
-/// Canonical M002 stream-fault driver name exposed to plan and resolved plans.
+/// Canonical stream-fault driver name exposed to plans and resolved plans.
 pub const FAULT_DRIVER_NAME: &str = "eggchaos-stream";
 /// Adapter implementation version for both route and fault descriptors.
 pub const EGGSTACK_PATH_ADAPTER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -49,7 +49,7 @@ pub const ROUTE_FAILURE_OTHER: &str = "transport_other";
 pub const MAX_ROUTE_FAILURE_KIND_BUCKETS: usize = 16;
 /// Maximum bytes retained for configured chain text in evidence.
 pub const MAX_RETAINED_CHAIN_BYTES: usize = 1024;
-/// Connection-attribute dial timeout (defaulting to the M001a 30 s).
+/// Default connection-attribute dial timeout (30 s).
 pub const DEFAULT_DIAL_TIMEOUT_MS: u64 = 30_000;
 
 fn route_capability_set() -> BTreeSet<Capability> {
@@ -100,7 +100,7 @@ pub fn fault_descriptor() -> DriverDescriptor {
     }
 }
 
-/// Both M002 path descriptors in stable name order.
+/// Both path descriptors in stable name order.
 #[must_use]
 pub fn path_descriptors() -> Vec<DriverDescriptor> {
     let mut descriptors = vec![route_descriptor(), fault_descriptor()];

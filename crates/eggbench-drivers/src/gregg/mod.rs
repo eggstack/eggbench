@@ -1,21 +1,9 @@
-//! Gregg host telemetry behind the `gregg` feature.
+//! Optional Gregg host telemetry behind the `gregg` feature.
 //!
-//! The second half of Eggstack M001: an optional trial-synchronized
-//! telemetry source backed by a loopback Gregg daemon. Gregg owns
-//! collection and v2 wire semantics; Eggbench owns scheduling,
-//! aggregation, and evidence. Transport reuses Eggfetch (no second HTTP
-//! client); payloads validate through `gregg-protocol`.
-//!
-//! Invariants:
-//!
-//! - Gregg remains optional; required failures prevent measurement,
-//!   optional failures disable the collector with explicit warnings.
-//! - Only loopback HTTP endpoints are accepted (see `endpoint`).
-//! - Telemetry windows stay outside measured workload timing (enforced by
-//!   the runner seam, proven by timing tests).
-//! - Raw `gregg.ndjson` series are retained per measured trial, bounded.
-//! - Host metrics use unambiguous `host_*` names with explicit aggregation.
-//! - Minimal/default builds never link this module.
+//! The collector uses Gregg's v2 loopback API and Eggfetch transport. Required
+//! failures fail closed; optional failures disable collection with a
+//! warning. Samples and raw evidence are bounded and stay outside workload
+//! timing. Minimal/default builds do not link this module.
 
 mod collect;
 mod endpoint;

@@ -1,12 +1,4 @@
-//! Thin CLI binary: parses args, dispatches commands, writes JSON to stdout
-//! when requested, and human progress/diagnostics to stderr.
-//!
-//! Production `eggbench` resolves against the production catalog: the
-//! external-process oracles always register while native adapters join per
-//! feature. Without a unique default workload driver an explicit
-//! `--workload-driver` selection is required; unresolvable runs fail before
-//! managed startup with a stable capability category. Exit status exactly
-//! matches the documented CLI result class in both JSON and human modes.
+//! Binary entry point: parse arguments, dispatch commands, and render results.
 
 use clap::{Parser, Subcommand};
 use eggbench_cli::{

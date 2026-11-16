@@ -224,7 +224,7 @@ impl EggsecWafTestType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Subject {
-    /// Process managed by a future runner.
+    /// Process started and stopped by the local runner.
     ManagedCommand {
         /// Program and arguments.
         argv: Vec<String>,
@@ -321,7 +321,7 @@ pub enum ServiceKind {
         /// Program and arguments.
         argv: Vec<String>,
     },
-    /// Named service type interpreted by a future adapter.
+    /// Named service type resolved by a registered adapter.
     Named {
         /// Stable type label.
         service_type: Name,

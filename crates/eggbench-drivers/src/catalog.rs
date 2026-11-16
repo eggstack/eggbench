@@ -1,40 +1,19 @@
-//! Production driver-catalog ownership.
+//! Authoritative production driver inventory from feature-gated adapters.
 //!
-//! The catalog is the authoritative production driver inventory.
-//!
-//! Seven external-process drivers register unconditionally: the `oha`,
-//! `h2load`, and `iperf3` traffic generators, the `EggReplay` semantic
-//! workload (`eggreplay-semantic`), the `Eggprobe` pre/post diagnostic
-//! driver (`eggprobe`), and the `Eggsec` strict-scope WAF correctness
-//! (`eggsec-waf`) and WAF-load (`eggsec-load`) drivers. They are
-//! unconditional because a missing binary is a resolution/preflight
-//! failure, not a link-time one.
-//!
-//! Feature-gated registrations: `eggstack-http` adds the `EggServe`
-//! controlled origin (`eggserve-origin`), the `Eggfetch` native HTTP
-//! workload (`eggfetch-http`), and the fixed HTTP corpus correctness driver
-//! (`eggbench-http-corpus`); `eggstack-path` implies `eggstack-http` and adds
-//! the listener-free `eggress-route` and `eggchaos-stream` path drivers;
-//! `gregg` and `prometheus-http` each add one host-telemetry descriptor.
-//! Without any feature only the seven external descriptors remain.
-//! Qualification fakes remain test/qualification-only and are never linked
-//! through this catalog.
+//! External CLI drivers remain registered without local binaries; native
+//! adapters are gated by their Cargo features. Qualification fakes are not
+//! part of this catalog.
 
 use eggbench_core::{DriverCategory, DriverDescriptor, Name};
 
-/// Authoritative production driver inventory.
-///
-/// Lookup by canonical driver name; category-specific accessors return the
-/// matching descriptor or `None`. The type already exposes service and
-/// telemetry accessors so later Eggstack adapters do not require a second
-/// registry.
+/// Production descriptors with lookup by canonical name and category.
 #[derive(Debug, Default, Clone)]
 pub struct DriverCatalog {
     descriptors: Vec<DriverDescriptor>,
 }
 
 impl DriverCatalog {
-    /// Empty catalog: the M001 production state.
+    /// Empty catalog, primarily for tests and custom configurations.
     #[must_use]
     pub fn empty() -> Self {
         Self {
@@ -42,16 +21,10 @@ impl DriverCatalog {
         }
     }
 
-    /// Production catalog consumed by the CLI.
+    /// Build the production catalog for enabled features.
     ///
-    /// With `eggstack-http`, registers the `EggServe` origin service adapter
-    /// and the `Eggfetch` workload driver. With `gregg`, registers the Gregg
-    /// telemetry driver. The external-process workload drivers (`oha`,
-    /// `h2load`, `iperf3`) register unconditionally: a missing binary is a
-    /// runtime capability error, never a build configuration. Without
-    /// features and without installed tools the catalog still lists the
-    /// external drivers and production `run` fails closed before managed
-    /// startup.
+    /// External-process drivers stay registered when their binaries are
+    /// absent; resolution or preflight reports the missing capability.
     #[must_use]
     pub fn production() -> Self {
         let mut descriptors = Vec::new();

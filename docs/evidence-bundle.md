@@ -44,7 +44,7 @@ The existing per-measured-invocation `eggfetch-method.json` remains in place. Wh
 
 The method artifact distinguishes request count from physical connection count. One Eggfetch client is retained for the whole run, so warmups and measured trials may reuse pooled connections; the evidence does not imply one faulted connection per request. Network-path diagnostics are evidence, not new normalized metric semantics.
 
-Measured trials stage `trials/NNN/metrics.json` (`ArtifactRole::TrialArtifact`, `Public`): normalized per-trial metric evidence owned by Measurement M001. Each file carries the metric schema and vocabulary versions, one `observed`/`missing`/`invalid` record per requested metric in deterministic name order, raw histogram references, an optional error-category distribution, and bounded warnings. Warmups never receive this artifact. Pre-M001 bundles simply have no `metrics.json`; `BundleReader::trial_metrics(trial_id)` returns `None` for them. See [`metrics.md`](metrics.md).
+Measured trials stage `trials/NNN/metrics.json` (`ArtifactRole::TrialArtifact`, `Public`): normalized per-trial metric evidence. Each file carries the metric schema and vocabulary versions, one `observed`/`missing`/`invalid` record per requested metric in deterministic name order, raw histogram references, an optional error-category distribution, and bounded warnings. Warmups never receive this artifact. Older bundles may have no `metrics.json`; `BundleReader::trial_metrics(trial_id)` returns `None` for them. See [`metrics.md`](metrics.md).
 
 Environment data has a separate schema version (`EnvironmentFingerprint` v1). Each selected, non-secret field is classified as comparison-critical, warning-only, or informational. The schema does not fingerprint the host automatically.
 
@@ -52,11 +52,11 @@ Environment data has a separate schema version (`EnvironmentFingerprint` v1). Ea
 
 `lifecycle/runtime-topology.json` (schema v2, `Redacted`) records one entry per launch-order service identity plus externally managed services: ownership kind (`process`/`adapter`/`external`), the named service type for adapter-owned services, and non-secret startup-established runtime bindings such as the origin's `http_url`, `bound_addr`, and `bound_port`. It stages from retained session state after teardown, so topology evidence survives service shutdown. Network paths remain separate run evidence; they are never inserted as fake service entries.
 
-## Telemetry artifacts (Eggstack M001b)
+## Telemetry artifacts
 
 Per measured trial, `trials/NNN/telemetry/` holds collector artifacts in `{collector:02}-{artifact:02}-{name}` slots (for example `trials/001/telemetry/00-00-gregg.ndjson`): the raw series plus a provenance document, staged with the same name-safety rules as workload artifacts and collision-checked against them. Telemetry observations join workload observations in the same `metrics.json` normalization with per-observation producer attribution. See [Gregg telemetry](gregg-telemetry.md).
 
-## Diagnostic evidence (Eggstack M003b)
+## Diagnostic evidence
 
 Pre/post workload diagnostics stage outside every measured interval. Each execution retains its bounded raw `ProbeReport` JSON at `diagnostics/<pre|post>/<id>.json` (`Redacted`), and the run-level `diagnostics.json` index (schema v1) records one entry per execution in plan order: request ID, phase, required flag, target, probe kinds, timeout, disposition, report status, artifact path/digest, producer version/executable SHA, machine schema, and warnings. Probe timings inside the raw reports are diagnostic evidence only and never enter `trials/NNN/metrics.json`.
 
@@ -74,8 +74,21 @@ The ordinary API has no mutation operation for a finalized bundle. Verification 
 
 A feature-enabled `eggbench inspect` verifies and decodes `network-path.json`, reporting its schema, route/fault provenance, ordering/layer markers, fault count, and bounded dial counters. A feature-disabled binary can still verify the bundle and report that a path artifact is present, but detailed path decoding is unavailable. Inspection never dials a route or mutates a bundle.
 
-Retention, garbage collection, indexing, and database-backed search are outside this milestone. `Sensitivity` is metadata for future policies; raw security payload retention policy is deferred to security integrations.
+`Sensitivity` is descriptive metadata. It does not encrypt files or restrict
+access. Do not include secrets or raw security payloads unless your local
+storage and retention policy allows them. Retention, indexing, and database
+search are outside the bundle format.
 
 ## Offline comparison receipts
 
-`eggbench compare` never mutates either bundle. Unpaired path-free comparison emits a standalone versioned JSON receipt (schema v4, policy `eggbench.trial-bootstrap.v1`); comparisons involving a network path use the path-aware policy `eggbench.trial-bootstrap-network-path.v1`. Both carry bundle identities, the baseline reference, environment policy, typed comparability, seed, per-metric estimates/intervals/thresholds/verdicts, the aggregate verdict, and warnings. Paired comparison emits schema v4 under `eggbench.trial-bootstrap-paired.v1`; schema-v1 through schema-v3 receipts remain readable. The manifest `comparison_verdict` field remains reserved for future run-time comparison performed before finalization. Network-path configuration is included in comparison identity as described in [comparison](comparison.md).
+`eggbench compare` never mutates either bundle. Unpaired path-free comparison
+emits a standalone JSON receipt (schema v4, policy
+`eggbench.trial-bootstrap.v1`); comparisons involving a network path use
+`eggbench.trial-bootstrap-network-path.v1`. Receipts include bundle
+identities, the baseline reference, environment policy, typed comparability,
+seed, per-metric estimates, intervals, thresholds and verdicts, the aggregate
+verdict, and warnings. Paired comparison also uses schema v4, under
+`eggbench.trial-bootstrap-paired.v1`. Receipt schemas v1 through v3 remain
+readable. Run bundles leave `comparison_verdict` unset because comparison is
+performed later and saved to a separate receipt. Network-path configuration is
+part of comparison identity; see [comparison](comparison.md).

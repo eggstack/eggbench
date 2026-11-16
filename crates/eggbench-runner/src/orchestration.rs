@@ -621,7 +621,7 @@ pub struct PhaseEvent {
 /// Completed high-level run result and finalized bundle.
 #[derive(Debug, Clone)]
 pub struct RunOutcome {
-    /// Truthful lifecycle status; comparison is always absent in M002.
+    /// Execution status, independent of the comparison verdict.
     pub execution_status: ExecutionStatus,
     /// Primary redaction-safe failure, if any.
     pub primary_failure: Option<FailureCategory>,
@@ -641,7 +641,7 @@ pub struct RunOutcome {
 /// Preflight, orchestration, or evidence-finalization error.
 #[derive(Debug, Error)]
 pub enum OrchestrationError {
-    /// M002 configuration cannot be executed safely.
+    /// Configuration that cannot be executed safely.
     #[error("orchestration preflight failed: {0}")]
     Preflight(&'static str),
     /// A required telemetry source failed its preflight probe.
@@ -698,7 +698,7 @@ struct RunState {
     writer: BundleWriter,
     /// Run-relative state-machine event stream.
     phases: Vec<PhaseEvent>,
-    /// Truthful lifecycle status; comparison is always absent in M002.
+    /// Execution status, independent of the comparison verdict.
     status: ExecutionStatus,
     /// Primary redaction-safe failure, if any.
     primary_failure: Option<FailureCategory>,
@@ -1460,9 +1460,7 @@ pub async fn execute_run_with_diagnostics<E: WorkloadExecutor + ?Sized>(
     // ===========================================================
 
     // ---- Workload drain ----
-    // Always call drain to preserve existing M002 contract; the workload adapter is the
-    // canonical owner of its cleanup hook and is expected to be idempotent when no
-    // invocation was entered.
+    // Always drain so adapter cleanup runs even if no invocation started.
     {
         let index = begin_phase(&mut state.phases, PhaseKind::Drain, None, None, origin);
         let drain_context = DrainContext {

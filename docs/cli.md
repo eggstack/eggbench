@@ -1,118 +1,102 @@
-# `eggbench` CLI
+# CLI guide
 
-The `eggbench` binary is a thin presentation adapter over `eggbench-core` and `eggbench-runner`. It does not duplicate orchestration: every command either calls core contracts (`parse` / `validate` / `resolve` / `inspect`) or delegates to the runner's bundle-preparation and execution seams.
+The `eggbench` command validates experiment plans, checks local driver
+capabilities, runs experiments, inspects evidence, and compares completed runs.
+It also has a separate command family for security qualification profiles.
 
-## Commands and existing flags
+## Commands
 
 ```text
-eggbench validate <plan> [--input-format toml|json]
-eggbench doctor   <plan> [--input-format toml|json] [--workload-driver <name>]
-eggbench run      <plan> <bundle> [--input-format toml|json] [--workload-driver <name>]
-eggbench inspect  <bundle> [--manifest-json]
-eggbench compare <baseline.eggb> <candidate.eggb> [--output <comparison.json>] [--seed <u64>]
-eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb> [--output <comparison.json>] [--seed <u64>]
-eggbench compare --absolute-only <candidate.eggb> [--output <comparison.json>] [--seed <u64>]
-eggbench compare --paired <bundle.eggb> [--output <comparison.json>] [--seed <u64>]
+eggbench validate <plan> [--input-format json|toml]
+eggbench doctor <plan> [--input-format json|toml] [--workload-driver <name>]
+eggbench run <plan> <new-bundle.eggb> [--input-format json|toml] [--workload-driver <name>]
+eggbench inspect <bundle.eggb> [--manifest-json]
+
+eggbench compare <baseline.eggb> <candidate.eggb> [--output <receipt.json>] [--seed <u64>]
+eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb> [--output <receipt.json>] [--seed <u64>]
+eggbench compare --absolute-only <candidate.eggb> [--output <receipt.json>] [--seed <u64>]
+eggbench compare --paired <bundle.eggb> [--output <receipt.json>] [--seed <u64>]
 
 eggbench qualify validate <profile>
-eggbench qualify expand   <profile>
-eggbench qualify run      <profile> --output <dir>
-eggbench qualify inspect  <qualification-receipt.json>
+eggbench qualify expand <profile>
+eggbench qualify run <profile> --output <new-directory>
+eggbench qualify inspect <qualification-receipt.json>
 ```
 
-`--json` and `--quiet` are global options. `validate`, `doctor`, and `run` accept a `.toml` or `.json` path, or `-` for stdin; stdin requires `--input-format` because content alone cannot determine the format. `run` requires a new destination ending in `.eggb`, and the destination's **parent directory must already exist** — `run` does not create it. An existing destination or a missing parent fails as a bundle I/O error (exit `5`) before any measurement work starts. `inspect` requires an existing finalized bundle. There is no route, fault, network-path, or plan-seed CLI flag: those values are declared in the plan.
+`--json` and `--quiet` are global options. `validate`, `doctor`, and `run`
+accept JSON or TOML plans. To read from standard input, use `-` and specify
+`--input-format`; the format is not inferred. Network route, fault, and seed
+settings are declared in the plan rather than selected with CLI flags.
 
-`--workload-driver` on `doctor` and `run` pins the workload driver explicitly. Any registered `Workload` driver may be named — `oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and the feature-gated `eggfetch-http`. The flag checks the name's syntax only; an unrecognised but well-formed name is resolved against the catalog and surfaces as `missing_driver`. Without it, the resolver uses a unique marked default or fails with `ambiguous_selection`.
+## Validate, check, and run
 
-## Schema-v3 path behavior
+`validate` parses a plan and checks its schema and semantics. `doctor` also
+resolves driver capabilities and checks required tools and environment facts.
+Neither starts managed services. If diagnostics are requested, `doctor` performs
+the `eggprobe` schema handshake.
 
-`validate` parses and semantically validates schema v3, including route shape, credential policy, fault bounds/IDs, the explicit seed requirement for non-empty faults, and the paired/external-subject restrictions. It does not compile a route, establish a connection, or start load. Core validation is independent of the optional path feature, so a feature-disabled binary can validate a valid path plan; execution remains feature-gated.
+`run` resolves the plan and checks features and external tools before preparing
+the bundle or starting managed workloads. The output must end in `.eggb`, its
+parent directory must exist, and the destination must be new. Preflight and
+path capability failures occur before startup. A run that starts but finishes
+with a non-success execution status is finalized with its evidence and exits
+with code `4`.
 
-`doctor` performs validation, resolution, and environment/driver preflight without starting a managed process or making a route connection. Its `network_path` payload reports whether the `eggstack-path` feature is compiled, whether a path was requested, route mode, selected route/fault driver names and upstream versions, supported capabilities, and explicit M002 exclusions. Its `diagnostics` payload reports whether diagnostics were requested, `eggprobe` binary presence, the schema-handshake outcome, supported/explicitly-unsupported probe families, and the diagnostic-only timing policy. It reports exact adapter/sibling provenance and truthful platform/environment facts. A schema-v3 plan with a path can resolve only when the workload advertises `NetworkPath`, a matching `Route` descriptor with `ProxyRouting` is available, and—when `stream_faults` is present—a matching `Fault` descriptor with `StreamFaultPlan` is available. External oracles do not advertise that custom-dialer capability.
+`--workload-driver` on `doctor` or `run` selects a workload driver by name.
+Registered drivers include `oha`, `h2load`, `iperf3`, `eggreplay-semantic`,
+`eggsec-load`, and, when built with `eggstack-http`, `eggfetch-http`. The option
+selects a driver, but does not install or add its executable to `PATH`.
 
-`run` checks feature availability, resolves the plan, lowers the route/fault configuration, and probes external tools before environment collection, bundle preparation, or managed startup. With `eggstack-path`, the supported execution combination is `eggfetch-http` with the EggServe origin. The route is established first and the Eggchaos wrapper is applied second; a requested proxy failure is returned as a request failure and never falls back to Direct. One Eggfetch client is retained for the whole run, so warmups and measured trials may reuse pooled physical connections.
+For path plans, the build must include `eggstack-path`, which also enables
+`eggstack-http`. Route and fault capability requirements are checked against
+the selected drivers. A requested proxy never falls back to a direct route.
+See [Eggstack HTTP and network paths](eggstack-http.md) for supported path
+combinations and evidence.
 
-Path preflight failures are reported before startup and use capability-preflight exit code `3` where applicable. Stable categories include `unsupported_network_path`, `unsupported_stream_fault_plan`, `missing_route_driver`, `missing_fault_driver`, `unsupported_route`, `invalid_route`, `invalid_fault_plan`, `missing_fault_seed`, `route_credentials_not_supported`, `workload_path_incompatible`, and `paired_network_path_not_supported`. A `Subject::External` or external-oracle workload cannot own this path. No new broad exit-code family is introduced.
+`inspect` verifies a finalized bundle and summarizes it. It is read-only.
+`--manifest-json` emits the normalized manifest inline.
 
-`inspect` verifies the bundle before reading any evidence. A feature-enabled binary decodes and validates the manifest-listed `network-path.json` and reports its schema, route/fault provenance, ordering/layer markers, fault count, and bounded dial counters. A feature-disabled binary still reports whether the artifact is present but marks detailed path evidence unavailable. Inspection is read-only and never establishes a route. `--manifest-json` emits the normalized manifest inline.
+## Compare runs
 
-## Feature isolation and driver inventory
+Comparison is offline and does not modify bundles. Give it a baseline and a
+candidate, an alias file and candidate, one candidate for absolute thresholds,
+or one bundle for paired analysis. `--output` writes a JSON receipt, and
+`--seed` sets the deterministic bootstrap seed. Comparison policies and
+compatibility rules are described in [Comparison](comparison.md).
 
-The production catalog is owned by `eggbench-drivers`. The external-process drivers (`oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggprobe`, `eggsec-waf`, `eggsec-load`) always register. `eggstack-http` adds `eggserve-origin`, `eggfetch-http` (the unique native workload default), and the `eggbench-http-corpus` correctness driver. `eggstack-path` implies `eggstack-http` and adds `eggress-route` and `eggchaos-stream`; default and `eggstack-http`-only builds do not link Eggress or Eggchaos. `gregg` is orthogonal and uses its own feature.
+## Machine-readable output
 
-`eggstack-path` changes the driver inventory, capability resolution, runtime path execution, and retained evidence. It does not add a public route/fault selection flag: the CLI consumes the catalog and the plan. Missing tool binaries, unsupported tool versions, missing native adapters, and invalid path capabilities fail before managed startup. With the path feature, `doctor` shows adapter/sibling versions, per-driver `binary_present` for external tools, supported load modes, and path capabilities; it spawns no tool except the `eggprobe` handshake when the plan requests diagnostics. `run` executes the selected native path and retains its evidence.
+For the five plan-chain commands (`validate`, `doctor`, `run`, `inspect`, and
+`compare`), `--json` writes one JSON envelope to stdout. Human progress and
+diagnostics go to stderr. The envelope includes `schema_version`, `command`,
+`ok`, and either a command result or a stable error category and detail. JSON
+mode writes one document; `--quiet` suppresses optional prose without changing
+the result or exit code.
 
-A deterministic `fake-load` adapter exists only through explicit test/qualification injection. It is not a production traffic generator, has no public fake-workload switch, and never appears in the production inventory. See [Eggstack HTTP and network path](eggstack-http.md) and [driver capabilities](driver-capabilities.md).
+`qualify` has its own JSON payloads and does not use this envelope. `--quiet`
+is accepted but does not suppress its output. Its `inspect` argument is the
+receipt file inside the published output directory.
 
-## Machine output and exit codes
-
-Pass `--json` to emit one JSON envelope on stdout. Human progress and diagnostics go to stderr. Envelope schema v1 has this shape:
-
-```json
-{
-  "schema_version": 1,
-  "command": "validate|doctor|run|inspect|compare",
-  "ok": true,
-  "result": { "kind": "command-specific payload" },
-  "error": { "category": "<stable>", "detail": "<human prose>" },
-  "warnings": [{ "category": "...", "detail": "..." }]
-}
-```
-
-`ok` is true when the command succeeded. On failure, `error` carries a stable category and `result` is absent. JSON mode writes exactly one document to stdout; `--quiet` suppresses optional prose but never changes the exit status.
-
-The envelope above applies to the five plan-chain commands. `qualify` bypasses
-it: its JSON is the command's own payload (`{"ok": true, "command":
-"qualify_validate", ...}` for `validate`, the raw expansion for `expand`, the
-raw receipt for `run` and `inspect`), it carries no `schema_version`, and its
-error object uses `message` rather than `detail`. A consumer parsing the
-envelope must branch on the command before reading the error shape. `qualify`
-is documented in the next section.
+## Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Command completed successfully. |
-| `1` | Internal/unclassified CLI failure. |
-| `2` | Parse, schema, or ordinary plan-validation error. |
-| `3` | Capability, doctor, preflight, or network-path unsupported/invalid. |
-| `4` | Run finalized with `Failed`/`Cancelled`/`Invalid` execution status. |
-| `5` | Evidence/bundle I/O or verification failure. |
-| `6` | Comparison aggregate verdict is `Fail`. |
-| `7` | Comparison aggregate verdict is `Inconclusive`. |
-| `8` | Comparison aggregate verdict is `Invalid`. |
+| `0` | Command succeeded, or comparison verdict is Pass |
+| `1` | Internal or unclassified failure |
+| `2` | Parse, schema, or plan-validation error |
+| `3` | Capability, preflight, or unsupported-path error |
+| `4` | Run finalized with Failed, Cancelled, or Invalid execution status |
+| `5` | Bundle I/O or verification failure |
+| `6` | Comparison or qualification verdict is Fail |
+| `7` | Comparison or qualification verdict is Inconclusive |
+| `8` | Comparison or qualification verdict is Invalid |
 
-A finalized non-success run retains its run result and bundle path alongside `run_non_success` and exits `4`. Network-path preflight failures do not publish a bundle or start a service.
+A comparison or qualification command can therefore complete its work and
+return a nonzero exit code to report the measured verdict. See [security
+qualification](security-qualification.md) for profile workflows and receipts.
 
-## Qualification commands
+## Platform support
 
-`qualify` operates on a security-qualification profile rather than an
-experiment plan and publishes a qualification receipt rather than an `.eggb`
-bundle, so it is structurally separate from the five commands above: it is
-dispatched in the binary and is absent from the library's `Command` enum. It
-accepts no `--input-format` and does not read a plan.
-
-- `qualify validate <profile>` expands and validates the profile and its
-  referenced corpus, reporting the profile id, scenario count, and per-scenario
-  workload driver.
-- `qualify expand <profile>` emits the deterministic expansion the run stages.
-- `qualify run <profile> --output <dir>` executes scenarios serially and
-  publishes `<dir>` by atomic rename, with `qualification-receipt.json` written
-  last. `--output` is required and an existing destination is rejected. The
-  exit status is the aggregate verdict: `0` Pass, `6` Fail, `7` Inconclusive,
-  `8` Invalid — the same verdict-to-code mapping as `compare`, because a
-  qualification aggregate is built from comparison verdicts.
-- `qualify inspect <qualification-receipt.json>` re-derives every typed verdict
-  from on-disk evidence before displaying the receipt. The argument is the
-  receipt **file** inside the published directory, not the directory itself.
-
-Because the exit code is the verdict, a `qualify run` that correctly
-discovers a failing scenario exits `6` rather than `0`; that is the intended
-result, not a CLI failure. `--quiet` is accepted globally but has no effect on
-`qualify` output. See [security qualification](security-qualification.md) and
-[synvoid qualification](synvoid-qualification.md).
-
-## Cancellation and boundaries
-
-One SIGINT/Ctrl-C signal requests cancellation through the existing runner token. In-flight route/fault work follows the normal drain and teardown path; the path adds no listener, process, or force-kill path.
-
-Remote execution, schedulers, credential machinery for route authentication, and automatic repository discovery remain outside this milestone. Windows managed `run` remains explicitly unsupported; `validate`, `doctor`, and `inspect` continue to report truthful environment facts. See [comparison](comparison.md) and [evidence bundles](evidence-bundle.md) for receipt and artifact behavior.
+Managed `run` is currently unsupported on Windows. `validate`, `doctor`, and
+`inspect` remain available and report the capabilities of the current build
+and environment.

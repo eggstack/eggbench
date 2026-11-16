@@ -1,30 +1,8 @@
-//! `eggbench run <plan> <bundle>` command.
+//! Runs a validated plan through resolution, preflight, managed execution, and finalization.
 //!
-//! The command pipeline is:
-//! `parse → validate → resolve → doctor/preflight → collect environment +
-//! subject snapshot → LocalSession::prepare → prepare BundleWriter →
-//! WorkloadExecutor/reset hooks → execute_run_with_diagnostics →
-//! machine/human result`.
-//!
-//! `LocalSession::prepare` precedes `prepare_bundle` because preparing the
-//! session starts no process; it resolves the spawn plan and registers
-//! adapters only. Bundling precedes execution so a staging failure cannot
-//! leave a managed process running.
-//!
-//! The CLI calls `execute_run_with_diagnostics`, not `execute_run`: the
-//! former is the entry point that also runs the diagnostic and correctness
-//! seams. `execute_run` remains available for callers that need neither.
-//!
-//! Production `eggbench` resolves against the production catalog: without
-//! installed external tools or the `eggstack-http` feature, resolution or
-//! executor construction fails before managed startup with a stable
-//! `missing_driver`/`unsupported_workload` category; with the feature the
-//! registered `EggServe`/`Eggfetch` adapters execute a real loopback run.
-//! External-process drivers additionally probe their tool version in
-//! preflight. Deterministic qualification uses
-//! [`run_with_qualification`] with an explicitly injected `FakeWorkload`;
-//! that path is never used by `main.rs` and is not reachable through any
-//! public production flag.
+//! Session preparation resolves services without starting them; the bundle is
+//! staged before process startup. Production uses registered drivers, while
+//! qualification injects a fake workload through an explicit seam.
 
 use crate::envelope::{CliOutput, ExitCode, PathBufPayload, PresentedCommandResult};
 use crate::error::{CliError, CliFailure};
@@ -174,9 +152,8 @@ pub async fn run(
         }
     }
 
-    // M003a semantic-replay preflight: trusted binary resolution, version
-    // probe, workspace-confined fixture identity, and `eggreplay validate`
-    // machine-contract verification before any managed startup.
+    // Semantic-replay preflight resolves and version-checks the binary, confines
+    // the fixture to the workspace, and verifies its machine contract before startup.
     if let eggbench_core::Workload::SemanticReplay { fixture, .. } = &resolved.workload {
         let workspace_root =
             std::env::current_dir().map_err(|error| CliError::Internal(error.to_string()))?;
@@ -200,9 +177,8 @@ pub async fn run(
         }
     }
 
-    // M003b diagnostic preflight: trusted binary resolution, version
-    // probe, and schema-0.3 compatibility handshake before any managed
-    // startup when the plan requests diagnostics.
+    // Diagnostic preflight resolves the binary and verifies machine-schema
+    // compatibility before managed startup.
     let mut diagnostic_registry = eggbench_runner::DiagnosticRegistry::new();
     if !resolved.diagnostics.is_empty() {
         let preflight_cancel = CancellationToken::new();
@@ -227,11 +203,8 @@ pub async fn run(
         }
     }
 
-    // M004a correctness preflight: trusted binary resolution and version
-    // probe before any managed startup when the plan requests security
-    // checks. The strict guarded preflight needs the generated scope plus
-    // the resolved runtime target, so it runs inside the correctness phase
-    // (still before any Eggsec network traffic).
+    // Correctness preflight resolves and version-checks Eggsec before startup.
+    // Its guarded scope check runs in the correctness phase before network traffic.
     let mut correctness_registry = eggbench_runner::CorrectnessRegistry::new();
     let security_scope_dir = security_scope_dir();
     if !resolved.security_checks.is_empty() {
@@ -458,9 +431,8 @@ async fn run_impl(
         };
     let mut session = session;
     let cancel = CancellationToken::new();
-    // One OS Ctrl-C signal requests cancellation through the existing M002
-    // token; drain/teardown remain authoritative. The listener is aborted and
-    // joined after completion so no detached task remains.
+    // Ctrl-C requests cancellation; drain and teardown remain authoritative.
+    // Join the listener after completion so no task is left running.
     let signal_handle = spawn_signal_forwarder(cancel.clone(), signal);
     let outcome = eggbench_runner::execute_run_with_diagnostics(
         &mut session,
@@ -501,7 +473,7 @@ async fn run_impl(
     Ok(presented)
 }
 
-/// Forward one signal future into the M002 cancellation token.
+/// Forward a signal future into the cancellation token.
 ///
 /// The future resolves when Ctrl-C (or a deterministic test trigger) fires.
 /// Cleanup/drain semantics stay inside `execute_run`; this only requests
@@ -520,11 +492,7 @@ fn spawn_signal_forwarder(
     })
 }
 
-/// Real Ctrl-C listener used by future production drivers.
-///
-/// Currently only qualification harnesses reach `execute_run`, but the seam
-/// is provided so a real adapter reuses the same cancellation wiring without
-/// bypassing M002 cleanup.
+/// Wait for the operating-system Ctrl-C signal.
 #[allow(dead_code)]
 pub async fn wait_for_ctrl_c() {
     let _ = tokio::signal::ctrl_c().await;
@@ -610,10 +578,7 @@ fn resolution_options(
         );
     }
     options.required_capabilities = caps;
-    // M003b: pin the resolved eggprobe binary so diagnostic resolution
-    // records the exact executable before any managed startup. When the
-    // binary is missing the path stays absent and resolution reports
-    // MissingExecutablePath before startup.
+    // Pin Eggprobe's executable path so resolution and execution use the same binary.
     if plan
         .diagnostics
         .as_deref()
@@ -622,10 +587,7 @@ fn resolution_options(
     {
         options.executable_paths.insert(eggprobe_name(), path);
     }
-    // M004a: pin the resolved eggsec binary so correctness resolution
-    // records the exact executable before any managed startup. When the
-    // binary is missing the path stays absent and resolution reports
-    // MissingExecutablePath before startup.
+    // Pin Eggsec's executable path so resolution and execution use the same binary.
     if plan
         .security_checks
         .as_deref()

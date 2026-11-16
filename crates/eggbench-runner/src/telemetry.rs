@@ -1,17 +1,7 @@
-//! Generic trial-synchronized telemetry-collector seam.
+//! Trial-synchronized telemetry collectors observe outside workload timing.
 //!
-//! Workload adapters measure; telemetry collectors observe alongside.
-//! Collectors are object-safe, keyed by source name in a
-//! [`TelemetryRegistry`], and run strictly outside measured workload
-//! timing: `start_trial` precedes the measurement timer, `stop_trial`
-//! follows the captured elapsed time. Core never depends on concrete
-//! telemetry backends: the Gregg collector lives in `eggbench-drivers`
-//! behind the `gregg` feature.
-//!
-//! Telemetry output reuses the shared [`WorkloadArtifact`] artifact type and
-//! feeds the same post-measurement normalization pipeline as workload
-//! metrics. Collectors never write normalized `TrialMetrics` JSON
-//! themselves.
+//! They return raw observations and shared artifacts for post-measurement
+//! normalization; the Gregg backend lives in `eggbench-drivers`.
 
 use crate::orchestration::{DrainContext, WorkloadArtifact};
 use eggbench_core::{MetricWarning, RawMetricObservation, RunId, TrialId};

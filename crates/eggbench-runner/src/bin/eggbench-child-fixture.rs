@@ -153,12 +153,8 @@ async fn main() {
             let _ = child.wait().await;
         }
         "bind-after-sleep" => {
-            // M002 post-closure corrective C001 regression helper: sleep
-            // for the requested delay, then write the file written in
-            // `path` (no port yet because we have not bound), then bind
-            // a loopback listener to the requested port, write the bind
-            // notification to `path` so the test can observe timing, and
-            // accept connections until the parent terminates the process.
+            // Sleep before writing the pre-bind marker, then bind and signal
+            // readiness. Keep accepting until parent termination for cleanup tests.
             // Args: path-file delay-ms port hold-ms
             let path = arg(&args, 2).to_owned();
             let delay_ms = parse_u64(arg(&args, 3));

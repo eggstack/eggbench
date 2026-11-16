@@ -1,4 +1,4 @@
-//! Static Eggchaos stream-fault lowering for M002.
+//! Static Eggchaos stream-fault lowering.
 //!
 //! Each plan-level [`StreamFaultRequest`](eggbench_core::StreamFaultRequest)
 //! lowers into a sibling [`eggchaos_core::FaultSpec`]. Activation probability

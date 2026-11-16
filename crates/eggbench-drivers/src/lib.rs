@@ -1,14 +1,4 @@
-//! Shared production driver catalog and external-command substrate.
-//!
-//! `eggbench-drivers` is the sole production adapter/catalog ownership crate.
-//! The CLI owns presentation, not driver implementation or registration.
-//!
-//! M001 establishes reusable machinery only: trusted executable resolution,
-//! binary identity/version probing, argv-only command execution with bounded
-//! capture and cancellation, raw-output artifact helpers, and a versioned
-//! parser contract. Oracles M002 adds the first tool adapters on that
-//! substrate (`oha`, `h2load`, `iperf3`) with no EggServe/Eggfetch/Gregg
-//! integration semantics.
+//! Production driver catalog, adapters, and external-command support.
 
 #![forbid(unsafe_code)]
 

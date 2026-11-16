@@ -1,4 +1,4 @@
-//! One-shot lifecycle diagnostic seam (Eggstack M003b).
+//! One-shot lifecycle diagnostic seam.
 //!
 //! Diagnostics are bounded one-shot lifecycle checks that run outside every
 //! measured workload interval: pre-workload after readiness/before warmups,

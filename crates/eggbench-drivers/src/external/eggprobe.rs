@@ -1,23 +1,8 @@
 #![allow(clippy::doc_markdown)]
-//! Eggprobe pre/post workload diagnostic adapter (Eggstack M003b).
+//! Eggprobe adapter for pre/post-workload diagnostics using machine schema 0.3.
 //!
-//! Eggprobe owns DNS/TCP/TLS/HTTP diagnostic execution, route-safe machine
-//! report semantics, and probe/assertion finding meaning. Eggbench owns when
-//! diagnostics execute, target binding resolution, required/optional policy,
-//! binary/schema provenance, bounded raw evidence, execution-status effect,
-//! and comparison-critical diagnostic configuration.
-//!
-//! Production seam: trusted external `eggprobe` JSON CLI using the qualified
-//! machine contract (schema `0.3`), never a Rust library dependency:
-//!
-//! ```text
-//! eggprobe --version
-//! eggprobe run -   # schema-0.3 plan JSON on stdin, ProbeReport JSON on stdout
-//! ```
-//!
-//! Probe timings are diagnostic evidence only. They never enter
-//! `TrialMetrics`, never satisfy a `MetricRequest`, and never gate
-//! acceptance. Diagnostics run outside every measured workload interval.
+//! Probe timings remain diagnostic evidence; they never enter `TrialMetrics`
+//! or acceptance gates. Diagnostics run outside measured intervals.
 
 use super::command::{ExternalCommandOutcome, ExternalCommandSpec, run_command};
 use super::common::{TARGET_HTTP_URL_KEY, authority_host_port, check_min_version, driver_env};

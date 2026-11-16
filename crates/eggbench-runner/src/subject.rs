@@ -1,4 +1,4 @@
-//! Subject identity snapshot evidence for M003.
+//! Subject identity snapshot evidence.
 //!
 //! Subject snapshots live alongside the source plan, resolved plan, and
 //! environment artifacts and are required evidence under the

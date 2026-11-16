@@ -1,29 +1,8 @@
-//! Immutable-bundle comparison: baselines, comparability, statistical gates.
+//! Offline comparison of finalized bundles under versioned policies.
 //!
-//! M002 makes two finalized `.eggb` bundles comparable under one
-//! transparent, versioned policy without mutating either bundle.
-//!
-//! Design notes:
-//!
-//! - One measured trial is one statistical observation unit. Request counts,
-//!   histogram buckets, and per-request samples never increase the
-//!   comparison sample count: only normalized trial-level scalars are
-//!   consumed.
-//! - Candidate gates come from the candidate's predeclared resolved plan.
-//!   Baseline gate declarations never override candidate policy.
-//! - Practical threshold and uncertainty remain separate fields in every
-//!   receipt.
-//! - Missing/invalid trial metrics are never imputed; excluded trials are
-//!   listed with stable reasons.
-//! - Policy v1 is immutable once evidence is emitted. Any semantic change to
-//!   resampling, interval extraction, degradation orientation, comparability
-//!   behavior, or aggregate verdict ordering requires a new policy
-//!   identifier.
-//! - No p-value is computed or reported in policy v1. Paired inference is
-//!   not attempted: M002 resampling is unpaired only.
-//! - Comparison is deterministic: the same bundles, policy, and seed yield
-//!   byte-equivalent receipts. No OS randomness participates; no wall-clock
-//!   timestamp enters the canonical receipt.
+//! Each measured trial is one observation. Missing and invalid data are never
+//! imputed; candidate gates determine the verdict, and identical inputs and
+//! seed produce an identical receipt.
 
 use crate::{
     ArtifactPath, ArtifactRecord, ArtifactRole, BundleError, BundleReader, DiagnosticPhase,

@@ -1,6 +1,6 @@
 # Paired experiments
 
-Measurement M003 lets one Eggbench bundle contain a drift-controlled
+One Eggbench bundle can contain a drift-controlled
 paired experiment: two variant arms (baseline + candidate services, both
 live for the whole run) executed under a deterministic alternating
 schedule, compared under paired policy v2.
@@ -22,7 +22,7 @@ diagnostics (see below) so drift stays visible.
 ## Predeclared design (plan schema v2 or later)
 
 Pairing is declared in the experiment plan before execution and never
-inferred afterward. A paired plan uses schema version 2 or later — only
+inferred afterward. A paired plan uses schema version 2 or later. Only
 schema v1 is rejected. Schema v3 is required only when another v3 feature is
 present, and `network_path` is rejected together with paired design on every
 version:
@@ -77,7 +77,7 @@ paired bundle under `eggbench.trial-bootstrap-paired.v1`:
   baseline-arm trials, joined by runner-assigned pair identity;
 - a pair is complete only when both arms measured `completed` and
   `observed` with finite domain-valid values; incomplete pairs are
-  excluded whole with the reason `pair_incomplete` — pairs are never
+  excluded whole with the reason `pair_incomplete`; pairs are never
   split and nothing is imputed;
 - statistical gates require `max(plan.min_trials, 5)` *complete pairs*
   (7+ recommended, diagnostic warning below that);
@@ -96,7 +96,8 @@ paired bundle under `eggbench.trial-bootstrap-paired.v1`:
   the stable reason `paired_evidence_requires_paired_comparison`.
 
 The receipt (schema v4) records both bundle identities (identical),
-comparability (matching by construction — one plan, one testbed), and a
+comparability (matching by construction because both arms use one plan and one
+testbed), and a
 `paired` section: schedule, declared pairs, arm services and subjects,
 per-metric complete/excluded pairs, per-pair oriented effects in execution
 order, drift diagnostics, and effective seeds. Without `--seed`, the base

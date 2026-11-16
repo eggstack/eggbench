@@ -1,10 +1,7 @@
-//! Shared helpers for external-process workload adapters (oracles M002).
+//! Shared helpers for external-process workload adapters.
 //!
-//! Tool ownership recap: oha/h2load/iperf3 own load generation and their
-//! machine-output semantics. Eggbench owns binary resolution, version
-//! policy, argv construction from the plan workload, bounded execution,
-//! raw retention, metric mapping, and evidence. No tool output format is
-//! redefined here; parsers validate the documented shapes and fail closed.
+//! Tools own load generation and output semantics; Eggbench resolves and
+//! runs them, retains bounded output, and maps validated results to evidence.
 
 use super::error::{DriverError, ErrorCategory};
 use eggbench_runner::{FailureCategory, InvocationContext};

@@ -36,8 +36,8 @@ Resolution rules:
 1. alias files are read explicitly by path; no global registry exists;
 2. relative bundle paths resolve relative to the alias file;
 3. the referenced bundle is opened and verified;
-4. the computed manifest digest must equal the alias digest — mismatch fails
-   closed with code 2 and touches nothing;
+4. the computed manifest digest must equal the alias digest. A mismatch fails
+   closed with code 2 and does not modify either bundle;
 5. the receipt records what immutable identity the alias resolved to.
 
 `eggbench compare --alias <baseline.eggbaseline.json> <candidate.eggb>`.
@@ -64,5 +64,5 @@ Absolute candidate-only gates evaluate under every policy.
 
 Comparison emits a standalone versioned JSON receipt (stdout in machine
 mode, or `--output <comparison.json>`), never a mutation of either bundle.
-The existing manifest `comparison_verdict` field stays reserved for future
-run-time comparison before finalization.
+Run bundles leave the manifest `comparison_verdict` unset. Comparisons produce
+standalone receipts and do not modify either bundle.

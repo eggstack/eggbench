@@ -1,4 +1,4 @@
-//! Sibling-neutral security-correctness execution seam (Eggstack M004a).
+//! Sibling-neutral security-correctness execution seam.
 //!
 //! Correctness checks are bounded one-shot lifecycle executions that run
 //! after readiness (and after pre-workload diagnostics, when requested) but

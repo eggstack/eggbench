@@ -1,8 +1,4 @@
-//! External command-driver substrate: trusted resolution, bounded argv
-//! execution, version probing, raw artifacts, and a versioned parser contract.
-//!
-//! Oracles M002 adds the first tool adapters on the substrate: `oha` and
-//! `h2load` HTTP load drivers plus the `iperf3` TCP throughput driver.
+//! External-process drivers and shared resolution, execution, and parsing support.
 
 mod artifact;
 mod command;

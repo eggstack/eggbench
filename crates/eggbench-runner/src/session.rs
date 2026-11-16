@@ -1,14 +1,8 @@
-//! Library session owning managed local processes.
+//! Managed process/session lifecycle.
 //!
-//! A [`LocalSession`] prepares ordered spawn specs from a [`ResolvedPlan`],
-//! starts managed commands in dependency order, applies declared readiness
-//! bounds, drains bounded stdout/stderr continuously, and tears down the
-//! owned process tree in reverse dependency order. External services are
-//! observed but never started or stopped. Process identifiers are diagnostics
-//! only and never durable identity.
-//!
-//! This milestone performs no load generation, trial scheduling, or
-//! measurement. A lifecycle-only run records no trials.
+//! [`LocalSession`] starts services in dependency order and tears them down in
+//! reverse. External services are observed but never started or stopped;
+//! process identifiers are diagnostics, not durable identity.
 
 use crate::error::{CleanupFailure, RunnerError};
 use crate::platform::{PlatformAdapter, PlatformSupport};

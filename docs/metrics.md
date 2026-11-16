@@ -1,9 +1,8 @@
 # Metrics and trial normalization
 
-Measurement M001 defines the first stable normalized per-trial metric
-evidence contract. It establishes what a number means, where it came from,
-and whether it is usable — without comparing candidate versus baseline and
-without emitting a comparison verdict.
+Normalized per-trial metric evidence records what a value means, where it came
+from, and whether it is usable. It does not compare a candidate with a baseline
+or emit a comparison verdict.
 
 ## Vocabulary v1
 
@@ -49,13 +48,13 @@ ambiguity.
 
 Every requested metric normalizes to exactly one of:
 
-- `observed(value)` — a finite scalar. Zero is valid where the domain permits.
-- `missing(reason)` — `source_not_provided` or `trial_not_completed`. The
+- `observed(value)`: a finite scalar. Zero is valid where the domain permits.
+- `missing(reason)`: `source_not_provided` or `trial_not_completed`. The
   vocabulary also defines `unsupported_by_driver`, but the normalizer does not
   currently emit it: a driver that cannot supply a requested metric is
   handled at the producing adapter, not here. Missing is never `0`, `NaN`, or
   record absence.
-- `invalid(reason, detail?)` — `non_finite`, `unit_mismatch`,
+- `invalid(reason, detail?)`: `non_finite`, `unit_mismatch`,
   `duplicate_observation`, `aggregation_mismatch`,
   `malformed_source_reference`, or `domain_error`.
 
@@ -76,7 +75,7 @@ For each measured trial, after the measured interval ends:
    `observed`; duplicates, unit mismatches, nonfinite values, aggregation
    mismatches, unknown artifact references, and domain errors become
    `invalid`.
-5. Copy unit, direction, and intent from the resolved plan — driver output
+5. Copy unit, direction, and intent from the resolved plan. Driver output
    cannot change them. No implicit unit conversion (`ms` never accepts `us`,
    `ratio` never accepts `percent`).
 6. Emit deterministic ordering: observations sorted by metric name,
@@ -104,7 +103,7 @@ A raw observation may carry a per-observation `producer`/`producer_version`
 override so telemetry observations normalize through a combined call with
 their own attribution (for example `gregg`); without the override the
 call-level producer applies. Duplicate observations for one requested
-metric — from one producer or across producers — still normalize as
+metric from one producer or across producers still normalizes as
 invalid rather than selecting silently. See
 [Gregg telemetry](gregg-telemetry.md).
 
@@ -116,7 +115,7 @@ Each measured trial stages `trials/NNN/metrics.json` with
 `ArtifactRole::TrialArtifact` and `Public` sensitivity, listed in the
 trial's descriptor artifacts. Warmups never receive `TrialMetrics`.
 `BundleReader::trial_metrics(trial_id)` loads normalized metrics from a
-verified bundle; pre-M001 bundles return `None`.
+verified bundle. Older bundles without this artifact return `None`.
 
 ## The statistical unit
 
@@ -127,8 +126,7 @@ must never infer sample count from requests or histogram buckets.
 
 ## Boundaries
 
-M001 implements no baseline selection, bootstrap, confidence intervals,
-comparison verdicts, paired schedules, unit conversion, histogram
-mathematics, or dashboards. Drivers own parsing upstream output into
-`WorkloadMetricObservation`; they must never write `TrialMetrics` JSON
-themselves.
+Metric normalization does not select baselines, calculate confidence
+intervals, or produce comparison verdicts. Drivers parse their output into
+`WorkloadMetricObservation`; comparison policies are described in
+[Comparison](comparison.md).

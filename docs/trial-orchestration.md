@@ -1,11 +1,9 @@
-# Local trial orchestration (M002)
+# Trial orchestration
 
 `eggbench_runner::execute_run` coordinates one resolved local experiment above
 `LocalSession`. The session remains the sole owner of managed services:
 command processes and named in-process adapter services alike. Workload
-adapters and reset hooks are explicit asynchronous seams; M002 includes a
-deterministic `FakeWorkload` for qualification and defines no
-protocol-specific workload or reset behavior. Every `InvocationContext`
+adapters and reset hooks are explicit asynchronous seams. Every `InvocationContext`
 carries the same startup-established runtime-bindings snapshot (read-only);
 see [Eggstack HTTP](eggstack-http.md). Trial-synchronized telemetry
 collectors (`TelemetryRegistry`) preflight before startup and open/close a
@@ -44,8 +42,8 @@ Reset and cooldown occur only between measured trials. Reset runs first, so
 cooldown is post-reset stabilization time. Warmup state carries into measured
 trials. No reset or cooldown follows the final trial.
 
-Every code path that reaches the post-experimental tail — workload/reset
-failure, cancellation, evidence-staging failure — runs the same drain and
+Every code path that reaches the post-experimental tail, including workload or
+reset failure, cancellation, and evidence-staging failure, runs the same drain and
 teardown sequence before any evidence/finalization disposition is returned.
 Workload drain is **unconditional** once the cleanup tail is reached: the
 workload adapter is the canonical owner of its cleanup hook and is expected to
@@ -84,9 +82,9 @@ follows the finalization event. That publication itself is not representable
 inside the bundle it produces; the runner therefore does not claim that the
 finalization phase interval covers its own publication.
 
-A failure during staging — including workload artifact staging that fails
+A failure during staging, including workload artifact staging that fails
 after a measured invocation, lifecycle log/metadata staging, or phase
-artifact staging — is reported as `OrchestrationError::Evidence { source,
+artifact staging, is reported as `OrchestrationError::Evidence { source,
 cleanup }`. The primary cause is the source bundle error; any drain or
 teardown failure observed while attempting mandatory cleanup is attached as
 secondary cleanup diagnostics and never replaces the primary cause. Failed
@@ -95,7 +93,7 @@ remains incomplete and the final sibling path is not created.
 
 ## Timeout keys
 
-M002 recognizes exactly these `TrialPolicy.timeouts` names:
+The runner recognizes exactly these `TrialPolicy.timeouts` names:
 
 | Key | Meaning |
 |---|---|
@@ -130,6 +128,6 @@ return bounded diagnostic files which the runner stages after measurement.
 `ResetHook`; a missing hook is a preflight error. `ResetPolicy::Service` does
 not mean process restart.
 
-M002 produces execution evidence only. It does not calculate throughput,
-latency distributions, error rates, baselines, or pass/fail/inconclusive
-performance verdicts. Those semantics belong to Measurement/Comparison.
+Orchestration records execution timing and delegates workload observations to
+the metric normalizer. It does not choose baselines or calculate comparison
+verdicts; see [metrics](metrics.md) and [comparison](comparison.md).

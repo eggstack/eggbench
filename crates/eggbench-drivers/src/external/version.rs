@@ -50,9 +50,7 @@ impl VersionProbe {
     /// timeout, cancellable via the supplied token.
     ///
     /// # Errors
-    /// Returns typed probe failures; nonzero exit is a failure unless the
-    /// parsed output still yields a version and the caller accepts it via
-    /// `allow_nonzero` (not used in M001: nonzero is always a probe failure).
+    /// Returns a typed probe failure if execution fails or exits non-zero.
     pub async fn run(
         executable: &ResolvedExecutable,
         spec: &VersionProbeSpec,

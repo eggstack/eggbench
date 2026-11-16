@@ -247,7 +247,7 @@ pub enum Sensitivity {
     Public,
     /// Sanitized or redacted content.
     Redacted,
-    /// Sensitive raw content governed by a future integration policy.
+    /// Raw content classified as sensitive.
     Sensitive,
 }
 
@@ -709,7 +709,7 @@ pub enum EnvironmentFieldClass {
 pub struct EnvironmentField {
     /// Selected value.
     pub value: String,
-    /// How future comparison policy treats mismatches.
+    /// How comparison treats mismatches.
     pub class: EnvironmentFieldClass,
 }
 

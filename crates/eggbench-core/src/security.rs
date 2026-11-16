@@ -1,11 +1,6 @@
-//! Eggstack M004a security-correctness evidence contract.
+//! Sanitized typed evidence for security-correctness checks.
 //!
-//! Eggsec owns payload generation, WAF detection, bypass-technique
-//! execution, and the meaning of `bypass_successful`. Eggbench owns the
-//! declarative check selection, target binding, strict-scope preflight,
-//! lifecycle placement, the predeclared bypass threshold, and this
-//! sanitized typed result. Security results are categorical correctness
-//! evidence and never enter `TrialMetrics`.
+//! Security results are categorical correctness evidence and never enter `TrialMetrics`.
 
 use crate::{Name, SchemaVersion};
 use serde::{Deserialize, Serialize};

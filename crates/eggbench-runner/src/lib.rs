@@ -1,30 +1,8 @@
-//! Managed local process lifecycle for Eggbench.
+//! Local process lifecycle and trial orchestration over `eggbench-core` contracts.
 //!
-//! `eggbench-runner` owns runtime side effects behind the runtime-free
-//! [`eggbench_core`] contracts: argv-direct spawning with no shell,
-//! dependency-ordered startup, readiness bounded by declared timeouts,
-//! continuous bounded stdout/stderr spooling, graceful shutdown with forced
-//! process-tree cleanup, and reverse-order teardown that preserves the
-//! initiating failure.
-//!
-//! Supported platforms advertise tested descendant cleanup (Linux and
-//! qualified macOS via process groups). Other Unix targets remain unqualified;
-//! Windows managed execution reports an unsupported-capability error.
-//!
-//! Local orchestration schedules warmups and measured invocations through an
-//! injected workload adapter. It does not provide a production load
-//! generator, normalize metrics, or calculate comparisons. Lifecycle-only
-//! sessions remain available and record no trials.
-//!
-//! Every terminal exit from `execute_run` that follows successful managed
-//! startup routes through one cleanup boundary: workload drain is attempted
-//! if the executor was reached, and `LocalSession::shutdown` is attempted
-//! whenever managed startup created owned processes. Evidence-staging errors
-//! are reported as `OrchestrationError::Evidence { source, cleanup }` with
-//! the primary cause preserved and any cleanup failure attached as secondary
-//! diagnostics. Failed evidence publication never produces a finalized bundle.
-//!
-//! [`eggbench_core`]: ../../eggbench-core/index.html
+//! Managed startup has one cleanup boundary: workload drain and service
+//! teardown are attempted, with cleanup failures recorded separately from the
+//! primary error. Failed evidence publication never yields a finalized bundle.
 
 #![forbid(unsafe_code)]
 

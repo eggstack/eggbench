@@ -1,4 +1,4 @@
-# Gregg host telemetry (M001b)
+# Gregg host telemetry
 
 Optional trial-synchronized telemetry backed by a loopback Gregg daemon,
 behind the `gregg` cargo feature:
@@ -6,7 +6,7 @@ behind the `gregg` cargo feature:
 ```toml
 eggbench-drivers/gregg
   -> gregg-protocol
-  -> eggfetch-core/standard-http1   # shared with M001a, never duplicated
+  -> eggfetch-core/standard-http1
 ```
 
 The CLI forwards with its own `gregg` feature
@@ -14,10 +14,8 @@ The CLI forwards with its own `gregg` feature
 feature the catalog carries no telemetry driver and required Gregg
 telemetry fails resolution explicitly (`missing_driver`, exit code 3).
 
-Exact sibling versions come from the workspace `Cargo.lock` via the
-`eggbench-drivers` build script (currently `gregg-protocol 1.0.14`,
-`eggfetch-core 0.2.0`); descriptors, method provenance, and per-trial
-provenance artifacts report those values.
+Exact sibling versions come from the workspace `Cargo.lock` and are recorded
+in driver descriptors and per-trial provenance artifacts.
 
 ## Ownership
 
@@ -72,7 +70,7 @@ Preflight (before managed startup) probes `GET /v2/healthz` then
 cadence as `clamp(daemon_sample_interval_ms, 250ms, 5s)`. Required
 failures prevent measurement; optional failures disable the collector for
 the run with an explicit `telemetry_disabled` warning, and requested
-metrics normalize as missing — never fabricated zeroes. Stop is attempted
+metrics normalize as missing, never fabricated zeroes. Stop is attempted
 after workload failure/cancellation when start succeeded; stop failures
 attach as cleanup diagnostics without rewriting the primary cause. No
 polling task survives its trial (bounded join, abort on expiry, drain in

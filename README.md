@@ -1,143 +1,119 @@
 # Eggbench
 
-A local-first experiment and evidence system. You describe an experiment as a
-versioned plan; Eggbench resolves it against typed driver capabilities, runs
-managed workloads through explicit trial lifecycles, and finalizes an
-**immutable** `.eggb` bundle. Comparison is a separate, offline, deterministic
-step over two finished bundles — the runner never decides whether your change
-was an improvement.
+Eggbench runs local experiments from versioned plans and saves the results in
+immutable `.eggb` bundles. You can validate a plan, check that its drivers are
+available, run it, inspect the evidence, and compare completed runs offline.
+Running an experiment and deciding whether it improved are separate steps.
 
 ## Quickstart
 
-Needs Rust 1.89+ (MSRV). The `eggstack-path` feature makes this example
-self-contained: origin, route, faults, and workload all run in-process, so no
-external benchmark tools are required.
+Install Rust 1.89 or newer. This example enables `eggstack-path`, which includes
+the origin, route, stream faults, and workload needed by the example. It does
+not require external benchmark tools.
 
 ```bash
 cargo build --release -p eggbench-cli --features eggstack-path --locked
-EGGBENCH=./target/release/eggbench
+export EGGBENCH=./target/release/eggbench
 mkdir -p out
 ```
 
-Parse and check the plan, then resolve drivers and preflight — both start
-nothing:
+Validate the plan, then check driver capabilities and the local environment.
+These commands do not start managed services. If the plan requests diagnostics,
+`doctor` also performs the `eggprobe` schema handshake.
 
 ```bash
-$EGGBENCH validate examples/eggstack-path.json   # eggbench: validate ok
-$EGGBENCH doctor   examples/eggstack-path.json   # eggbench: doctor ok
+$EGGBENCH validate examples/eggstack-path.json
+$EGGBENCH doctor examples/eggstack-path.json
 ```
 
-Execute and finalize a bundle. The parent directory must already exist and the
-bundle name must be new; either violation fails with exit `5` before any
-measurement starts.
+Run the plan and inspect the finalized bundle. The output directory must
+already exist, and the bundle path must be new. Inspection verifies the bundle
+and is read-only. Use `--json` to see details such as the run id, execution
+status, resolved drivers, and metrics.
 
 ```bash
-$EGGBENCH run examples/eggstack-path.json out/quickstart.eggb   # eggbench: run ok
-$EGGBENCH inspect out/quickstart.eggb                           # eggbench: inspect ok
+$EGGBENCH run examples/eggstack-path.json out/quickstart.eggb
+$EGGBENCH inspect out/quickstart.eggb --json
 ```
 
-`inspect` reports only pass/fail in text mode; add `--json` for the run id,
-execution status, resolved drivers, and observed metrics. A bundle is
-self-describing and read-only after publication:
-
-```text
-out/quickstart.eggb/
-├── manifest.json        written last; the publication record
-├── plan.json            the plan as submitted
-├── resolved-plan.json   capabilities and driver provenance chosen for it
-├── environment.json     host fingerprint used for comparability
-├── subject.json         the thing under test
-├── network-path.json    route and stream-fault evidence
-├── runner-phases.json   the phase schedule that actually ran
-├── lifecycle/           process and runtime-topology records
-└── trials/001/          metrics.json, result.json, and raw artifacts/
-```
-
-Compare offline. `--absolute-only` needs one bundle; two bundles give a
-baseline-versus-candidate verdict:
+Compare two completed bundles without rerunning either experiment. A comparison
+verdict can be Pass, Fail, Inconclusive, or Invalid. The command's exit code
+reports that verdict.
 
 ```bash
-$EGGBENCH compare --absolute-only out/quickstart.eggb            # eggbench: compare ok
-$EGGBENCH run examples/eggstack-path.json out/second.eggb
-$EGGBENCH compare out/quickstart.eggb out/second.eggb             # eggbench: compare ok
+$EGGBENCH run examples/eggstack-path.json out/candidate.eggb
+$EGGBENCH compare out/quickstart.eggb out/candidate.eggb --json
 ```
+
+For an absolute-threshold check from one bundle, use
+`eggbench compare --absolute-only <bundle.eggb>`.
 
 ## Commands
 
 ```text
-eggbench validate <plan>                  parse and semantically validate a plan
-eggbench doctor   <plan>                  resolve drivers and preflight, starting nothing
-eggbench run      <plan> <bundle>         execute and finalize a new .eggb bundle
-eggbench inspect  <bundle>                verify and summarize a finalized bundle
-eggbench compare  <baseline> <candidate>  compare two finalized bundles offline
+eggbench validate <plan>
+eggbench doctor <plan>
+eggbench run <plan> <new-bundle.eggb>
+eggbench inspect <bundle.eggb>
+eggbench compare <baseline.eggb> <candidate.eggb>
+eggbench qualify validate|expand <profile>
+eggbench qualify run <profile> --output <new-directory>
+eggbench qualify inspect <receipt.json>
 ```
 
-Comparison also takes `--alias <baseline.eggbaseline.json>`, `--absolute-only`,
-and `--paired`. `--json` and `--quiet` are global. Route, fault, network-path,
-and seed selection live in the plan, not in flags.
+`--json` and `--quiet` are global options. Plan commands accept JSON or TOML;
+use `-` with `--input-format json|toml` to read a plan from standard input.
+Network route, fault, and seed settings belong in the plan. `--workload-driver`
+on `doctor` or `run` selects a registered workload driver explicitly.
 
-A separate family works on a security-qualification profile and publishes a
-qualification receipt rather than a bundle:
-`qualify validate|expand <profile>`, `qualify run <profile> --output <dir>`,
-and `qualify inspect <receipt.json>`. It bypasses the JSON envelope, and its
-exit code is the aggregate verdict, so a correctly-detected failure exits `6`.
+`qualify` runs a security qualification profile and writes a receipt rather
+than an `.eggb` bundle. Its exit code is the aggregate verdict: `0` for Pass,
+`6` for Fail, `7` for Inconclusive, and `8` for Invalid. The other commands use
+these exit codes:
 
-| Exit code | Meaning |
+| Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Internal/unclassified failure |
+| `1` | Internal or unclassified failure |
 | `2` | Parse, schema, or plan-validation error |
 | `3` | Capability, preflight, or unsupported-path error |
 | `4` | Run finalized with a non-success execution status |
 | `5` | Bundle I/O or verification failure |
-| `6` / `7` / `8` | Comparison verdict `Fail` / `Inconclusive` / `Invalid` |
+| `6` / `7` / `8` | Comparison verdict: Fail / Inconclusive / Invalid |
 
-## Features
+## Features and drivers
 
-Additive; `default = []`.
+Features are opt-in; the default build enables none.
 
 | Feature | Adds |
 |---|---|
-| `eggstack-http` | EggServe controlled origin, the native Eggfetch HTTP workload, and the fixed HTTP corpus correctness driver |
-| `eggstack-path` | Listener-free Eggress route and Eggchaos stream faults; implies `eggstack-http` |
+| `eggstack-http` | EggServe controlled origin, Eggfetch HTTP workload, and HTTP corpus correctness checks |
+| `eggstack-path` | Eggress routing and Eggchaos stream faults; also enables `eggstack-http` |
 | `gregg` | Trial-synchronized Gregg host telemetry |
-| `prometheus-http` | Prometheus-scrape telemetry adapter |
+| `prometheus-http` | Prometheus scrape telemetry adapter |
 
-`validate` works on any build, but `doctor` and `run` need the feature matching
-your plan — a network-path plan on a default build fails with
-`unsupported_network_path` and exit `3`. Default and `eggstack-http`-only
-builds never link Eggress or Eggchaos. The seven external-process drivers
-(`oha`, `h2load`, `iperf3`, `eggreplay-semantic`, `eggprobe`, `eggsec-waf`,
-`eggsec-load`) are always catalogued and resolve their binary at preflight, so
-a missing tool is a preflight failure rather than a link error.
+`doctor` reports whether external tool binaries are present. `run` checks
+required tools during preflight. Workload drivers include `oha`,
+`h2load`, `iperf3`, `eggreplay-semantic`, `eggsec-load`, and feature-gated
+`eggfetch-http`. `eggsec-waf` provides correctness checks. A network-path plan
+needs a build with `eggstack-path`; the default build cannot run it.
 
-## Examples
+## Examples and documentation
 
-- [`examples/eggstack-path.json`](examples/eggstack-path.json) — the quickstart above
-- [`examples/eggstack-path-paired-unsupported.json`](examples/eggstack-path-paired-unsupported.json) — intentionally rejected: paired experiments with a network path
-- [`examples/eggstack-replay.json`](examples/eggstack-replay.json) — schema v4 semantic replay
-- [`examples/eggstack-diagnostics.json`](examples/eggstack-diagnostics.json) — schema v5 replay plus pre/post diagnostics
-- [`examples/security-profile.json`](examples/security-profile.json) — a `qualify` profile
+- [`examples/eggstack-path.json`](examples/eggstack-path.json): the quickstart plan
+- [`examples/eggstack-replay.json`](examples/eggstack-replay.json): semantic replay
+- [`examples/eggstack-diagnostics.json`](examples/eggstack-diagnostics.json): replay with diagnostics
+- [`examples/security-profile.json`](examples/security-profile.json): qualification profile
 
-## Documentation
+Start with the [CLI guide](docs/cli.md), then see the [experiment plan
+reference](docs/experiment-plan.md). Learn how to read [evidence
+bundles](docs/evidence-bundle.md), [metrics](docs/metrics.md), and
+[comparison results](docs/comparison.md). For capability selection, see
+[driver capabilities](docs/driver-capabilities.md).
 
-**Contracts** — [plan schema](docs/experiment-plan.md) ·
-[CLI reference](docs/cli.md) · [driver capabilities](docs/driver-capabilities.md) ·
-[external driver execution](docs/external-drivers.md) ·
-[evidence bundles](docs/evidence-bundle.md) · [metrics](docs/metrics.md) ·
-[comparison policy](docs/comparison.md) · [baselines](docs/baselines.md) ·
-[paired experiments](docs/paired-experiments.md) ·
-[Eggstack HTTP and network path](docs/eggstack-http.md) ·
-[Gregg telemetry](docs/gregg-telemetry.md) ·
-[security qualification](docs/security-qualification.md) ·
-[SynVoid profile](docs/synvoid-qualification.md) ·
-[runner lifecycle](docs/local-runner-lifecycle.md) ·
-[trial orchestration](docs/trial-orchestration.md) ·
-[environment fingerprint](docs/environment-fingerprint.md) ·
-[measurement oracles](docs/external-oracles.md)
-
-**Architecture** — [overview and deep-dive index](architecture/overview.md) ·
-[core](architecture/core.md) · [runner](architecture/runner.md) ·
-[drivers](architecture/drivers.md) · [evidence](architecture/evidence.md)
-
-**Project** — [active implementation plans](plans/registry.md)
+Specialized guides cover [network paths](docs/eggstack-http.md), [security
+qualification](docs/security-qualification.md), [SynVoid
+qualification](docs/synvoid-qualification.md), [external drivers](docs/external-drivers.md),
+[telemetry](docs/gregg-telemetry.md), and [paired experiments](docs/paired-experiments.md).
+The [architecture overview](architecture/overview.md) is intended for
+contributors.

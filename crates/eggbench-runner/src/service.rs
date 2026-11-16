@@ -1,14 +1,7 @@
-//! Generic named in-process service-adapter seam.
+//! Named in-process services share dependency ordering, runtime bindings, and teardown.
 //!
-//! The runner owns command processes; Eggstack (and future) in-process
-//! services participate through this object-safe adapter contract. Core never
-//! depends on concrete sibling crates: adapters are registered by name and
-//! resolved against the plan's `ServiceKind::Named` service types.
-//!
-//! Named adapter services participate in dependency ordering and reverse
-//! teardown exactly like managed command services. They expose runtime
-//! bindings (non-secret, immutable after startup) to workload drivers and
-//! are recorded in the runtime-topology evidence artifact.
+//! Adapters resolve by `ServiceKind::Named`, publish non-secret bindings after
+//! startup, and appear in runtime-topology evidence.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

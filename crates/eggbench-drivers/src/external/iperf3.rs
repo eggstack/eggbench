@@ -1,10 +1,9 @@
 //! `iperf3` TCP throughput workload adapter.
 //!
 //! iperf3 owns byte-stream transfer and its `-J` report semantics; Eggbench
-//! owns resolution, version policy, argv construction, bounded execution,
-//! raw retention, metric mapping, and evidence. The server is always an
-//! explicit configured host (loopback tests spawn `iperf3 -s -1` as a
-//! fixture): Eggbench never manages an iperf3 server in M002.
+//! owns resolution, version policy, invocation, bounded output, and evidence.
+//! The server is an explicit host; Eggbench never manages it. Loopback tests
+//! spawn a one-shot server as a fixture.
 //!
 //! Mapping honesty: iperf3 has no request-count semantic, so only
 //! duration-bound workloads map (`-t`); count-bound plans fail closed.
